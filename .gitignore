@@ -36,3 +36,6 @@ scratch/
 
 # --- Local tooling config --------------------------------------------------
 .claude/settings.local.json
+
+# Deploy target — host/CT id are private network details.
+site/deploy/deploy.env

@@ -8,7 +8,8 @@ locked-down shop network gets the whole page or none of it, never half.
 
 ## Deploying
 
-Upload two files to the web root:
+`deploy/` provisions and updates the live host — see `deploy/README.md`. On any
+other host, upload two files to the web root:
 
 ```
 index.html

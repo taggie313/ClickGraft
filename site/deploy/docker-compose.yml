@@ -1,0 +1,37 @@
+name: clickgraft
+
+services:
+  web:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./html:/usr/share/nginx/html:ro
+      - logs:/var/log/nginx
+    # No published ports. The only way in is the tunnel, which means nothing
+    # is exposed if the CT ever ends up with a routable address.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - web
+
+  # Rebuilds the report from the same logs nginx is writing. Reads only —
+  # it cannot serve anything, and it shares no network with the tunnel.
+  stats:
+    image: allinurl/goaccess:latest
+    restart: unless-stopped
+    network_mode: none
+    volumes:
+      - logs:/srv/logs:ro
+      - ./stats:/srv/report
+    entrypoint: ["/bin/sh", "/srv/report/run-goaccess.sh"]
+    depends_on:
+      - web
+
+volumes:
+  logs:
