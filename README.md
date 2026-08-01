@@ -45,8 +45,17 @@ that one piece.
 
 It provides the `python3` ClickGraft runs on, plus `codesign`,
 `install_name_tool`, `lipo`, `otool`, and `nm`. No Homebrew. No compiler. No
-`pip install`. If it's missing, the wizard offers a button that runs Apple's own
-installer.
+`pip install`.
+
+**You probably don't have to install it yourself.** `/usr/bin/python3` is one of
+the Command Line Tools stubs, so opening ClickGraft on a Mac that lacks them
+makes macOS offer its own installer automatically — accept it, wait for it to
+finish (it is a large download, several minutes on a good connection), and
+ClickGraft opens. Confirmed on a clean Mac.
+
+If you decline that installer, ClickGraft cannot start and will appear to do
+nothing when opened. Reopen it to get the prompt back, or install the tools
+yourself with `xcode-select --install`.
 
 You also need your own **legally installed HP Click 4.8.117**. ClickGraft ships
 no HP software and cannot obtain it for you.
