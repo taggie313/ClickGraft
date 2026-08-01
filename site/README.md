@@ -26,7 +26,7 @@ developer" warning the page promises won't appear.
 
 ## Before it goes up
 
-- The GitHub URL is `taggie313/ClickGraft` in five places. If the repository
+- The GitHub URL is `taggie313/ClickGraft` in seven places. If the repository
   lands somewhere else, change them all — a 404 from the "Source on GitHub" link
   costs more trust than the page builds.
 - The performance table is real measured data from `benchmarks/`. If the numbers
