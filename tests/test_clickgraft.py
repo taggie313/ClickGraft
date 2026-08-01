@@ -448,3 +448,95 @@ class TestClickGraftCLI(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestClickGraftWebUI(unittest.TestCase):
+    """The wizard is served locally; drive it over HTTP the way the page does.
+
+    On why asserting served markup is enough here, when the equivalent check
+    was NOT enough for the tkinter version it replaced: Tk failed by mapping
+    widgets with correct geometry and never painting them, so inspecting the
+    widget tree could not see the bug. HTML has no such split — a browser given
+    this markup renders this text. Asserting the markup therefore does test
+    what the user sees, and the browser check that caught the Tk failure was
+    additionally performed by hand against a live server.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        from clickgraft.gui import server as srv
+        cls.srv = srv
+        cls.httpd = __import__("http.server", fromlist=["ThreadingHTTPServer"]).ThreadingHTTPServer(
+            ("127.0.0.1", 0), srv.Handler)
+        cls.port = cls.httpd.server_address[1]
+        cls.token = srv.SESSION.token
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def get(self, path, token=True):
+        import urllib.error
+        import urllib.request
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+        if token:
+            req.add_header("X-ClickGraft-Token", self.token)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.read().decode()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode()
+
+    def test_18_page_renders_expected_text(self):
+        """The served page must contain what the user is supposed to read."""
+        print("\n--- Test 18: page content ---")
+        status, body = self.get("/", token=False)
+        self.assertEqual(status, 200)
+        self.assertNotIn("__TOKEN__", body, "token placeholder was not substituted")
+        for needed in ("ClickGraft", "Requirements", "Choose your HP Click",
+                       "Review the plan", "Xcode Command Line Tools"):
+            self.assertIn(needed, body, f"page is missing {needed!r}")
+        print("Test 18 PASSED: page serves with all expected copy and no placeholder.")
+
+    def test_19_token_is_enforced(self):
+        """This UI writes to /Applications; it must not be drivable unauthenticated."""
+        print("\n--- Test 19: token auth ---")
+        self.assertEqual(self.get("/api/env", token=False)[0], 403)
+        self.assertEqual(self.get("/api/env", token=True)[0], 200)
+        print("Test 19 PASSED: 403 without a token, 200 with.")
+
+    def test_20_already_patched_bundles_are_not_selectable(self):
+        """A ClickGraft-produced bundle must be rejected as a source, with a reason."""
+        print("\n--- Test 20: source classification ---")
+        _, body = self.get("/api/env")
+        cands = json.loads(body)["candidates"]
+        if not cands:
+            self.skipTest("no HP Click installations present")
+        for c in cands:
+            if c["usable"]:
+                self.assertIsNotNone(c["version"], "a usable source must name its version")
+            else:
+                self.assertTrue(c["why"], "an unusable source must explain why")
+        print(f"Test 20 PASSED: {len(cands)} candidate(s) classified, each with a version or a reason.")
+
+    def test_21_plan_comes_from_the_manifest(self):
+        """Regression guard: the tkinter review screen hardcoded three dylibs and
+        omitted libnghttp2, and could not show which are preloaded."""
+        print("\n--- Test 21: plan is manifest-derived ---")
+        mm = ManifestManager()
+        manifest = mm.find_manifest(app_version="4.8.117")
+        self.srv.SESSION.manifest = manifest
+        self.srv.SESSION.source = "/tmp/whatever.app"
+        plan = self.srv.SESSION.plan()
+
+        names = [d["name"] for d in plan["dylibs"]]
+        expected = [d["name"] for d in manifest["required_dylibs"]]
+        self.assertEqual(names, expected, "plan dylibs must match the manifest exactly")
+        self.assertTrue(any("nghttp2" in n for n in names), "libnghttp2 missing from the plan")
+        self.assertTrue(any(d["preload"] for d in plan["dylibs"]),
+                        "no dylib marked preloaded — that distinction decides whether "
+                        "flat-namespace symbols resolve at runtime")
+        self.assertEqual(len(plan["patches"]), len(manifest["patches"]))
+        print(f"Test 21 PASSED: {len(names)} dylibs and {len(plan['patches'])} patches, all from the manifest.")

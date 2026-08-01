@@ -112,6 +112,10 @@ const api = async (path, body) => {
 };
 const el = (h) => { const d = document.createElement("div"); d.innerHTML = h.trim(); return d.firstChild; };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const sentence = (s) => {
+  const m = String(s ?? "").match(/^[\s\S]*?[.!?](?=\s|$)/);
+  return m ? m[0] : String(s ?? "");
+};
 
 let STEP = 1, ENV = null, CANDS = [], PICK = null, PLAN = null;
 const STEPS = ["Check", "Choose", "Review", "Build", "Done"];
@@ -233,11 +237,11 @@ async function stepReview() {
     </div>
     <div><h2 style="font-size:14px">Changes to the copy</h2>
       <ul class="plain small">${p.patches.map(x =>
-        `<li><span class="mono">${esc(x.path)}</span><br><span class="muted">${esc(x.why.split(".")[0])}.</span></li>`).join("")}</ul></div>
+        `<li><span class="mono">${esc(x.path)}</span><br><span class="muted" title="${esc(x.why)}">${esc(sentence(x.why))}</span></li>`).join("")}</ul></div>
     <div><h2 style="font-size:14px">Libraries added</h2>
       <ul class="plain small">${p.dylibs.map(x =>
         `<li><span class="mono">${esc(x.name)}</span>${x.preload ? " <span class=\"tag ok\">preloaded</span>" : ""}
-         <br><span class="muted">${esc(x.why.split(".")[0])}.</span></li>`).join("")}</ul></div>
+         <br><span class="muted" title="${esc(x.why)}">${esc(sentence(x.why))}</span></li>`).join("")}</ul></div>
     <details><summary>Show what gets downloaded</summary>
       <ul class="plain small">${p.downloads.map(d =>
         `<li><strong>${esc(d.what)}</strong><br><span class="muted">${esc(d.from)} — verified by ${esc(d.checked)}</span></li>`).join("")}</ul>

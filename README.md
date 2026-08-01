@@ -82,9 +82,12 @@ app, compatibility check, **review plan**, build, verify, done. Nothing is
 written until you accept the plan screen, which lists every patch, every file to
 be downloaded with its SHA-256, and every library to be added.
 
+The wizard opens in your browser. It is served from your own machine on
+`127.0.0.1` and reachable only from there — nothing is sent anywhere, and the
+server shuts itself down once you close the tab.
+
 > **Running from source instead?** `python3 -m clickgraft.cli gui` from a clone
-> works identically. Use Apple's `/usr/bin/python3` — a Homebrew or pyenv
-> Python often lacks `tkinter` and will fail with an `ImportError`.
+> works identically and prints the local URL.
 
 ---
 
