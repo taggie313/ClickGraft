@@ -196,16 +196,20 @@ renderer on every launch. The patched build logs zero.
 
 ## Contributing
 
-Run the tests before opening a PR — they need a stock HP Click present and take
-a few minutes, because several perform real builds:
-
-```bash
-python3 -m pytest tests/ -q
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) — please read the scope section first.
 
 The most valuable contributions are **manifests for new versions** (run `probe`
 and attach the report) and **real-hardware print testing**, which is the biggest
 gap in what has been verified.
+
+ClickGraft's scope is deliberately narrow: making the app run natively, plus
+repairing what the repack would otherwise leave broken. Changes to what the
+application is *permitted* to do are out of scope, for reasons set out in
+CONTRIBUTING.
+
+```bash
+python3 -m pytest tests/ -q
+```
 
 ---
 
