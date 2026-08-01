@@ -123,6 +123,11 @@ python3 -m clickgraft.cli gui                            # launch the wizard
 |---|---|---|
 | 4.8.117 | 39.8.4 | Supported |
 
+**New releases are meant to be picked up quickly.** When HP ships an update the
+work is mostly mechanical — `probe` reads the new bundle, checks every anchor,
+and confirms the Electron version — so the aim is a ClickGraft release not long
+after HP's. Fast turnaround here is a goal of the project, not a favour.
+
 ClickGraft refuses anything else rather than guessing. Patches are anchored to
 exact strings inside minified files, and the Electron version must match the
 source **exactly** — the native modules are built against Nan, whose ABI is not
