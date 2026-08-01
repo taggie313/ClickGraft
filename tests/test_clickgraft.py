@@ -521,3 +521,67 @@ class TestClickGraftAgent(unittest.TestCase):
             self.assertFalse(p["why"].strip() in ("hp_configs.", "hp_configs"),
                              "why text truncated mid-identifier")
         print("Test 21 PASSED: reasons survive identifiers and URLs intact.")
+
+
+class TestDylibFetchWithoutHomebrew(unittest.TestCase):
+    """The download path, which is what every machine WITHOUT Homebrew takes.
+
+    This class exists because that path was broken in the field for weeks and
+    no test caught it: the development Mac has Homebrew, so
+    find_local_brew_dylib() short-circuited every build and the network path
+    was never exercised. These tests stub it out deliberately.
+
+    Real network access. Skipped if unreachable rather than failing, since a
+    contributor offline should not see a red suite.
+    """
+
+    def setUp(self):
+        import clickgraft.deps as deps
+        self.deps = deps
+        self._real_find = deps.find_local_brew_dylib
+        deps.find_local_brew_dylib = lambda name: None      # pretend: no Homebrew
+        self.cache = tempfile.mkdtemp(prefix="cg-test-dylib-")
+
+    def tearDown(self):
+        self.deps.find_local_brew_dylib = self._real_find
+        shutil.rmtree(self.cache, ignore_errors=True)
+
+    def test_every_manifest_dylib_downloads_and_is_arm64(self):
+        """Each required dylib must be obtainable from its named formula.
+
+        Guards the exact regression Steve hit: Homebrew moved the library from
+        the `nghttp2` formula to `libnghttp2`, whose old bottle still downloads
+        and still checksums correctly but contains no .dylib at all.
+        """
+        mm = ManifestManager()
+        for version, manifest in sorted(mm.manifests.items()):
+            for info in manifest.get("required_dylibs", []):
+                with self.subTest(version=version, dylib=info["name"]):
+                    try:
+                        path = self.deps.fetch_or_find_dylib(info, cache_dir=self.cache)
+                    except OSError as exc:
+                        self.skipTest(f"network unavailable: {exc}")
+                    self.assertTrue(os.path.exists(path), f"{info['name']} not written")
+                    self.assertIn("arm64", self.deps._archs_of(path),
+                                  f"{info['name']} from formula "
+                                  f"{info.get('brew_formula')} is not arm64")
+
+    def test_missing_dylib_in_bottle_names_the_formula(self):
+        """A moved formula must say so, not blame the download.
+
+        The original message was "Could not extract X from downloaded bottle
+        tarball", which reads like a network or disk fault and sent everyone
+        looking in the wrong place for a manifest problem.
+        """
+        try:
+            self.deps.fetch_or_find_dylib(
+                {"name": "libnghttp2.14.dylib", "brew_formula": "nghttp2"},
+                cache_dir=self.cache)
+            self.fail("expected the nghttp2 bottle to contain no dylib")
+        except OSError as exc:
+            self.skipTest(f"network unavailable: {exc}")
+        except ValueError as exc:
+            msg = str(exc)
+            self.assertIn("nghttp2", msg)
+            self.assertIn("not a network problem", msg)
+            self.assertIn("manifest", msg)

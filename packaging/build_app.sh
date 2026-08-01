@@ -7,7 +7,7 @@ ROOT="$(dirname "$HERE")"
 OUT="${1:-$ROOT/dist}"
 APP="$OUT/ClickGraft.app"
 
-VERSION="${CLICKGRAFT_VERSION:-1.1.0}"
+VERSION="${CLICKGRAFT_VERSION:-1.1.1}"
 BUNDLE_ID="${CLICKGRAFT_BUNDLE_ID:-io.github.taggie313.clickgraft}"
 
 echo "==> Building ClickGraft.app  (version $VERSION)"

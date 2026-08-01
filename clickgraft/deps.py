@@ -128,13 +128,21 @@ def fetch_or_find_dylib(dylib_info, cache_dir=None):
         cache_dir = get_cache_dir()
 
     dylib_name = dylib_info["name"]
+
+    # Every source below is checked for arm64 before it is accepted. This is
+    # not belt-and-braces: on an Intel Mac, Homebrew lives at /usr/local and
+    # ships x86_64 dylibs, so find_local_brew_dylib() would hand back an
+    # x86_64 library to be bundled into an arm64 app. Nothing downstream looks,
+    # so the build would "succeed" and produce something that cannot load.
     local_path = find_local_brew_dylib(dylib_name)
-    if local_path:
+    if local_path and _is_arm64(local_path):
         return local_path
 
     cached_dylib = os.path.join(cache_dir, dylib_name)
-    if os.path.exists(cached_dylib):
+    if os.path.exists(cached_dylib) and _is_arm64(cached_dylib):
         return cached_dylib
+    if os.path.exists(cached_dylib):
+        os.remove(cached_dylib)        # wrong-arch leftover; re-fetch below
 
     brew_formula = dylib_info.get("brew_formula")
     if not brew_formula:
@@ -184,23 +192,70 @@ def fetch_or_find_dylib(dylib_info, cache_dir=None):
         os.remove(tarball_path)
         raise ValueError(f"Downloaded bottle tarball SHA-256 mismatch for {brew_formula}: {calc_hash} != {expected_sha256}")
 
-    # Extract target dylib from tarball
+    # Extract the target dylib. Bottles carry both the real file and an
+    # unversioned symlink beside it (libnghttp2.dylib -> libnghttp2.14.dylib),
+    # so prefer a regular file and resolve a symlink to its target rather than
+    # writing out a dangling link.
     found_extracted = False
+    dylibs_present = []
     with tarfile.open(tarball_path, "r:gz") as tar:
-        for member in tar.getmembers():
-            if member.name.endswith(f"/{dylib_name}") or member.name.endswith(f"lib/{dylib_name}"):
-                member_file = tar.extractfile(member)
-                if member_file:
-                    with open(cached_dylib, "wb") as out_f:
-                        out_f.write(member_file.read())
-                    found_extracted = True
-                    break
+        members = tar.getmembers()
+        dylibs_present = [m.name for m in members if m.name.endswith(".dylib")]
+
+        def _match(m):
+            return m.name.endswith(f"/{dylib_name}") or m.name == dylib_name
+
+        target = next((m for m in members if _match(m) and m.isfile()), None)
+        if target is None:
+            link = next((m for m in members if _match(m) and m.issym()), None)
+            if link is not None:
+                want = os.path.basename(link.linkname)
+                target = next((m for m in members
+                               if m.isfile() and os.path.basename(m.name) == want), None)
+
+        if target is not None:
+            src = tar.extractfile(target)
+            if src:
+                with open(cached_dylib, "wb") as out_f:
+                    out_f.write(src.read())
+                found_extracted = True
 
     if os.path.exists(tarball_path):
         os.remove(tarball_path)
 
     if not found_extracted or not os.path.exists(cached_dylib):
-        raise ValueError(f"Could not extract {dylib_name} from downloaded bottle tarball")
+        # Name what WAS in there. The failure this replaces said only that
+        # extraction failed, which sent everyone looking at their network when
+        # the real answer was that Homebrew had moved the library to a
+        # different formula and the bottle legitimately no longer contained it.
+        inventory = ", ".join(sorted(dylibs_present)) or "no .dylib files at all"
+        raise ValueError(
+            f"The Homebrew bottle for '{brew_formula}' does not contain "
+            f"{dylib_name}. It downloaded and its checksum matched, so this is "
+            f"not a network problem: the bottle contains {inventory}. Homebrew "
+            f"has probably renamed the formula or bumped the library version, "
+            f"and the manifest needs updating.")
+
+    if not _is_arm64(cached_dylib):
+        got = ", ".join(_archs_of(cached_dylib)) or "nothing readable"
+        os.remove(cached_dylib)
+        raise ValueError(
+            f"The {dylib_name} extracted from '{brew_formula}' is {got}, not "
+            f"arm64. ClickGraft picks the arm64 bottle deliberately; refusing "
+            f"rather than building an app that cannot load it.")
 
     os.chmod(cached_dylib, 0o755)
     return cached_dylib
+
+
+def _archs_of(path):
+    from clickgraft.macho import get_archs
+    try:
+        return get_archs(path)
+    except Exception:                                              # noqa: BLE001
+        return []
+
+
+def _is_arm64(path):
+    """A dylib bound for an arm64 bundle must actually contain arm64 code."""
+    return "arm64" in _archs_of(path)
