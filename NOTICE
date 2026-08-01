@@ -1,0 +1,73 @@
+ClickGraft — NOTICE
+===================
+
+Trademarks and affiliation
+--------------------------
+
+ClickGraft is an independent, community project. It is **not affiliated with,
+endorsed by, sponsored by, or supported by HP Inc.**
+
+"HP", "HP Click", and "DesignJet" are trademarks of HP Inc. They appear in this
+project only to identify the software ClickGraft interoperates with — a
+nominative use. ClickGraft does not use HP's logos, icons, or brand styling, and
+does not present itself as an HP product or as a source of HP software.
+
+Do not report problems with a ClickGraft-produced build to HP. It is not their
+build, and they cannot support it.
+
+What this project distributes
+-----------------------------
+
+**No HP software. No Adobe software.** This repository contains source code,
+version manifests, and documentation only. It ships no part of HP Click, no
+Adobe PDF Print Engine components, no Qt libraries, and no Electron binaries.
+
+ClickGraft operates on a copy of HP Click that the user has already lawfully
+installed on their own machine, and writes its output to that same machine. The
+user's original application is opened read-only and is never modified.
+
+Components fetched at run time
+------------------------------
+
+These are downloaded by the user's machine from their upstream sources and
+verified by SHA-256. This project neither hosts nor redistributes them:
+
+  Electron              MIT             github.com/electron/electron releases
+  libidn2               LGPL-3.0-or-later   Homebrew bottle (formulae.brew.sh)
+  libunistring          LGPL-3.0-or-later   Homebrew bottle
+  gettext (libintl)     LGPL-2.1-or-later   Homebrew bottle
+  nghttp2               MIT                 Homebrew bottle
+
+The LGPL components are used as unmodified dynamic libraries. Because the
+resulting application is built and kept on the user's own machine rather than
+distributed, the usual LGPL distribution obligations are not triggered. A user
+who chooses to redistribute a ClickGraft-produced bundle takes those obligations
+on themselves — and should not, for the separate reasons below.
+
+Use and redistribution of output
+--------------------------------
+
+A ClickGraft-produced bundle is for the user's own interoperability use, on
+hardware they own, with software they lawfully possess. **Do not redistribute
+it.** It contains HP's and Adobe's proprietary code, which this project has no
+right to convey, and it is ad-hoc signed rather than signed by HP.
+
+Modifying an application may be inconsistent with its end-user licence
+agreement. Users are responsible for their own compliance.
+
+Scope limit
+-----------
+
+ClickGraft modifies `app.asar` while HP's `app.asar.sign` exists, and does so
+only because that signature is not verified at run time. **This project will not
+add logic to defeat a protection measure that is enforced.** If a future version
+of HP Click enforces such a check, ClickGraft will stop and report it rather
+than work around it. That boundary is what keeps this ordinary interoperability
+work.
+
+No warranty
+-----------
+
+Provided as-is, without warranty of any kind. Repacking an application can
+produce a build that fails in ways the original does not. Keep your original
+installation — ClickGraft is designed so that you always still have it.

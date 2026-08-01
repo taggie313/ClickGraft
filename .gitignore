@@ -1,0 +1,38 @@
+# --- Never commit HP or Adobe content -------------------------------------
+# ClickGraft ships no third-party application code. These patterns are a
+# backstop: extracting an asar or copying a bundle into the working tree is a
+# normal thing to do while debugging, and none of it may ever be published.
+*.app/
+*.asar
+*.asar.unpacked/
+hpclick-src/
+backup*/
+electron-v*-darwin-*.zip
+SHASUMS256*.txt
+
+# Build output
+build/
+build_*/
+staging*/
+dist/
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# --- macOS -----------------------------------------------------------------
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# --- Local scratch ---------------------------------------------------------
+scratch/
+*.log
+
+# --- Local tooling config --------------------------------------------------
+.claude/settings.local.json

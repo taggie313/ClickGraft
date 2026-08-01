@@ -1,0 +1,84 @@
+{
+  "$comment": "Worked example. Every value here is verified against a real stock 4.8.117 bundle -- use it as the schema reference for new versions.",
+
+  "app_version": "4.8.117",
+  "asar_sha256": "47709539778938bca5b6128278b545b4f490609175a7e16cade84ccbd803bb21",
+
+  "electron_version": "39.8.4",
+  "$electron_version_source": "Contents/Frameworks/Electron Framework.framework/Resources/Info.plist -> CFBundleVersion. NOTE: CFBundleShortVersionString is absent from that plist; read CFBundleVersion. Must match the fetched runtime EXACTLY -- the .node modules are Nan-built, so the ABI is not stable across Electron majors.",
+
+  "asar_entries": { "packed": 19202, "unpacked": 25 },
+
+  "patches": [
+    {
+      "path": "package.json",
+      "why": "hp_configs.crashAutoSubmit stays true otherwise, and crash dumps auto-upload to http://15.23.17.24:9100 in plaintext. A previous attempt set a TOP-LEVEL key of the same name, which the code never reads -- crash-reporter.js reads packagejson.hp_configs.crashAutoSubmit.",
+      "ops": [
+        { "type": "json_set", "path": "hp_configs.crashAutoSubmit", "value": false }
+      ]
+    },
+    {
+      "path": "app/node/main/app-updater.js",
+      "why": "Squirrel otherwise downloads HP's x86_64 build and offers to replace ours. This early return is the real gate: Squirrel.Mac does NOT version-compare client-side, so bumping package.json version does not stop it. Reached via main.js -> app-starter.js -> require('./app-updater').",
+      "ops": [
+        { "type": "replace", "anchor": "function startup(e){", "replacement": "function startup(e){return;" }
+      ]
+    },
+    {
+      "path": "app/shared/constants.js",
+      "why": "PRE-EXISTING HP BUG, present on Intel too. index.html loads this as a classic <script src>, where top-level `export` is a syntax error; the main process gets away with require()ing it only because Node 22+ can require an ES module. Converting to CommonJS satisfies both consumers. Stock build logs 'Uncaught SyntaxError: Unexpected token export'; patched build logs zero.",
+      "ops": [
+        { "type": "replace", "anchor": "export var SharedConstants;", "replacement": "var SharedConstants;" },
+        { "type": "append", "text": "\nif (typeof exports !== 'undefined') { exports.SharedConstants = SharedConstants; }\n" }
+      ]
+    },
+    {
+      "path": "app/shared/industries.js",
+      "why": "Same pre-existing bug as constants.js.",
+      "ops": [
+        { "type": "replace", "anchor": "export const Industries = [", "replacement": "const Industries = [" },
+        { "type": "append", "text": "\nif (typeof exports !== 'undefined') { exports.Industries = Industries; }\n" }
+      ]
+    }
+  ],
+
+  "$do_not_patch": {
+    "app/shared/shared.module.js": "Dead code -- the live copy is webpacked into bundle.js. An earlier pass half-converted it (rewrote the export, left a top-level import), which is pure noise. Leave it alone.",
+    "app/machan.js": "Dead code -- 242 concatenated module bodies with colliding const declarations; cannot load as a single CommonJS module."
+  },
+
+  "required_dylibs": [
+    {
+      "name": "libidn2.0.dylib",
+      "brew_formula": "libidn2",
+      "why": "The arm64 slice of Dj{Core,Conn}ServicesNative-Electron.node has flat-namespace undefined symbols _idn2_check_version, _idn2_free, _idn2_lookup_ul, _idn2_strerror and ZERO libidn2 load commands. The x86_64 slice has none of them. HP's arm64 build links a curl with IDN support and never ships the library. Flat lookup resolves at CALL time, so the app launches fine and only dies on IDN code paths -- do not conclude from a clean launch that this is unnecessary.",
+      "preload": true
+    },
+    { "name": "libunistring.5.dylib", "brew_formula": "libunistring", "why": "dependency of libidn2", "preload": false },
+    { "name": "libintl.8.dylib", "brew_formula": "gettext", "why": "dependency of libidn2", "preload": false },
+    {
+      "name": "libnghttp2.14.dylib",
+      "brew_formula": "nghttp2",
+      "why": "The arm64 slice of Dj{Core,Conn}ServicesNative-Electron.node has 36 flat-namespace undefined _nghttp2_* symbols from HP's libcurl build with HTTP/2 support. Same class as the idn2 gap: HP links a curl with h2 and ships no nghttp2. nghttp2 is MIT licensed.",
+      "$measured": "ALPN measured 2026-07-31: us1.api.ws-hp.com negotiates http/1.1 ONLY -- an earlier note wrongly cited it as an h2 endpoint. lfp-downloads.hpcloud.hp.com DOES negotiate h2, but that is the updater host, which this patch disables. So no confirmed h2 path is exercised by the patched build today. Bundled anyway because the cost is one small MIT dylib and the failure mode is a hard process abort at call time on any HP endpoint that later enables h2.",
+      "preload": true,
+      "$preload_note": "MUST be true. These symbols are flat-namespace ('dynamically looked up'), which dyld resolves only against images ACTUALLY LOADED in the process. Nothing declares a load command for libnghttp2, so with preload:false the dylib sits in the bundle, satisfies an `nm -gU` scan, and is never loaded -- verified with vmmap: libidn2/libunistring/libintl LOADED, libnghttp2 NOT LOADED. Presence on disk is not satisfaction."
+    }
+  ],
+
+  "$not_a_dependency": {
+    "libmagic.1.dylib": "HP already ships this, already universal (x86_64 arm64). Linked by both .node modules, JDFPrintProcessor and goyaApp. Do not copy or replace it."
+  },
+
+  "$unresolved_symbols_note": {
+    "_png_init_filter_functions_neon": "ACCEPTED, UNVERIFIED RISK -- do not restate this as established. Flat-namespace symbol from a libpng statically compiled into DjCoreServicesNative-Electron.node; nothing in the bundle exports it. An earlier note claimed the lookup 'never fires in practice because libpng's C filter fallback handles image decoding'. No evidence was cited, and the symbol being REFERENCED means a call site exists -- on arm64 libpng calls png_init_filter_functions_neon from png_init_filter_functions whenever PNG_ARM_NEON_OPT > 0. If it fires, dyld aborts the process. Left unaddressed because there is no obvious way to supply it (it is internal to a static libpng, not a shipped dylib). TO RESOLVE: exercise a PNG-decoding path in the patched build (stage a PNG, load a thumbnail) and confirm no abort; record the result here either way."
+  },
+
+  "expected_x86_only": [
+    "Contents/Resources/app/appData/macx/Frameworks/AdobeAXE16SharedExpat.framework/Versions/A/AdobeAXE16SharedExpat"
+  ],
+  "$expected_x86_only_note": "Orphaned: nothing in the bundle links it and it is not mapped into any running process. The live APPE path uses AdobeAXE8SharedExpat, which is universal. Leave it; just do not let verify fail on it.",
+
+  "verified_by": "audited against a working build; asar rebuild confirmed to change exactly these 4 entries with 19198 unpatched entries byte-identical and 0 blob slack",
+  "verified_on": "2026-07-31"
+}
