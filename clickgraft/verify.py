@@ -182,6 +182,19 @@ def verify_app_bundle(target_app_path, manifest=None):
     results["asar_integrity"] = "PASSED (Packed/unpacked counts & Info.plist integrity hash verified)"
 
     # 5. Automated Smoke Launch & Multi-signature Error Detection Test
+    #
+    # Only possible on Apple Silicon. There is no reverse Rosetta: an Intel Mac
+    # cannot execute the arm64 binary we just grafted in, and Popen raises
+    # OSError 86 "Bad CPU type in executable". That is not a defect in the
+    # copy — a cross-build for another Mac is a supported thing to do — so it
+    # is reported as not-checked rather than failed.
+    from clickgraft.hostarch import is_apple_silicon
+    if not is_apple_silicon():
+        results["smoke_launch"] = (
+            "SKIPPED (this Mac has an Intel processor and cannot run an Apple "
+            "Silicon app, so the copy could not be test-launched here)")
+        return True, results
+
     kill_hpclick_processes(target_app_path)
 
     tmp_dir = run_cmd(["getconf", "DARWIN_USER_TEMP_DIR"]).strip()

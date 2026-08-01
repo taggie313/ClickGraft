@@ -22,7 +22,7 @@ def build_apple_silicon_bundle(
     manifest=None,
     preload=True,
     progress_callback=None
-):
+, allow_foreign_host=False):
     """
     Executes end-to-end build pipeline.
     source_app_path: Path to existing HP Click.app
@@ -35,6 +35,18 @@ def build_apple_silicon_bundle(
     def _log(msg, pct=0.0):
         if progress_callback:
             progress_callback(msg, pct)
+
+    # Before anything is fetched or written. Everything downstream is
+    # arch-independent except the smoke launch, so an Intel Mac CAN produce a
+    # correct arm64 copy for another machine — deliberately, not by accident.
+    from clickgraft.hostarch import is_apple_silicon
+    if not allow_foreign_host and not is_apple_silicon():
+        raise ValueError(
+            "This Mac has an Intel processor. ClickGraft's job is putting the "
+            "Apple Silicon engine into a copy of HP Click, and that copy will "
+            "not run here. Nothing has been downloaded or written. If you are "
+            "building for a different Mac, that is supported - pass "
+            "allow_foreign_host=True.")
 
     source_app_path = os.path.abspath(source_app_path)
     if not os.path.exists(source_app_path):

@@ -585,3 +585,70 @@ class TestDylibFetchWithoutHomebrew(unittest.TestCase):
             self.assertIn("nghttp2", msg)
             self.assertIn("not a network problem", msg)
             self.assertIn("manifest", msg)
+
+
+class TestPrinterInfoAllowlist(unittest.TestCase):
+    """Nothing secret may ever leave in a bug report.
+
+    HP Click's printers.json holds SNMP credentials, a printer password, the
+    printer's network address, a user-chosen display name and the serial
+    number, right beside the model and firmware that make a printing report
+    actionable. The collector is an allowlist for that reason; these tests
+    exist so it stays one.
+    """
+
+    FIXTURE = {
+        "printers": [{
+            "address": "192.168.1.55",
+            "password": "hunter2",
+            "displayName": "Front Office — Acme Corp job printer",
+            "hasCustomName": True,
+            "family": "designjet",
+            "snmpCredentials": {"snmpUsername": "admin",
+                                "snmpAuthPass": "s3cret-auth",
+                                "snmpPrivacyPass": "s3cret-priv"},
+            "printerInfo": {"productName": "HP DesignJet T1600dr",
+                            "productNo": "3EK13A",
+                            "firmware": "CYCLOPSNEPTUNE_11_26_17.1",
+                            "serialNo": "SG12345678",
+                            "width": 914.4},
+            "mediaInputs": [{"type": "roll", "width": 609.6,
+                             "customName": "Acme proofing stock"}],
+            "cutters": [{"id": 1}],
+            "supportsBorderless": False,
+        }]
+    }
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="cg-printerinfo-")
+        self.path = os.path.join(self.dir, "printers.json")
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(self.FIXTURE, f)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_no_secret_appears_anywhere_in_the_output(self):
+        from clickgraft.printerinfo import collect, as_text
+        blob = json.dumps(collect(self.path)) + as_text(self.path)
+        for secret in ("192.168.1.55", "hunter2", "Acme Corp", "admin",
+                       "s3cret-auth", "s3cret-priv", "SG12345678",
+                       "Acme proofing stock"):
+            self.assertNotIn(secret, blob, f"{secret!r} leaked into a bug report")
+        for key in ("address", "password", "snmpCredentials", "snmpAuthPass",
+                    "displayName", "serialNo", "customName"):
+            self.assertNotIn(key, blob, f"key {key!r} leaked into a bug report")
+
+    def test_the_useful_fields_do_survive(self):
+        """An allowlist that strips everything is just as useless."""
+        from clickgraft.printerinfo import as_text
+        text = as_text(self.path)
+        for wanted in ("T1600dr", "3EK13A", "CYCLOPSNEPTUNE_11_26_17.1"):
+            self.assertIn(wanted, text)
+
+    def test_missing_config_never_raises(self):
+        """A bug report must still send on a machine with no printer set up."""
+        from clickgraft.printerinfo import collect, as_text
+        d = collect(os.path.join(self.dir, "nope.json"))
+        self.assertFalse(d["available"])
+        self.assertIn("not included", as_text(os.path.join(self.dir, "nope.json")))

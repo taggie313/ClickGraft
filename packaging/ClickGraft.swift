@@ -269,8 +269,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
     var logText: NSTextView?
     var logBuffer = ""
     var lastError = ""
+    var lastResults: [String: String] = [:]
+    var outcome = "no build has been run"
     var updateURL = ""
     var updateBanner: NSView?
+    var allowIntelHost = false
 
     // MARK: lifecycle
 
@@ -405,6 +408,9 @@ final class Wizard: NSObject, NSApplicationDelegate {
         candidates = d["candidates"] as? [[String: Any]] ?? []
         outputPath = d["default_output"] as? String ?? ""
         let ok = e["clt"] as? Bool ?? false
+        // Default true: if an older backend omits the key, fail open rather
+        // than blocking every user on a missing field.
+        let silicon = e["apple_silicon"] as? Bool ?? true
 
         var rows: [NSView] = [
             UI.title("What ClickGraft needs"),
@@ -423,6 +429,26 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          + "come back here. It's a large download and can take several minutes."),
             ], tint: NSColor.systemOrange.withAlphaComponent(0.12)))
         }
+        if !silicon {
+            let cb = NSButton(checkboxWithTitle:
+                "Yes — I'm making this copy for a different Mac that has Apple Silicon",
+                target: self, action: #selector(toggleIntelOverride(_:)))
+            cb.state = allowIntelHost ? .on : .off
+            rows.append(UI.panel([
+                UI.point("This Mac has an Intel processor.",
+                         "ClickGraft's whole job is putting the Apple Silicon engine into a "
+                         + "copy of HP Click. That copy will not run on this Mac, and your "
+                         + "HP Click here is already the right one for it."),
+                UI.small("If that's a surprise: click the Apple menu, then About This Mac. "
+                         + "Macs sold from about 2020 onward say Apple M1, M2, M3 and so on. "
+                         + "This one says Intel."),
+                UI.point("Building for another Mac is supported.",
+                         "Everything except the final test-launch works here, because this "
+                         + "Mac can't run the copy in order to check it. Tick the box and "
+                         + "carry on — the copy will be made, just not tried out."),
+                cb,
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.13)))
+        }
         rows.append(Disclosure(label: "What ClickGraft uses them for") { [weak self] in
             let tools = (self?.env["tools"] as? [String: String]) ?? [:]
             let list = tools.sorted { $0.key < $1.key }
@@ -434,7 +460,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
         })
 
         let next = UI.button("Continue", self, #selector(showChoose), primary: true)
-        next.isEnabled = ok
+        next.isEnabled = ok && (silicon || allowIntelHost)
         var buttons: [NSView] = [UI.button("Back", self, #selector(showWelcome))]
         if !ok { buttons.append(UI.button("Check again", self, #selector(showRequirements))) }
         buttons += [UI.spacer(), next]
@@ -504,6 +530,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
             next.isEnabled = true
             radios().first { $0.tag == usableIdx[0] }?.state = .on
         }
+    }
+
+    @objc func toggleIntelOverride(_ b: NSButton) {
+        allowIntelHost = (b.state == .on)
+        showRequirements()          // redraw so Continue enables/disables
     }
 
     /// Re-read the Applications folder without leaving the Choose screen.
@@ -672,8 +703,10 @@ final class Wizard: NSObject, NSApplicationDelegate {
             scroll,
         ], buttons: [UI.spacer()])
 
-        agent.stream(["build", "--source", picked?["path"] as? String ?? "",
-                      "--out", outputPath]) { [weak self] ev in self?.handle(ev) }
+        var args = ["build", "--source", picked?["path"] as? String ?? "",
+                    "--out", outputPath]
+        if allowIntelHost { args.append("--allow-intel-host") }
+        agent.stream(args) { [weak self] ev in self?.handle(ev) }
     }
 
     /// The backend's messages are written for the log. These are written for
@@ -712,6 +745,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     private func showDone(_ ev: [String: Any]) {
         let out = ev["output"] as? String ?? outputPath
+        outcome = "the build finished and every check passed"
+        lastResults = ev["results"] as? [String: String] ?? [:]
         logPath = ev["log_path"] as? String ?? logPath
         let name = (out as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
 
@@ -719,7 +754,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
             UI.text("Your Apple Silicon copy is ready", size: 22, weight: .semibold,
                     color: .systemGreen),
             UI.body("\(name) is in your Applications folder, next to your original."),
-            UI.body("Everything checked out: it's built for your Mac's processor, it's "
+            UI.body(lastResults["smoke_launch"]?.hasPrefix("SKIPPED") == true
+                    ? "It's built for Apple Silicon and it's signed. It has not been "
+                    + "started up, because this Mac can't run it — try it on the Mac you "
+                    + "made it for."
+                    : "Everything checked out: it's built for your Mac's processor, it's "
                     + "signed, and it starts up correctly."),
             UI.panel([
                 UI.point("On this Mac it starts about 11× faster than it did under Rosetta,",
@@ -744,6 +783,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
             },
         ], buttons: [UI.button("Show me the app", self, #selector(revealOutput)),
                      UI.button("Open the log", self, #selector(revealLog)),
+                     // Passing our checks is not the same as working. Nothing
+                     // here has ever verified that a page actually prints, and
+                     // the person best placed to tell us is standing at a
+                     // plotter looking at a finished copy.
+                     UI.button("Report a problem", self, #selector(sendReport)),
                      UI.spacer(),
                      UI.button("Done", self, #selector(quit), primary: true)])
     }
@@ -762,6 +806,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
                      && (ev["stage"] as? String ?? "") == "verify"
         logPath = ev["log_path"] as? String ?? logPath
         lastError = message
+        outcome = madeIt ? "the copy was made but a check did not pass"
+                         : "the build did not finish"
         let out = ev["output"] as? String ?? outputPath
 
         var rows: [NSView]
@@ -815,15 +861,34 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     /// Everything the report will contain, assembled so it can be SHOWN to the
     /// user before it goes anywhere. Nothing is sent that they have not read.
-    private func reportBody() -> String {
+    private func reportBody(note: String = "", printer: String = "") -> String {
         let pi = ProcessInfo.processInfo
         var out = "ClickGraft \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")\n"
         out += "macOS \(pi.operatingSystemVersionString)\n"
         out += "arch: \(machineArch())\n"
-        out += "stage: \(lastError.isEmpty ? "n/a" : "build/verify")\n"
+        out += "outcome: \(outcome)\n"
         out += "source: \((picked?["path"] as? String).map(scrub) ?? "none")\n"
         out += "version: \(picked?["version"] as? String ?? "?")\n\n"
-        out += "error:\n\(scrub(lastError))\n\n"
+
+        // What the person says beats anything we can infer. A copy that builds
+        // cleanly and then won't print looks identical to a perfect run from
+        // in here, so their sentence is the only signal that exists.
+        if !note.isEmpty {
+            out += "what they said:\n\(scrub(note))\n\n"
+        }
+        if !lastError.isEmpty {
+            out += "error:\n\(scrub(lastError))\n\n"
+        }
+        if !lastResults.isEmpty {
+            out += "checks:\n"
+            for (k, v) in lastResults.sorted(by: { $0.key < $1.key }) {
+                out += "  \(k): \(v)\n"
+            }
+            out += "\n"
+        }
+        if !printer.isEmpty {
+            out += "printer (included with permission):\n\(printer)\n\n"
+        }
         out += "log:\n\(scrub(logBuffer))"
         return out
     }
@@ -845,7 +910,44 @@ final class Wizard: NSObject, NSApplicationDelegate {
     }
 
     @objc func sendReport() {
-        let body = reportBody()
+        // Ask what's wrong first. From the Done screen the tool believes
+        // everything worked, so without this the report says only "it worked"
+        // and the reason they pressed the button is lost.
+        let ask = NSAlert()
+        ask.messageText = "What's the problem?"
+        ask.informativeText = "In your own words. \"It prints nothing\", \"the page "
+            + "comes out rotated\", \"it won't find my printer\" — whatever you'd say "
+            + "out loud is exactly right. You can leave it blank if you'd rather."
+        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 104))
+        let note = NSTextField(frame: NSRect(x: 0, y: 36, width: 460, height: 68))
+        note.placeholderString = "What happened?"
+        note.usesSingleLineMode = false
+        note.cell?.wraps = true
+        note.cell?.isScrollable = false
+
+        // Off unless they turn it on. Model and firmware are the two things
+        // that make a printing report actionable, but they are the user's
+        // equipment, so they get asked rather than told.
+        let inclPrinter = NSButton(checkboxWithTitle:
+            "Include my printer's model and firmware", target: nil, action: nil)
+        inclPrinter.frame = NSRect(x: 0, y: 6, width: 460, height: 22)
+        inclPrinter.state = .off
+        inclPrinter.toolTip = "Model, firmware version and paper sizes. Never the "
+            + "printer's name, address, serial number or any password."
+        wrap.addSubview(note)
+        wrap.addSubview(inclPrinter)
+        ask.accessoryView = wrap
+        ask.addButton(withTitle: "Continue")
+        ask.addButton(withTitle: "Cancel")
+        ask.window.initialFirstResponder = note
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+
+        var printer = ""
+        if inclPrinter.state == .on,
+           let r = agent.once(["printerinfo"]), let t = r["text"] as? String {
+            printer = t
+        }
+        let body = reportBody(note: note.stringValue, printer: printer)
 
         let a = NSAlert()
         a.messageText = "Send this to the ClickGraft developers?"

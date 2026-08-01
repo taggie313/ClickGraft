@@ -9,6 +9,7 @@ stdout; nothing else is ever printed there.
     python3 -m clickgraft.cli agent plan  --source PATH [--out PATH]
     python3 -m clickgraft.cli agent build --source PATH [--out PATH]
     python3 -m clickgraft.cli agent probe --source PATH
+    python3 -m clickgraft.cli agent printerinfo
 
 `build` streams:
     {"type":"progress","pct":0.4,"msg":"..."}
@@ -24,8 +25,10 @@ import time
 
 from clickgraft.build import build_apple_silicon_bundle
 from clickgraft.deps import check_clt
+from clickgraft.hostarch import host_info
 from clickgraft.macho import get_archs
 from clickgraft.manifest import ManifestManager
+from clickgraft.printerinfo import as_text as printer_text
 from clickgraft.probe import probe_app_bundle
 from clickgraft.verify import verify_app_bundle
 
@@ -48,8 +51,11 @@ def _log_path():
 
 
 def environment(mm):
+    h = host_info()
     return {
         "clt": check_clt(),
+        "apple_silicon": h["apple_silicon"],
+        "host": h,
         "tools": {t: (shutil.which(t) or "") for t in REQUIRED_TOOLS},
         "versions": sorted(mm.manifests),
     }
@@ -172,6 +178,13 @@ def main(argv):
         emit({"type": "plan", "plan": build_plan(m, source, output)})
         return 0
 
+    if cmd == "printerinfo":
+        # Only ever called when the user has ticked the box. Returns an
+        # allowlisted subset — see clickgraft/printerinfo.py for why it must
+        # never become a denylist.
+        emit({"type": "printerinfo", "text": printer_text()})
+        return 0
+
     if cmd == "probe":
         try:
             _draft, report = probe_app_bundle(source)
@@ -200,7 +213,8 @@ def main(argv):
 
         try:
             build_apple_silicon_bundle(source_app_path=source, output_app_path=output,
-                                       manifest=m, progress_callback=progress)
+                                       manifest=m, progress_callback=progress,
+                                       allow_foreign_host=("--allow-intel-host" in rest))
         except Exception as exc:                                   # noqa: BLE001
             emit({"type": "error", "error": str(exc), "stage": "build",
                   "output_exists": os.path.isdir(output), "output": output,
