@@ -89,7 +89,11 @@ header { padding: clamp(3.5rem, 9vw, 6rem) 0 0; }
 .btn-sub { display: block; font-weight: 400; font-size: .78rem; opacity: .82; margin-top: 2px; }
 .alt { color: var(--muted); text-decoration: none; font-weight: 550; font-size: .95rem; }
 .alt:hover { color: var(--accent); }
-.disclaim { font-size: .84rem; color: var(--faint); margin: 1.6rem 0 0; }
+.disclaim { font-size: .84rem; color: var(--faint); margin: 1.2rem 0 0; }
+.meta { font-size: .84rem; color: var(--muted); margin: 1.15rem 0 0;
+        font-variant-numeric: tabular-nums; }
+.meta a { color: var(--muted); }
+.meta a:hover { color: var(--accent); }
 
 /* ---- numbers ---- */
 table { border-collapse: collapse; width: 100%; font-size: .95rem; margin: 0 0 .8rem; }
@@ -142,11 +146,14 @@ footer p { margin: 0 0 .7em; }
 
   <div class="cta">
     <a class="btn" id="dl" href="ClickGraft.zip" download>
-      Download ClickGraft
+      Download ClickGraft {{VERSION}}
       <span class="btn-sub">for macOS on Apple Silicon &middot; free</span>
     </a>
     <a class="alt" id="gh" href="https://github.com/taggie313/ClickGraft">Source on GitHub &rarr;</a>
   </div>
+
+  <p class="meta">Version {{VERSION}} &middot; last updated {{UPDATED}} &middot;
+     <a href="https://github.com/taggie313/ClickGraft/releases">what changed</a></p>
 
   <p class="disclaim">Signed and notarized by Apple, so it opens normally.
      Open source under the MIT licence. Not affiliated with, endorsed by, or

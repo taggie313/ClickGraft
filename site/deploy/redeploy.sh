@@ -40,14 +40,31 @@ cp "$ZIP"                    /tmp/cg-build/html/ClickGraft.zip
 # and a wrong fingerprint is worse than none — it teaches people the check is
 # meaningless.
 SHA="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
-sed "s|{{ZIP_SHA256}}|$SHA|g" "$SITE/index.html" > /tmp/cg-build/html/index.html
+
+# Version comes from the app being shipped, and the date from that zip's own
+# mtime — not from `date` at deploy time. Redeploying the page without changing
+# the download must not advance "last updated": a date that moves when nothing
+# was released is worse than no date, because it is the thing people check to
+# decide whether to bother re-downloading.
+VERSION="$(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
+UPDATED="$(date -r "$ZIP" '+%-d %B %Y')"
+
+sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
+    -e "s|{{VERSION}}|$VERSION|g" \
+    -e "s|{{UPDATED}}|$UPDATED|g" \
+    "$SITE/index.html" > /tmp/cg-build/html/index.html
 printf '%s  ClickGraft.zip\n' "$SHA" > /tmp/cg-build/html/ClickGraft.zip.sha256
-grep -q '{{ZIP_SHA256}}' /tmp/cg-build/html/index.html && { echo "✗ hash placeholder not substituted" >&2; exit 1; }
+
+# Any surviving placeholder means the page would ship with {{...}} visible.
+if grep -o '{{[A-Z_]*}}' /tmp/cg-build/html/index.html | sort -u | grep .; then
+  echo "✗ the placeholders above were not substituted" >&2; exit 1
+fi
+echo "    version $VERSION, updated $UPDATED"
 echo "    sha256 $SHA"
 
 # Advertised version comes from the app itself, never from a hand-edited file.
 sh "$HERE/make-appcast.sh" "$ROOT/dist/ClickGraft.app" \
-   /tmp/cg-build/html/appcast.json "$SHA"
+   /tmp/cg-build/html/appcast.json "$SHA" "$ZIP"
 echo "    appcast $(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
 cp "$HERE/docker-compose.yml" "$HERE/nginx.conf" /tmp/cg-build/
 cp "$HERE/stats/run-goaccess.sh" /tmp/cg-build/stats/
