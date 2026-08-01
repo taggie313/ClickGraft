@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Prove the whole public surface works, the way a user's Mac exercises it.
+#
+#   ./site/deploy/healthcheck.sh
+#
+# Written after a user's bug report was lost to a four-minute window where
+# /report returned 404: the page was up, the download worked, the deploy said
+# success, and the one endpoint nobody checks was broken. Anything a user
+# depends on gets checked here.
+set -uo pipefail
+BASE="${BASE:-https://clickgraft.elusive.net}"
+UA="ClickGraft-healthcheck/1.0 CFNetwork/1490.0.4 Darwin/24.0.0"
+fail=0
+
+check() { # name expected actual
+  if [ "$2" = "$3" ]; then printf '  ✓ %-34s %s\n' "$1" "$3"
+  else printf '  ✗ %-34s got %s, wanted %s\n' "$1" "$3" "$2"; fail=1; fi
+}
+
+code() { curl -s -o /dev/null -w '%{http_code}' --max-time 30 -A "$UA" "$@"; }
+
+echo "checking $BASE"
+check "GET /"                200 "$(code "$BASE/")"
+check "GET /ClickGraft.zip"  200 "$(code -I "$BASE/ClickGraft.zip")"
+check "GET /appcast.json"    200 "$(code "$BASE/appcast.json")"
+check "GET /ClickGraft.zip.sha256" 200 "$(code "$BASE/ClickGraft.zip.sha256")"
+check "POST /report"         200 "$(code -X POST --data-binary 'healthcheck' "$BASE/report")"
+check "GET /stats (must 404)" 404 "$(code "$BASE/stats/report.html")"
+
+# The advertised version must match the download's actual hash, or the update
+# check tells people to fetch something that isn't there.
+adv=$(curl -s --max-time 30 -A "$UA" "$BASE/appcast.json" | sed -n 's/.*"sha256": "\([a-f0-9]*\)".*/\1/p')
+pub=$(curl -s --max-time 30 -A "$UA" "$BASE/ClickGraft.zip.sha256" | cut -d' ' -f1)
+real=$(curl -s --max-time 120 -A "$UA" "$BASE/ClickGraft.zip" | shasum -a 256 | cut -d' ' -f1)
+check "appcast sha == published sha" "$pub" "$adv"
+check "published sha == real bytes"  "$real" "$pub"
+
+[ "$fail" = 0 ] && echo "all good" || { echo "FAILURES ABOVE" >&2; exit 1; }

@@ -114,6 +114,11 @@ if curl -fsS --max-time 20 "$HEALTH_URL" | grep -q 'ClickGraft'; then
   echo "✓ page is live"
   code=$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 30 "${HEALTH_URL}ClickGraft.zip")
   [ "$code" = 200 ] && echo "✓ download reachable" || { echo "✗ ClickGraft.zip returned HTTP $code" >&2; exit 1; }
+  # Check every endpoint a user's Mac touches, not just the two obvious ones.
+  # A deploy once reported success while /report returned 404, and the first we
+  # knew of it was a user whose bug report vanished.
+  echo
+  BASE="${HEALTH_URL%/}" sh "$HERE/healthcheck.sh"
 else
   echo "! ${HEALTH_URL} did not answer."
   echo "  The container is serving correctly, so this is the tunnel: check that"

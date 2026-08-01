@@ -891,13 +891,56 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 let ok = err == nil && (200...299).contains(code)
                 let d = NSAlert()
-                d.messageText = ok ? "Report sent" : "The report didn't go through"
-                d.informativeText = ok
-                    ? "Thank you. There's nothing to follow up on — if you want a reply, "
-                    + "open an issue on GitHub as well."
-                    : "No harm done, and nothing was sent. Press Send a report again to "
-                    + "retry, or use Copy instead and paste it into a GitHub issue."
-                d.runModal()
+
+                if ok {
+                    d.messageText = "Report sent"
+                    d.informativeText = "Thank you. There's nothing to follow up on — if "
+                        + "you want a reply, open an issue on GitHub as well."
+                    d.runModal()
+                    return
+                }
+
+                // Say WHY. The first person this happened to could only tell us
+                // "it failed", and the cause turned out to be a server-side 404
+                // during a four-minute window — diagnosable in seconds if the
+                // status code had been on screen. A failure the user can't
+                // describe is a failure we can't fix.
+                let why: String
+                if let e = err {
+                    why = "Your Mac couldn't reach the server: \(e.localizedDescription)"
+                } else if code == 404 || code == 502 || code == 503 {
+                    why = "The server answered \(code), which means the reporting service "
+                        + "is down or being worked on. This is our problem, not yours, and "
+                        + "trying later usually works."
+                } else if code == 413 {
+                    why = "The server answered 413: the report was too large to accept."
+                } else if code == 429 {
+                    why = "The server answered 429: too many reports too quickly. Waiting "
+                        + "a minute will clear it."
+                } else {
+                    why = "The server answered \(code)."
+                }
+
+                d.messageText = "The report didn't go through"
+                d.informativeText = why + "\n\nNothing was sent, and nothing on your Mac "
+                    + "has changed. You can copy the report instead and paste it into a "
+                    + "GitHub issue or an email — that reaches us just as well."
+                d.addButton(withTitle: "Copy the report")
+                d.addButton(withTitle: "Open GitHub issues")
+                d.addButton(withTitle: "Close")
+
+                switch d.runModal() {
+                case .alertFirstButtonReturn:
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(body, forType: .string)
+                case .alertSecondButtonReturn:
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(body, forType: .string)
+                    if let u = URL(string: "https://github.com/taggie313/ClickGraft/issues/new") {
+                        NSWorkspace.shared.open(u)
+                    }
+                default: break
+                }
             }
         }.resume()
     }
