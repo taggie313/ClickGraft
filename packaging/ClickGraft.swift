@@ -1,13 +1,13 @@
 // ClickGraft — native AppKit front end.
 //
-// Replaces both a tkinter wizard (Apple's system Tk 8.5.9 maps widgets and
-// never paints them on current macOS) and a browser-served one (worked, but
-// shipping a local web server as a Mac app is the wrong shape).
+// All strings here come from docs/wizard-copy.md, which is the source of truth.
+// If you change wording, change it there too — the copy was written for someone
+// whose plotter is how they earn a living, not for a developer, and the
+// reasoning behind each screen is recorded alongside it.
 //
-// All the real work stays in Python. This drives it by spawning
+// No build logic lives here. The app spawns
 //   python3 -m clickgraft.cli agent ...
-// and reading one JSON object per line, so there is no build logic here to
-// drift out of step with the backend.
+// and reads one JSON object per line, so the UI cannot drift from the backend.
 //
 // Builds with the Command Line Tools alone:
 //   swiftc -O -o ClickGraft ClickGraft.swift -framework AppKit
@@ -15,7 +15,7 @@
 import AppKit
 import Foundation
 
-// MARK: - Backend
+// MARK: - Backend bridge
 
 final class Agent {
     let resources: URL
@@ -27,13 +27,12 @@ final class Agent {
         p.arguments = ["-m", "clickgraft.cli", "agent"] + args
         var env = ProcessInfo.processInfo.environment
         env["PYTHONPATH"] = resources.path
-        env["PYTHONDONTWRITEBYTECODE"] = "1"   // never dirty a signed bundle
+        env["PYTHONDONTWRITEBYTECODE"] = "1"      // never dirty a signed bundle
         p.environment = env
         p.currentDirectoryURL = resources
         return p
     }
 
-    /// One-shot call returning the first JSON object printed.
     func once(_ args: [String]) -> [String: Any]? {
         let p = process(args)
         let out = Pipe()
@@ -44,330 +43,629 @@ final class Agent {
         p.waitUntilExit()
         for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
             if let d = line.data(using: .utf8),
-               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-                return obj
-            }
+               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { return o }
         }
         return nil
     }
 
-    /// Streaming call: `onEvent` fires on the main queue per JSON line.
     func stream(_ args: [String], onEvent: @escaping ([String: Any]) -> Void) {
         let p = process(args)
         let out = Pipe()
         p.standardOutput = out
         p.standardError = Pipe()
-        var buffer = Data()
+        var buf = Data()
         out.fileHandleForReading.readabilityHandler = { fh in
-            buffer.append(fh.availableData)
-            while let nl = buffer.firstIndex(of: 0x0A) {
-                let line = buffer.subdata(in: buffer.startIndex..<nl)
-                buffer.removeSubrange(buffer.startIndex...nl)
-                if let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] {
-                    DispatchQueue.main.async { onEvent(obj) }
+            buf.append(fh.availableData)
+            while let nl = buf.firstIndex(of: 0x0A) {
+                let line = buf.subdata(in: buf.startIndex..<nl)
+                buf.removeSubrange(buf.startIndex...nl)
+                if let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] {
+                    DispatchQueue.main.async { onEvent(o) }
                 }
             }
         }
-        p.terminationHandler = { _ in
-            out.fileHandleForReading.readabilityHandler = nil
-        }
+        p.terminationHandler = { _ in out.fileHandleForReading.readabilityHandler = nil }
         try? p.run()
     }
 }
 
-/// Top-anchored container. Without this, content shorter than the window
-/// renders against the bottom edge, because AppKit's default coordinate
-/// origin is bottom-left.
+/// Content shorter than its scroll view renders against the BOTTOM unless the
+/// document view is flipped — AppKit's origin is bottom-left.
 final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
-// MARK: - Small view helpers
-
-func label(_ text: String, size: CGFloat = 13, weight: NSFont.Weight = .regular,
-           color: NSColor = .labelColor, mono: Bool = false) -> NSTextField {
-    let f = NSTextField(wrappingLabelWithString: text)
-    f.font = mono ? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
-                  : NSFont.systemFont(ofSize: size, weight: weight)
-    f.textColor = color
-    f.isSelectable = true
-    f.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    return f
+/// Layer-backed tinted panel. Re-resolves its colour when the system
+/// appearance changes — a CGColor captured once would keep the old theme's.
+final class PanelView: NSView {
+    var tint: NSColor = .clear
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        layer?.cornerRadius = 9
+        layer?.backgroundColor = tint.cgColor
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 }
 
-func vstack(_ views: [NSView], spacing: CGFloat = 10,
-            align: NSLayoutConstraint.Attribute = .leading) -> NSStackView {
-    let s = NSStackView(views: views)
-    s.orientation = .vertical
-    s.alignment = align
-    s.spacing = spacing
-    s.translatesAutoresizingMaskIntoConstraints = false
-    return s
+// MARK: - Building blocks
+
+enum UI {
+    static let margin: CGFloat = 30
+    static let width: CGFloat = 720
+
+    static func text(_ s: String, size: CGFloat = 13, weight: NSFont.Weight = .regular,
+                     color: NSColor = .labelColor, mono: Bool = false) -> NSTextField {
+        let f = NSTextField(wrappingLabelWithString: s)
+        f.font = mono ? .monospacedSystemFont(ofSize: size, weight: weight)
+                      : .systemFont(ofSize: size, weight: weight)
+        f.textColor = color
+        f.isSelectable = true
+        f.preferredMaxLayoutWidth = width - (margin * 2) - 16
+        return f
+    }
+
+    static func title(_ s: String) -> NSTextField { text(s, size: 22, weight: .semibold) }
+    static func subtitle(_ s: String) -> NSTextField {
+        text(s, size: 14, color: .secondaryLabelColor)
+    }
+    static func body(_ s: String) -> NSTextField { text(s, size: 13) }
+    static func small(_ s: String) -> NSTextField {
+        text(s, size: 11.5, color: .secondaryLabelColor)
+    }
+    static func section(_ s: String) -> NSTextField {
+        text(s, size: 11, weight: .bold, color: .secondaryLabelColor)
+    }
+
+    /// A tinted panel. Used for the reassurance blocks, which must read as a
+    /// distinct promise rather than more prose.
+    ///
+    /// Deliberately not an NSBox: assigning an auto-layout stack to NSBox's
+    /// contentView gives the box no intrinsic height, so it collapses to zero
+    /// and its text draws on top of whatever is above it.
+    static func panel(_ views: [NSView], tint: NSColor = NSColor.controlAccentColor
+                        .withAlphaComponent(0.07)) -> NSView {
+        let v = PanelView()
+        v.tint = tint
+        v.wantsLayer = true
+        v.translatesAutoresizingMaskIntoConstraints = false
+        let stack = vstack(views, spacing: 7)
+        v.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -14),
+            stack.topAnchor.constraint(equalTo: v.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -12),
+            v.widthAnchor.constraint(equalToConstant: width - margin * 2),
+        ])
+        return v
+    }
+
+    /// "Point — explanation" on one line, bold lead. The pattern the copy deck
+    /// uses for every reassurance and every listed change.
+    static func point(_ lead: String, _ rest: String) -> NSTextField {
+        let f = NSTextField(wrappingLabelWithString: "")
+        let a = NSMutableAttributedString(
+            string: lead, attributes: [.font: NSFont.systemFont(ofSize: 12.5, weight: .semibold),
+                                       .foregroundColor: NSColor.labelColor])
+        a.append(NSAttributedString(
+            string: rest.isEmpty ? "" : " " + rest,
+            attributes: [.font: NSFont.systemFont(ofSize: 12.5),
+                         .foregroundColor: NSColor.secondaryLabelColor]))
+        f.attributedStringValue = a
+        f.isSelectable = true
+        f.preferredMaxLayoutWidth = width - (margin * 2) - 34
+        return f
+    }
+
+    static func vstack(_ v: [NSView], spacing: CGFloat = 12) -> NSStackView {
+        let s = NSStackView(views: v)
+        s.orientation = .vertical
+        s.alignment = .leading
+        s.spacing = spacing
+        s.translatesAutoresizingMaskIntoConstraints = false
+        return s
+    }
+
+    static func hstack(_ v: [NSView], spacing: CGFloat = 10) -> NSStackView {
+        let s = NSStackView(views: v)
+        s.orientation = .horizontal
+        s.spacing = spacing
+        return s
+    }
+
+    static func button(_ t: String, _ target: AnyObject, _ a: Selector,
+                       primary: Bool = false) -> NSButton {
+        let b = NSButton(title: t, target: target, action: a)
+        b.bezelStyle = .rounded
+        if primary { b.keyEquivalent = "\r" }
+        return b
+    }
+
+    static func spacer() -> NSView {
+        let v = NSView()
+        v.setContentHuggingPriority(.init(1), for: .horizontal)
+        return v
+    }
 }
 
-func hstack(_ views: [NSView], spacing: CGFloat = 10) -> NSStackView {
-    let s = NSStackView(views: views)
-    s.orientation = .horizontal
-    s.spacing = spacing
-    return s
+/// Collapsible "Show technical detail". Built lazily so it reflects state at
+/// the moment it is opened.
+final class Disclosure: NSView {
+    private let label: String
+    private let provider: () -> String
+    private var toggle: NSButton!
+    private var shown: NSScrollView?
+
+    init(label: String = "Show technical detail", provider: @escaping () -> String) {
+        self.label = label
+        self.provider = provider
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        toggle = NSButton(title: "▸ " + label, target: self, action: #selector(flip))
+        toggle.bezelStyle = .inline
+        toggle.isBordered = false
+        toggle.contentTintColor = .secondaryLabelColor
+        toggle.font = .systemFont(ofSize: 11.5)
+        toggle.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(toggle)
+        NSLayoutConstraint.activate([
+            toggle.leadingAnchor.constraint(equalTo: leadingAnchor),
+            toggle.topAnchor.constraint(equalTo: topAnchor),
+            toggle.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+        ])
+        heightAnchor.constraint(greaterThanOrEqualToConstant: 20).isActive = true
+    }
+    required init?(coder: NSCoder) { nil }
+
+    @objc private func flip() {
+        if let s = shown {
+            s.removeFromSuperview(); shown = nil
+            toggle.title = "▸ " + label
+            invalidateIntrinsicContentSize()
+            return
+        }
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .lineBorder
+        let tv = NSTextView()
+        tv.isEditable = false
+        tv.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        tv.string = provider()
+        scroll.documentView = tv
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.widthAnchor.constraint(equalToConstant: UI.width - UI.margin * 2 - 10),
+            scroll.topAnchor.constraint(equalTo: toggle.bottomAnchor, constant: 6),
+            scroll.heightAnchor.constraint(equalToConstant: 170),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        shown = scroll
+        toggle.title = "▾ Hide " + label.replacingOccurrences(of: "Show ", with: "")
+    }
 }
 
-func button(_ title: String, _ target: AnyObject, _ action: Selector,
-            key: String = "") -> NSButton {
-    let b = NSButton(title: title, target: target, action: action)
-    b.bezelStyle = .rounded
-    b.keyEquivalent = key
-    return b
-}
-
-// MARK: - Controller
+// MARK: - Wizard
 
 final class Wizard: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var agent: Agent!
-    var content: NSView!
+    var container: NSView!
 
     var candidates: [[String: Any]] = []
     var picked: [String: Any]?
     var plan: [String: Any] = [:]
     var outputPath = ""
     var logPath = ""
+    var env: [String: Any] = [:]
 
-    var progressBar: NSProgressIndicator?
-    var progressLabel: NSTextField?
-    var logView: NSTextView?
+    var continueButton: NSButton?
+    var bar: NSProgressIndicator?
+    var caption: NSTextField?
+    var logText: NSTextView?
+    var logBuffer = ""
 
-    // -- lifecycle ------------------------------------------------------
-    func applicationDidFinishLaunching(_ note: Notification) {
-        let exe = URL(fileURLWithPath: Bundle.main.bundlePath)
-        agent = Agent(resources: exe.appendingPathComponent("Contents/Resources"))
+    // MARK: lifecycle
 
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 520),
-                          styleMask: [.titled, .closable, .miniaturizable],
+    func applicationDidFinishLaunching(_ n: Notification) {
+        agent = Agent(resources: URL(fileURLWithPath: Bundle.main.bundlePath)
+                        .appendingPathComponent("Contents/Resources"))
+        // Sized so the review screen — the longest, and the one the user most
+        // needs to read all of — fits without scrolling on a laptop display.
+        // Resizable because a shorter screen would otherwise clip it silently.
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: UI.width, height: 790),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
+        window.minSize = NSSize(width: UI.width, height: 420)
         window.title = "ClickGraft"
         window.center()
-
-        content = NSView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView = content
+        container = NSView()
+        window.contentView = container
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-
-        showRequirements()
+        showWelcome()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    @objc func quit() { NSApp.terminate(nil) }
 
-    private func setBody(_ stack: NSStackView) {
-        content.subviews.forEach { $0.removeFromSuperview() }
+    private func present(_ rows: [NSView], buttons: [NSView]) {
+        container.subviews.forEach { $0.removeFromSuperview() }
+
         let scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         let doc = FlippedView()
         doc.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(stack)
+        let body = UI.vstack(rows, spacing: 14)
+        doc.addSubview(body)
         scroll.documentView = doc
-        content.addSubview(scroll)
+
+        let barRow = UI.hstack(buttons)
+        barRow.translatesAutoresizingMaskIntoConstraints = false
+
+        // A hairline above the buttons: it marks where the readable area stops.
+        // Without it a screen whose text runs past the fold looks like it simply
+        // ended, and on the review screen that means someone presses the button
+        // having read two-thirds of what they were promised.
+        let hair = NSBox()
+        hair.boxType = .separator
+        hair.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(scroll)
+        container.addSubview(hair)
+        container.addSubview(barRow)
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: content.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: container.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: hair.topAnchor),
+            hair.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            hair.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            hair.bottomAnchor.constraint(equalTo: barRow.topAnchor, constant: -14),
             doc.widthAnchor.constraint(equalTo: scroll.widthAnchor),
-            stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: 26),
-            stack.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -26),
-            stack.topAnchor.constraint(equalTo: doc.topAnchor, constant: 24),
-            doc.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 24),
+            body.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: UI.margin),
+            body.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -UI.margin),
+            body.topAnchor.constraint(equalTo: doc.topAnchor, constant: 26),
+            doc.bottomAnchor.constraint(equalTo: body.bottomAnchor, constant: 20),
+            barRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: UI.margin),
+            barRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -UI.margin),
+            barRow.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
         ])
     }
 
-    private func title(_ s: String) -> NSTextField { label(s, size: 20, weight: .semibold) }
-    private func caption(_ s: String) -> NSTextField {
-        label(s, size: 12, color: .secondaryLabelColor)
+    // MARK: 1 — Welcome
+
+    @objc func showWelcome() {
+        let rows: [NSView] = [
+            UI.title("ClickGraft"),
+            UI.subtitle("Make HP Click run properly on your Mac"),
+            UI.body("In 2020 Apple started replacing the Intel processors in Macs with its "
+                    + "own, called Apple Silicon. Your Mac still runs apps built for the older "
+                    + "Intel chips by translating them as they go — that's Rosetta."),
+            UI.body("HP Click for Mac is one of those. That translation is why it's slow to "
+                    + "start and why clicks take a moment to register."),
+            UI.body("HP already builds the important parts of HP Click for Apple Silicon — "
+                    + "page layout, colour, the print engine. They're inside the app you have "
+                    + "installed right now. They're just packaged with an Intel engine."),
+            UI.body("ClickGraft makes a copy of your HP Click and puts the Apple Silicon "
+                    + "engine into that copy."),
+            UI.panel([
+                UI.point("Your HP Click is not modified.",
+                         "It's opened for reading only, and left exactly as it is."),
+                UI.point("You end up with two apps.", "Your original, and a new one beside it."),
+                UI.point("To undo everything, drag the new app to the Trash.",
+                         "There is no uninstaller because there's nothing else to remove."),
+            ]),
+        ]
+        present(rows, buttons: [UI.button("Quit", self, #selector(quit)), UI.spacer(),
+                                UI.button("Continue", self, #selector(showRequirements),
+                                          primary: true)])
     }
 
-    // -- 1. requirements -------------------------------------------------
+    // MARK: 2 — Requirements
+
     @objc func showRequirements() {
-        guard let d = agent.once(["env"]),
-              let env = d["env"] as? [String: Any] else {
-            setBody(vstack([title("Couldn't start"),
-                            caption("The ClickGraft backend did not respond.")]))
+        guard let d = agent.once(["env"]), let e = d["env"] as? [String: Any] else {
+            present([UI.title("ClickGraft couldn't start"),
+                     UI.body("The part of ClickGraft that does the work didn't respond. "
+                             + "Reopening the app usually clears this.")],
+                    buttons: [UI.spacer(), UI.button("Quit", self, #selector(quit), primary: true)])
             return
         }
+        env = e
         candidates = d["candidates"] as? [[String: Any]] ?? []
         outputPath = d["default_output"] as? String ?? ""
-        let ok = env["clt"] as? Bool ?? false
+        let ok = e["clt"] as? Bool ?? false
 
         var rows: [NSView] = [
-            title("Requirements"),
-            caption("ClickGraft needs one thing: Apple's Xcode Command Line Tools. "
-                    + "They supply the signing tools and the Python it runs on."),
-            label(ok ? "✓  Xcode Command Line Tools — installed"
-                     : "✗  Xcode Command Line Tools — missing",
-                  size: 13, weight: .medium,
-                  color: ok ? .systemGreen : .systemRed),
+            UI.title("What ClickGraft needs"),
+            UI.body("ClickGraft uses a set of tools Apple ships for free, called the Command "
+                    + "Line Tools. Most Macs used for design or print work already have them."),
         ]
-        if !ok {
-            rows.append(caption("Open Terminal and run  xcode-select --install  then reopen ClickGraft."))
+        if ok {
+            rows.append(UI.panel([UI.point("Apple's Command Line Tools are installed.",
+                                           "Nothing to do.")],
+                                 tint: NSColor.systemGreen.withAlphaComponent(0.10)))
+        } else {
+            rows.append(UI.panel([
+                UI.point("Apple's Command Line Tools aren't installed yet.", ""),
+                UI.small("They come from Apple, not from us. macOS will offer to install them "
+                         + "the first time it needs them — accept, wait for it to finish, then "
+                         + "come back here. It's a large download and can take several minutes."),
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.12)))
         }
-        if let tools = env["tools"] as? [String: String] {
-            let detail = tools.sorted { $0.key < $1.key }
-                .map { "\($0.key.padding(toLength: 20, withPad: " ", startingAt: 0))\($0.value.isEmpty ? "not found" : $0.value)" }
+        rows.append(Disclosure(label: "What ClickGraft uses them for") { [weak self] in
+            let tools = (self?.env["tools"] as? [String: String]) ?? [:]
+            let list = tools.sorted { $0.key < $1.key }
+                .map { "\($0.key.padding(toLength: 20, withPad: " ", startingAt: 0))"
+                     + "\($0.value.isEmpty ? "not found" : $0.value)" }
                 .joined(separator: "\n")
-            rows.append(label(detail, size: 11, color: .tertiaryLabelColor, mono: true))
-        }
-        let next = button(ok ? "Continue" : "Quit", self,
-                          ok ? #selector(showChoose) : #selector(quit), key: "\r")
-        next.keyEquivalent = "\r"
-        rows.append(hstack([next]))
-        setBody(vstack(rows, spacing: 14))
+            return "Two things: to read the app you already have, and to sign the copy it "
+                 + "makes so macOS will run it.\n\n" + list
+        })
+
+        let next = UI.button("Continue", self, #selector(showChoose), primary: true)
+        next.isEnabled = ok
+        var buttons: [NSView] = [UI.button("Back", self, #selector(showWelcome))]
+        if !ok { buttons.append(UI.button("Check again", self, #selector(showRequirements))) }
+        buttons += [UI.spacer(), next]
+        present(rows, buttons: buttons)
     }
 
-    @objc func quit() { NSApp.terminate(nil) }
+    // MARK: 3 — Choose
 
-    // -- 2. choose -------------------------------------------------------
     @objc func showChoose() {
         var rows: [NSView] = [
-            title("Choose your HP Click"),
-            caption("Pick your original installation. ClickGraft never modifies it — "
-                    + "it writes a separate copy."),
+            UI.title("Choose your HP Click"),
+            UI.body("Pick the HP Click you use now. ClickGraft reads it and leaves it alone."),
         ]
+
         if candidates.isEmpty {
-            rows.append(label("No HP Click installation found in /Applications.",
-                              color: .systemRed))
+            rows.append(UI.panel([
+                UI.point("No HP Click found in your Applications folder.", ""),
+                UI.small("ClickGraft looks in Applications. If yours lives somewhere else, "
+                         + "move it there and press Check again."),
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.12)))
         }
+
         for (i, c) in candidates.enumerated() {
             let usable = c["usable"] as? Bool ?? false
-            let name = c["name"] as? String ?? "?"
-            let archs = (c["archs"] as? [String] ?? []).joined(separator: " / ")
+            let name = (c["name"] as? String ?? "").replacingOccurrences(of: ".app", with: "")
             let ver = c["version"] as? String ?? ""
-            let radio = NSButton(radioButtonWithTitle: usable ? "\(name)   —   \(ver)" : name,
-                                 target: self, action: #selector(pick(_:)))
+            let title = ver.isEmpty ? name : "\(name) — version \(ver)"
+            let radio = NSButton(radioButtonWithTitle: title, target: self,
+                                 action: #selector(pick(_:)))
             radio.tag = i
             radio.isEnabled = usable
-            var sub: [NSView] = [radio,
-                                 label("      \(archs)", size: 11,
-                                       color: .tertiaryLabelColor, mono: true)]
-            if let why = c["why"] as? String, !why.isEmpty {
-                sub.append(label("      \(why)", size: 11, color: .systemOrange))
-            }
-            rows.append(vstack(sub, spacing: 2))
-        }
-        let back = button("Back", self, #selector(showRequirements))
-        let next = button("Continue", self, #selector(showReview), key: "\r")
-        next.isEnabled = false
-        nextButton = next
-        rows.append(hstack([back, next]))
-        setBody(vstack(rows, spacing: 12))
+            radio.font = .systemFont(ofSize: 13, weight: usable ? .medium : .regular)
 
-        // preselect the only usable candidate, if there is exactly one
+            var sub: [NSView] = [radio]
+            if usable {
+                sub.append(UI.small("      Ready to copy"))
+            } else if let why = c["why"] as? String, !why.isEmpty {
+                sub.append(UI.small("      " + why))
+            }
+            rows.append(UI.vstack(sub, spacing: 2))
+        }
+
+        // Only an unrecognised *version* is worth explaining and reporting. An
+        // already-made copy is greyed out with its own one-line reason; showing
+        // this panel for it reads as "your app is unsupported", which it isn't.
+        if candidates.contains(where: { ($0["reason"] as? String ?? "") == "unsupported" }) {
+            rows.append(UI.panel([
+                UI.small("ClickGraft only works with versions it has been tested against, "
+                         + "because it needs to know exactly where to make its changes. "
+                         + "Guessing would risk your app."),
+                UI.small("You can send a report describing this version, and support can be "
+                         + "added."),
+                UI.button("Create a report", self, #selector(makeReport)),
+            ], tint: NSColor.secondaryLabelColor.withAlphaComponent(0.07)))
+        }
+
+        let next = UI.button("Continue", self, #selector(showReview), primary: true)
+        next.isEnabled = false
+        continueButton = next
+        present(rows, buttons: [UI.button("Back", self, #selector(showRequirements)),
+                                UI.button("Check again", self, #selector(rescan)),
+                                UI.spacer(), next])
+
         let usableIdx = candidates.indices.filter { candidates[$0]["usable"] as? Bool ?? false }
         if usableIdx.count == 1 {
             picked = candidates[usableIdx[0]]
             next.isEnabled = true
-            for v in allRadios() where v.tag == usableIdx[0] { v.state = .on }
+            radios().first { $0.tag == usableIdx[0] }?.state = .on
         }
     }
 
-    var nextButton: NSButton?
+    /// Re-read the Applications folder without leaving the Choose screen.
+    @objc func rescan() {
+        if let d = agent.once(["env"]) {
+            candidates = d["candidates"] as? [[String: Any]] ?? []
+            outputPath = d["default_output"] as? String ?? outputPath
+        }
+        picked = nil
+        showChoose()
+    }
 
-    private func allRadios() -> [NSButton] {
-        var found: [NSButton] = []
+    private func radios() -> [NSButton] {
+        var out: [NSButton] = []
         func walk(_ v: NSView) {
-            if let b = v as? NSButton, b.action == #selector(pick(_:)) { found.append(b) }
+            if let b = v as? NSButton, b.action == #selector(pick(_:)) { out.append(b) }
             v.subviews.forEach(walk)
         }
-        walk(content)
-        return found
+        walk(container)
+        return out
     }
 
-    @objc func pick(_ sender: NSButton) {
-        picked = candidates[sender.tag]
-        nextButton?.isEnabled = true
+    @objc func pick(_ s: NSButton) {
+        picked = candidates[s.tag]
+        continueButton?.isEnabled = true
     }
 
-    // -- 3. review -------------------------------------------------------
+    @objc func makeReport() {
+        let bad = candidates.first { ($0["reason"] as? String ?? "") == "unsupported" }
+        guard let path = bad?["path"] as? String else { return }
+        let a = NSAlert()
+        a.messageText = "Creating the report…"
+        a.informativeText = "This looks at the app and writes a description of it. "
+                          + "It takes a minute."
+        a.addButton(withTitle: "OK")
+        a.runModal()
+        if let r = agent.once(["probe", "--source", path]),
+           let report = r["report"] as? String {
+            let dir = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+            let file = dir.appendingPathComponent("ClickGraft report.txt")
+            try? report.write(to: file, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.selectFile(file.path, inFileViewerRootedAtPath: "")
+        }
+    }
+
+    // MARK: 4 — Review
+
     @objc func showReview() {
         guard let src = picked?["path"] as? String,
               let d = agent.once(["plan", "--source", src, "--out", outputPath]),
               let p = d["plan"] as? [String: Any] else {
-            setBody(vstack([title("Couldn't read the plan"),
-                            caption((agent.once(["plan", "--source", picked?["path"] as? String ?? ""])?["error"] as? String) ?? "unknown error"),
-                            hstack([button("Back", self, #selector(showChoose))])]))
+            present([UI.title("ClickGraft couldn't read that app"),
+                     UI.body("It may have been updated or moved. Go back and choose again.")],
+                    buttons: [UI.button("Back", self, #selector(showChoose)), UI.spacer()])
             return
         }
         plan = p
+        let out = p["output"] as? String ?? ""
+        let replacing = FileManager.default.fileExists(atPath: out)
 
         var rows: [NSView] = [
-            title("Review the plan"),
-            caption("Nothing is written until you approve this."),
-            label("Read from    \(p["source"] as? String ?? "")\n"
-                  + "Written to   \(p["output"] as? String ?? "")\n"
-                  + "Version      HP Click \(p["app_version"] as? String ?? "")\n"
-                  + "Runtime      Electron \(p["electron"] as? String ?? "") (arm64)",
-                  size: 11, mono: true),
-            label("Changes to the copy", size: 13, weight: .semibold),
+            UI.title("Here's exactly what will happen"),
+            UI.body("Nothing has been changed yet. Nothing will be, until you press the "
+                    + "button below."),
+
+            UI.section("WHERE THINGS GO"),
+            UI.point("Reading from", ""),
+            UI.text(p["source"] as? String ?? "", size: 11, mono: true),
+            UI.small("Opened for reading only, not changed."),
+            UI.point(replacing ? "Replacing" : "Creating", ""),
+            UI.text(out, size: 11, mono: true),
+            // The build deletes an existing output bundle outright. Promising
+            // "nothing is overwritten" while doing that is the one lie this
+            // screen cannot afford, so a second run says what it really does.
+            UI.small(replacing
+                     ? "A copy is already here from a previous run. It will be replaced. "
+                     + "Your original HP Click is still untouched."
+                     : "A new app. Nothing is overwritten."),
+
+            UI.section("THE MAIN CHANGE"),
+            UI.point("Replacing the Intel engine with the Apple Silicon one.",
+                     "ClickGraft downloads the official Apple Silicon engine directly from "
+                     + "its makers, checks it against a published fingerprint, and puts it in "
+                     + "the copy. HP's own files — layout, colour, the print engine, your "
+                     + "settings — are carried across untouched."),
+
+            // Not "\(patches.count) small fixes": the manifest's four patches
+            // collapse into three explanations, because two of them repair the
+            // same HP bug in two files. A number here would contradict the list.
+            UI.section("SMALL FIXES TO THE COPY"),
+            UI.point("Stops HP's updater replacing your new app with the Intel version.",
+                     "Without this, HP's automatic update would quietly undo the whole thing."),
+            UI.point("Stops crash reports being sent unencrypted.",
+                     "HP's build uploads them over an unencrypted connection. This turns "
+                     + "that off."),
+            UI.point("Fixes a bug in HP's code.",
+                     "Two of HP's files have a mistake that makes the app report an error "
+                     + "every time it starts — on Intel Macs too. ClickGraft repairs it."),
+
+            UI.section("SUPPORT FILES ADDED"),
+            UI.body("HP's Apple Silicon components expect two small libraries that HP forgot "
+                    + "to include. ClickGraft downloads them from their official source and "
+                    + "adds them to the copy. Without them the app would fail the first time "
+                    + "it went online."),
+
+            Disclosure { [weak self] in self?.technicalPlan() ?? "" },
         ]
-        for x in p["patches"] as? [[String: Any]] ?? [] {
-            rows.append(vstack([
-                label("• " + (x["path"] as? String ?? ""), size: 11, mono: true),
-                label("   " + (x["why"] as? String ?? ""), size: 11, color: .secondaryLabelColor),
-            ], spacing: 1))
-        }
-        rows.append(label("Libraries added", size: 13, weight: .semibold))
-        for x in p["dylibs"] as? [[String: Any]] ?? [] {
-            let pre = (x["preload"] as? Bool ?? false) ? "   [preloaded]" : ""
-            rows.append(vstack([
-                label("• " + (x["name"] as? String ?? "") + pre, size: 11, mono: true),
-                label("   " + (x["why"] as? String ?? ""), size: 11, color: .secondaryLabelColor),
-            ], spacing: 1))
-        }
-        rows.append(label("Downloaded and checked", size: 13, weight: .semibold))
-        for s in p["downloads"] as? [String] ?? [] {
-            rows.append(label("• " + s, size: 11, color: .secondaryLabelColor))
-        }
-        let go = button("Build it", self, #selector(startBuild), key: "\r")
-        rows.append(hstack([button("Back", self, #selector(showChoose)), go]))
-        setBody(vstack(rows, spacing: 10))
+        rows.append(UI.panel([
+            UI.point("Your HP Click is not modified.", "It is only read."),
+        ]))
+
+        present(rows, buttons: [UI.button("Back", self, #selector(showChoose)), UI.spacer(),
+                                UI.button("Create the copy", self, #selector(startBuild),
+                                          primary: true)])
     }
 
-    // -- 4. build --------------------------------------------------------
-    @objc func startBuild() {
-        let bar = NSProgressIndicator()
-        bar.isIndeterminate = false
-        bar.minValue = 0; bar.maxValue = 1
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        bar.widthAnchor.constraint(equalToConstant: 600).isActive = true
-        progressBar = bar
+    private func technicalPlan() -> String {
+        var out = "SOURCE   \(plan["source"] as? String ?? "")\n"
+        out += "OUTPUT   \(plan["output"] as? String ?? "")\n"
+        out += "VERSION  HP Click \(plan["app_version"] as? String ?? "")\n"
+        out += "RUNTIME  Electron \(plan["electron"] as? String ?? "") (darwin-arm64)\n\nPATCHES\n"
+        for p in plan["patches"] as? [[String: Any]] ?? [] {
+            out += "  \(p["path"] as? String ?? "")\n      \(p["why"] as? String ?? "")\n"
+        }
+        out += "\nLIBRARIES\n"
+        for d in plan["dylibs"] as? [[String: Any]] ?? [] {
+            let pre = (d["preload"] as? Bool ?? false) ? "  [preloaded]" : ""
+            out += "  \(d["name"] as? String ?? "")\(pre)\n      \(d["why"] as? String ?? "")\n"
+        }
+        out += "\nDOWNLOADS\n"
+        for s in plan["downloads"] as? [String] ?? [] { out += "  \(s)\n" }
+        return out
+    }
 
-        let msg = caption("Starting…")
-        progressLabel = msg
+    // MARK: 5 — Building
+
+    @objc func startBuild() {
+        let b = NSProgressIndicator()
+        b.isIndeterminate = false
+        b.minValue = 0; b.maxValue = 1
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.widthAnchor.constraint(equalToConstant: UI.width - UI.margin * 2 - 10).isActive = true
+        bar = b
+
+        let cap = UI.body("Checking your HP Click")
+        caption = cap
 
         let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.heightAnchor.constraint(equalToConstant: 240).isActive = true
-        scroll.widthAnchor.constraint(equalToConstant: 600).isActive = true
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .lineBorder
+        scroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: UI.width - UI.margin * 2 - 10).isActive = true
         let tv = NSTextView()
         tv.isEditable = false
-        tv.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        tv.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
         scroll.documentView = tv
-        logView = tv
+        logText = tv
 
-        setBody(vstack([title("Building"), msg, bar, scroll], spacing: 12))
+        present([
+            UI.title("Making your copy"),
+            cap, b,
+            UI.panel([UI.point("This usually takes under a minute.",
+                               "Your original HP Click is not being touched.")]),
+            UI.small("Detail"),
+            scroll,
+        ], buttons: [UI.spacer()])
 
         agent.stream(["build", "--source", picked?["path"] as? String ?? "",
-                      "--out", outputPath]) { [weak self] ev in
-            self?.handle(ev)
-        }
+                      "--out", outputPath]) { [weak self] ev in self?.handle(ev) }
     }
 
-    private func append(_ s: String) {
-        guard let tv = logView else { return }
-        tv.string += s + "\n"
-        tv.scrollToEndOfDocument(nil)
+    /// The backend's messages are written for the log. These are written for
+    /// someone watching a progress bar wondering what is happening to their app.
+    private func friendlyCaption(_ pct: Double) -> String {
+        switch pct {
+        case ..<0.10:  return "Checking your HP Click"
+        case ..<0.25:  return "Getting the Apple Silicon engine from its makers"
+        case ..<0.35:  return "Making a copy of your app"
+        case ..<0.50:  return "Fitting the new engine"
+        case ..<0.62:  return "Adding the support files"
+        case ..<0.75:  return "Making the small fixes"
+        case ..<0.95:  return "Signing the copy so macOS will run it"
+        default:       return "Checking the result"
+        }
     }
 
     private func handle(_ ev: [String: Any]) {
@@ -376,54 +674,78 @@ final class Wizard: NSObject, NSApplicationDelegate {
             logPath = ev["log_path"] as? String ?? ""
         case "progress":
             let pct = ev["pct"] as? Double ?? 0
-            let msg = ev["msg"] as? String ?? ""
-            progressBar?.doubleValue = pct
-            progressLabel?.stringValue = msg
-            append(String(format: "%5.1f%%  %@", pct * 100, msg))
-        case "done":
-            showDone(ev)
-        case "error":
-            showError(ev["error"] as? String ?? "unknown error")
+            bar?.doubleValue = pct
+            caption?.stringValue = friendlyCaption(pct)
+            logBuffer += String(format: "%5.1f%%  %@\n", pct * 100, ev["msg"] as? String ?? "")
+            logText?.string = logBuffer
+            logText?.scrollToEndOfDocument(nil)
+        case "done":  showDone(ev)
+        case "error": showFailed(ev["error"] as? String ?? "")
         default: break
         }
     }
 
-    // -- 5. done / error --------------------------------------------------
+    // MARK: 6 — Done
+
     private func showDone(_ ev: [String: Any]) {
         let out = ev["output"] as? String ?? outputPath
         logPath = ev["log_path"] as? String ?? logPath
-        var rows: [NSView] = [
-            label("Done", size: 20, weight: .semibold, color: .systemGreen),
-            caption("Created \(out)"),
-        ]
-        for (k, v) in (ev["results"] as? [String: String] ?? [:]).sorted(by: { $0.key < $1.key }) {
-            rows.append(label("✓  \(k.replacingOccurrences(of: "_", with: " ")) — \(v)", size: 11))
-        }
-        rows.append(label("The two apps can't run at the same time. They share settings, so "
-                          + "opening one while the other is running makes the second quit "
-                          + "silently. Quit one before opening the other.",
-                          size: 12, color: .secondaryLabelColor))
-        rows.append(label("To undo this, drag the new app to the Trash. Your original was "
-                          + "never changed.", size: 12, color: .secondaryLabelColor))
-        rows.append(hstack([button("Show me the app", self, #selector(revealOutput)),
-                            button("Open log", self, #selector(revealLog)),
-                            button("Quit", self, #selector(quit), key: "\r")]))
-        setBody(vstack(rows, spacing: 12))
+        let name = (out as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+
+        present([
+            UI.text("Your Apple Silicon copy is ready", size: 22, weight: .semibold,
+                    color: .systemGreen),
+            UI.body("\(name) is in your Applications folder, next to your original."),
+            UI.body("Everything checked out: it's built for your Mac's processor, it's "
+                    + "signed, and it starts up correctly."),
+            UI.panel([
+                UI.point("On this Mac it starts about 11× faster than it did under Rosetta,",
+                         "and without the freezes."),
+                UI.small("You can confirm it yourself: open Activity Monitor, find HP Click, "
+                         + "and look at the Kind column. It now says Apple instead of Intel."),
+            ], tint: NSColor.systemGreen.withAlphaComponent(0.10)),
+            UI.panel([
+                UI.point("Don't run both at once.",
+                         "The two apps share your printers and settings, so opening one while "
+                         + "the other is running makes the second one quit without saying "
+                         + "anything. Quit one before opening the other."),
+                UI.point("Your original is untouched.",
+                         "If anything about the new copy bothers you, drag it to the Trash and "
+                         + "carry on as before."),
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.11)),
+            Disclosure(label: "Show what was checked") {
+                (ev["results"] as? [String: String] ?? [:])
+                    .sorted { $0.key < $1.key }
+                    .map { "\($0.key.replacingOccurrences(of: "_", with: " ")): \($0.value)" }
+                    .joined(separator: "\n")
+            },
+        ], buttons: [UI.button("Show me the app", self, #selector(revealOutput)),
+                     UI.button("Open the log", self, #selector(revealLog)),
+                     UI.spacer(),
+                     UI.button("Done", self, #selector(quit), primary: true)])
     }
 
-    private func showError(_ message: String) {
-        var rows: [NSView] = [
-            label("It didn't finish", size: 20, weight: .semibold, color: .systemRed),
-            label(message, size: 12),
-            caption("Your original app was not modified."),
-        ]
-        rows.append(hstack([button("Back", self, #selector(showReview)),
-                            button("Open log", self, #selector(revealLog)),
-                            button("Quit", self, #selector(quit))]))
-        setBody(vstack(rows, spacing: 12))
+    // MARK: error
+
+    private func showFailed(_ message: String) {
+        present([
+            UI.text("The copy wasn't finished", size: 22, weight: .semibold, color: .systemRed),
+            UI.body(message),
+            UI.panel([
+                UI.point("Your original HP Click was not changed.",
+                         "Nothing was installed. You can try again, or send the log if it "
+                         + "keeps happening."),
+            ]),
+            Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
+        ], buttons: [UI.button("Back", self, #selector(showReview)),
+                     UI.button("Open the log", self, #selector(revealLog)),
+                     UI.spacer(),
+                     UI.button("Try again", self, #selector(startBuild), primary: true)])
     }
 
-    @objc func revealOutput() { NSWorkspace.shared.selectFile(outputPath, inFileViewerRootedAtPath: "") }
+    @objc func revealOutput() {
+        NSWorkspace.shared.selectFile(outputPath, inFileViewerRootedAtPath: "")
+    }
     @objc func revealLog() {
         guard !logPath.isEmpty else { return }
         NSWorkspace.shared.selectFile(logPath, inFileViewerRootedAtPath: "")

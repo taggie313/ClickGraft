@@ -83,19 +83,35 @@ def candidates(mm):
         exe = os.path.join(path, "Contents", "MacOS", "HPClickExe")
         archs = get_archs(exe) if os.path.exists(exe) else []
         m = mm.find_manifest(asar_sha256=sha)
+        # An arm64-only slice can only have got that way through ClickGraft;
+        # HP ships x86_64. Distinguishing the two rejections matters to the UI:
+        # only an unsupported *version* is worth filing a report about.
+        already = "arm64" in archs and "x86_64" not in archs
+        reason = "" if m else ("already_copy" if already else "unsupported")
+        version = (m or {}).get("app_version", "") or _bundle_version(path)
         out.append({
             "path": path,
             "name": name,
             "archs": archs,
             "sha256": sha,
-            "version": (m or {}).get("app_version", ""),
+            "version": version,
             "usable": bool(m),
+            "reason": reason,
             "why": "" if m else (
-                "Already patched by ClickGraft — choose your original instead."
-                if "arm64" in archs and "x86_64" not in archs
-                else "Not a supported HP Click version."),
+                "This one was already made by ClickGraft. Choose your original instead."
+                if already else "ClickGraft doesn't know this version yet"),
         })
     return out
+
+
+def _bundle_version(path):
+    """CFBundleShortVersionString, for apps with no manifest to name them."""
+    import plistlib
+    try:
+        with open(os.path.join(path, "Contents", "Info.plist"), "rb") as f:
+            return plistlib.load(f).get("CFBundleShortVersionString", "") or ""
+    except Exception:
+        return ""
 
 
 def _first_sentence(text):
