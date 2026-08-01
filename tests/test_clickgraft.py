@@ -450,93 +450,74 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestClickGraftWebUI(unittest.TestCase):
-    """The wizard is served locally; drive it over HTTP the way the page does.
+class TestClickGraftAgent(unittest.TestCase):
+    """The native app drives the backend through `agent`, so test that contract.
 
-    On why asserting served markup is enough here, when the equivalent check
-    was NOT enough for the tkinter version it replaced: Tk failed by mapping
-    widgets with correct geometry and never painting them, so inspecting the
-    widget tree could not see the bug. HTML has no such split — a browser given
-    this markup renders this text. Asserting the markup therefore does test
-    what the user sees, and the browser check that caught the Tk failure was
-    additionally performed by hand against a live server.
+    Note what this does and does not prove. It proves the data the UI renders
+    is correct. It does NOT prove the UI paints -- and that distinction is the
+    whole history of this front end: a tkinter version passed every widget-tree
+    assertion while rendering an empty window. Rendering is verified by
+    screenshotting the running app, which no unit test here can do.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        import threading
-        from clickgraft.gui import server as srv
-        cls.srv = srv
-        cls.httpd = __import__("http.server", fromlist=["ThreadingHTTPServer"]).ThreadingHTTPServer(
-            ("127.0.0.1", 0), srv.Handler)
-        cls.port = cls.httpd.server_address[1]
-        cls.token = srv.SESSION.token
-        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+    def agent(self, *args):
+        out = subprocess.run(
+            [sys.executable, "-m", "clickgraft.cli", "agent", *args],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            capture_output=True, text=True, timeout=300)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        return json.loads(out.stdout.strip().splitlines()[-1])
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.httpd.shutdown()
+    def test_18_agent_env(self):
+        print("\n--- Test 18: agent env ---")
+        d = self.agent("env")
+        self.assertIn("env", d)
+        self.assertIn("4.8.117", d["env"]["versions"])
+        for t in ("codesign", "lipo", "otool"):
+            self.assertIn(t, d["env"]["tools"])
+        print(f"Test 18 PASSED: {len(d['candidates'])} candidate(s), versions {d['env']['versions']}.")
 
-    def get(self, path, token=True):
-        import urllib.error
-        import urllib.request
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
-        if token:
-            req.add_header("X-ClickGraft-Token", self.token)
-        try:
-            with urllib.request.urlopen(req, timeout=10) as r:
-                return r.status, r.read().decode()
-        except urllib.error.HTTPError as e:
-            return e.code, e.read().decode()
-
-    def test_18_page_renders_expected_text(self):
-        """The served page must contain what the user is supposed to read."""
-        print("\n--- Test 18: page content ---")
-        status, body = self.get("/", token=False)
-        self.assertEqual(status, 200)
-        self.assertNotIn("__TOKEN__", body, "token placeholder was not substituted")
-        for needed in ("ClickGraft", "Requirements", "Choose your HP Click",
-                       "Review the plan", "Xcode Command Line Tools"):
-            self.assertIn(needed, body, f"page is missing {needed!r}")
-        print("Test 18 PASSED: page serves with all expected copy and no placeholder.")
-
-    def test_19_token_is_enforced(self):
-        """This UI writes to /Applications; it must not be drivable unauthenticated."""
-        print("\n--- Test 19: token auth ---")
-        self.assertEqual(self.get("/api/env", token=False)[0], 403)
-        self.assertEqual(self.get("/api/env", token=True)[0], 200)
-        print("Test 19 PASSED: 403 without a token, 200 with.")
-
-    def test_20_already_patched_bundles_are_not_selectable(self):
-        """A ClickGraft-produced bundle must be rejected as a source, with a reason."""
-        print("\n--- Test 20: source classification ---")
-        _, body = self.get("/api/env")
-        cands = json.loads(body)["candidates"]
-        if not cands:
+    def test_19_already_patched_rejected_with_a_reason(self):
+        print("\n--- Test 19: source classification ---")
+        d = self.agent("env")
+        if not d["candidates"]:
             self.skipTest("no HP Click installations present")
-        for c in cands:
+        for c in d["candidates"]:
             if c["usable"]:
-                self.assertIsNotNone(c["version"], "a usable source must name its version")
+                self.assertTrue(c["version"], "a usable source must name its version")
             else:
                 self.assertTrue(c["why"], "an unusable source must explain why")
-        print(f"Test 20 PASSED: {len(cands)} candidate(s) classified, each with a version or a reason.")
+        print(f"Test 19 PASSED: {len(d['candidates'])} classified, each with a version or a reason.")
 
-    def test_21_plan_comes_from_the_manifest(self):
-        """Regression guard: the tkinter review screen hardcoded three dylibs and
-        omitted libnghttp2, and could not show which are preloaded."""
-        print("\n--- Test 21: plan is manifest-derived ---")
-        mm = ManifestManager()
-        manifest = mm.find_manifest(app_version="4.8.117")
-        self.srv.SESSION.manifest = manifest
-        self.srv.SESSION.source = "/tmp/whatever.app"
-        plan = self.srv.SESSION.plan()
+    def test_20_plan_comes_from_the_manifest(self):
+        """Regression guard: an earlier UI hardcoded three dylibs, omitted
+        libnghttp2, and could not show which are preloaded."""
+        print("\n--- Test 20: plan is manifest-derived ---")
+        src = "/Applications/HP Click (x86_64 Backup).app"
+        if not os.path.exists(src):
+            self.skipTest("stock source not present")
+        plan = self.agent("plan", "--source", src)["plan"]
+        manifest = ManifestManager().find_manifest(app_version="4.8.117")
 
-        names = [d["name"] for d in plan["dylibs"]]
-        expected = [d["name"] for d in manifest["required_dylibs"]]
-        self.assertEqual(names, expected, "plan dylibs must match the manifest exactly")
-        self.assertTrue(any("nghttp2" in n for n in names), "libnghttp2 missing from the plan")
+        self.assertEqual([d["name"] for d in plan["dylibs"]],
+                         [d["name"] for d in manifest["required_dylibs"]])
+        self.assertTrue(any("nghttp2" in d["name"] for d in plan["dylibs"]))
         self.assertTrue(any(d["preload"] for d in plan["dylibs"]),
-                        "no dylib marked preloaded — that distinction decides whether "
+                        "no dylib marked preloaded — that decides whether "
                         "flat-namespace symbols resolve at runtime")
         self.assertEqual(len(plan["patches"]), len(manifest["patches"]))
-        print(f"Test 21 PASSED: {len(names)} dylibs and {len(plan['patches'])} patches, all from the manifest.")
+        print(f"Test 20 PASSED: {len(plan['dylibs'])} dylibs, {len(plan['patches'])} patches, all from the manifest.")
+
+    def test_21_why_text_is_not_truncated_mid_identifier(self):
+        """Splitting on the first '.' mangled 'hp_configs.crashAutoSubmit' into
+        the single word 'hp_configs.' on the screen whose job is clarity."""
+        print("\n--- Test 21: sentence truncation ---")
+        src = "/Applications/HP Click (x86_64 Backup).app"
+        if not os.path.exists(src):
+            self.skipTest("stock source not present")
+        plan = self.agent("plan", "--source", src)["plan"]
+        for p in plan["patches"]:
+            self.assertGreater(len(p["why"]), 20, f"why text too short: {p['why']!r}")
+            self.assertFalse(p["why"].strip() in ("hp_configs.", "hp_configs"),
+                             "why text truncated mid-identifier")
+        print("Test 21 PASSED: reasons survive identifiers and URLs intact.")

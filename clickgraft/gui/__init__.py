@@ -1,3 +1,0 @@
-"""
-clickgraft.gui package
-"""

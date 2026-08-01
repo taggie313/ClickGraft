@@ -15,11 +15,17 @@ echo "==> Building ClickGraft.app  (version $VERSION)"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# --- compiled launcher (universal: works on Intel Macs too) ----------------
-echo "--> compiling launcher"
-clang -O2 -Wall -Wextra -arch arm64 -arch x86_64 \
-      -mmacosx-version-min=12.0 \
-      -o "$APP/Contents/MacOS/ClickGraft" "$HERE/launcher.c"
+# --- native AppKit front end (universal: opens on Intel Macs too) ----------
+# swiftc has no -arch flag, so build each slice and lipo them together.
+echo "--> compiling ClickGraft.swift"
+TMPB="$(mktemp -d)"
+for arch in arm64 x86_64; do
+  swiftc -O -target "${arch}-apple-macos12.0" \
+         -o "$TMPB/ClickGraft-$arch" "$HERE/ClickGraft.swift" -framework AppKit
+done
+lipo -create -output "$APP/Contents/MacOS/ClickGraft" \
+     "$TMPB/ClickGraft-arm64" "$TMPB/ClickGraft-x86_64"
+rm -rf "$TMPB"
 
 # --- payload ---------------------------------------------------------------
 echo "--> copying payload"

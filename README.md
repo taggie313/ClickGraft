@@ -77,17 +77,12 @@ Are you sure you want to open it?"* confirmation, and the very first launch can
 take a few extra seconds while macOS checks the notarization. Both are normal
 and happen once.
 
-The wizard walks you through eight screens: welcome, requirements, choose your
-app, compatibility check, **review plan**, build, verify, done. Nothing is
-written until you accept the plan screen, which lists every patch, every file to
-be downloaded with its SHA-256, and every library to be added.
+The wizard walks you through five screens: requirements, choose your app,
+review the plan, build, done. Nothing is written until you approve the plan,
+which lists every patch, every library added, and everything downloaded.
 
-The wizard opens in your browser. It is served from your own machine on
-`127.0.0.1` and reachable only from there — nothing is sent anywhere, and the
-server shuts itself down once you close the tab.
-
-> **Running from source instead?** `python3 -m clickgraft.cli gui` from a clone
-> works identically and prints the local URL.
+> **Running from source instead?** Build the app with `./packaging/build_app.sh`
+> and open `dist/ClickGraft.app`. The command line works too — see below.
 
 ---
 

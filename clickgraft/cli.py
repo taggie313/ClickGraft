@@ -103,8 +103,21 @@ def cmd_probe(args):
 
 
 def cmd_gui(args):
-    from clickgraft.gui.server import run_wizard
-    run_wizard()
+    """Open the native app. When running from a source checkout there is no
+    bundle to open, so point the user at the built one."""
+    import subprocess
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app = os.path.join(here, "dist", "ClickGraft.app")
+    if os.path.exists(app):
+        subprocess.run(["open", app], check=False)
+    else:
+        print("No built app found. Build one with:  ./packaging/build_app.sh")
+        sys.exit(1)
+
+
+def cmd_agent(args):
+    from clickgraft.agent import main as agent_main
+    sys.exit(agent_main(args.agent_args))
 
 
 def main():
@@ -130,7 +143,11 @@ def main():
     probe_p.add_argument("--out-manifest", help="Path to save draft manifest JSON file")
 
     # gui
-    subparsers.add_parser("gui", help="Launch interactive Tkinter GUI wizard")
+    subparsers.add_parser("gui", help="Open the ClickGraft app")
+
+    ap = subparsers.add_parser("agent", help="JSON interface used by the native app")
+    ap.add_argument("agent_args", nargs=argparse.REMAINDER)
+    ap.set_defaults(func=cmd_agent)
 
     args = parser.parse_args()
 
@@ -144,6 +161,8 @@ def main():
         cmd_verify(args)
     elif args.subcommand == "probe":
         cmd_probe(args)
+    elif args.subcommand == "agent":
+        cmd_agent(args)
     else:
         parser.print_help()
 
