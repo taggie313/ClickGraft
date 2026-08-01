@@ -215,33 +215,71 @@ def verify_app_bundle(target_app_path, manifest=None):
     initialized = False
     failure_signatures = []
 
-    for _ in range(24):
-        time.sleep(0.5)
+    # 90s, not 12s. The milestone is a renderer-side event, and the FIRST launch
+    # after a fresh HP Click install does first-run work — building its profile,
+    # cold caches, no printer configured yet — that a warmed-up launch does not.
+    # Measured on an M5 Max: ~8s warm, over 12s cold. A budget that only fits the
+    # warm case fails the one launch every new user makes, and reports a working
+    # build as broken.
+    TIMEOUT_S = 90.0
+    GRACE_S = 3.0          # keep reading after the milestone, to catch late errors
+    POLL_S = 0.5
+    reached_at = None
+
+    while time.time() - start_t < TIMEOUT_S:
+        time.sleep(POLL_S)
         log_content = ""
         for lp in (main_log_p, alt_log_p):
             if os.path.exists(lp):
                 with open(lp, "r", encoding="utf-8", errors="ignore") as lf:
                     log_content += lf.read()
 
-        if "successful initialization" in log_content or "DjCoreServices initialized successfully" in log_content:
+        if not initialized and (
+                "successful initialization" in log_content
+                or "DjCoreServices initialized successfully" in log_content):
             initialized = True
+            reached_at = time.time() - start_t
 
         for fail_sig in ["SyntaxError", "Library not loaded", "Symbol not found", "Uncaught Exception"]:
             if fail_sig in log_content and fail_sig not in failure_signatures:
                 failure_signatures.append(fail_sig)
 
-        if initialized and failure_signatures:
+        # Stop as soon as there is an answer. The old loop only broke when it had
+        # BOTH a milestone and an error, so a clean run always burned the whole
+        # budget and a broken one waited for a success that never came.
+        if failure_signatures:
+            break
+        if initialized and (time.time() - start_t) - reached_at >= GRACE_S:
             break
 
     kill_hpclick_processes(target_app_path)
+
+    # Adobe's print engine writes font caches (ACRFonts/**/AdobeFnt16.lst) INSIDE
+    # the bundle the first time it runs, which is what the smoke launch just did.
+    # Those files are not in the signature's resource seal, so `codesign --verify`
+    # now reports "a sealed resource is missing or invalid" on a bundle that was
+    # valid ninety seconds ago and works perfectly. HP's own shipped app does the
+    # same thing on first launch.
+    #
+    # Re-seal it here so the user is handed a bundle whose signature matches what
+    # is actually on disk. This runs after the launch on purpose: sign first and
+    # the very next run invalidates it again.
+    from clickgraft.signing import sign_bundle
+    try:
+        sign_bundle(target_app_path)
+        results["resealed"] = "PASSED (re-signed after first-run font caches were written)"
+    except Exception as exc:                                       # noqa: BLE001
+        results["resealed"] = f"WARNING: could not re-sign after smoke launch: {exc}"
 
     if failure_signatures:
         raise ValueError(f"Smoke launch FAILED with error signatures in log: {failure_signatures}")
 
     if not initialized:
-        raise ValueError("Smoke launch FAILED: Application did not reach successful initialization milestone within 12s")
+        raise ValueError(
+            f"Smoke launch FAILED: the app did not report successful initialization "
+            f"within {TIMEOUT_S:.0f}s. The build itself completed; this is the "
+            f"post-build check. Its log is in {hp_log_dir}.")
 
-    quiescence_t = time.time() - start_t
-    results["smoke_launch"] = f"PASSED (Initialization milestone reached in {quiescence_t:.2f}s)"
+    results["smoke_launch"] = f"PASSED (Initialization milestone reached in {reached_at:.2f}s)"
 
     return True, results

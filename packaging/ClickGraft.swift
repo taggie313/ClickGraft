@@ -268,6 +268,9 @@ final class Wizard: NSObject, NSApplicationDelegate {
     var caption: NSTextField?
     var logText: NSTextView?
     var logBuffer = ""
+    var lastError = ""
+    var updateURL = ""
+    var updateBanner: NSView?
 
     // MARK: lifecycle
 
@@ -366,6 +369,26 @@ final class Wizard: NSObject, NSApplicationDelegate {
         present(rows, buttons: [UI.button("Quit", self, #selector(quit)), UI.spacer(),
                                 UI.button("Continue", self, #selector(showRequirements),
                                           primary: true)])
+
+        // Checked in the background so a slow or blocked network never delays
+        // the first screen. If it fails, nothing is said — an update notice is
+        // not worth an error dialog.
+        checkForUpdate { [weak self] latest, url in
+            guard let self = self, let latest = latest else { return }
+            self.updateURL = url ?? ""
+            self.updateBanner?.removeFromSuperview()
+            let b = UI.panel([
+                UI.point("Version \(latest) is available.",
+                         "You're running \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"). "
+                         + "Newer versions usually mean support for newer HP Click releases."),
+                UI.button("Get the update", self, #selector(self.openDownloadPage)),
+            ], tint: NSColor.systemBlue.withAlphaComponent(0.10))
+            self.updateBanner = b
+            if let stack = self.container.subviews.first(where: { $0 is NSScrollView })
+                            .flatMap({ ($0 as? NSScrollView)?.documentView?.subviews.first as? NSStackView }) {
+                stack.addArrangedSubview(b)
+            }
+        }
     }
 
     // MARK: 2 — Requirements
@@ -680,7 +703,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
             logText?.string = logBuffer
             logText?.scrollToEndOfDocument(nil)
         case "done":  showDone(ev)
-        case "error": showFailed(ev["error"] as? String ?? "")
+        case "error": showFailed(ev)
         default: break
         }
     }
@@ -727,20 +750,186 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     // MARK: error
 
-    private func showFailed(_ message: String) {
-        present([
-            UI.text("The copy wasn't finished", size: 22, weight: .semibold, color: .systemRed),
-            UI.body(message),
-            UI.panel([
-                UI.point("Your original HP Click was not changed.",
-                         "Nothing was installed. You can try again, or send the log if it "
-                         + "keeps happening."),
-            ]),
-            Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
-        ], buttons: [UI.button("Back", self, #selector(showReview)),
-                     UI.button("Open the log", self, #selector(revealLog)),
-                     UI.spacer(),
-                     UI.button("Try again", self, #selector(startBuild), primary: true)])
+    /// Two genuinely different outcomes, which the first version of this screen
+    /// conflated. If the build itself failed, nothing was installed and the red
+    /// heading is right. If the build finished and only a *check* failed, the
+    /// copy is sitting in Applications and usually works — telling that user
+    /// "nothing was installed" is simply false, and sends them to support over
+    /// an app they could be using.
+    private func showFailed(_ ev: [String: Any]) {
+        let message = ev["error"] as? String ?? ""
+        let madeIt = (ev["output_exists"] as? Bool ?? false)
+                     && (ev["stage"] as? String ?? "") == "verify"
+        logPath = ev["log_path"] as? String ?? logPath
+        lastError = message
+        let out = ev["output"] as? String ?? outputPath
+
+        var rows: [NSView]
+        if madeIt {
+            let name = (out as NSString).lastPathComponent
+                .replacingOccurrences(of: ".app", with: "")
+            rows = [
+                UI.text("Your copy was made, but one check didn't pass",
+                        size: 22, weight: .semibold, color: .systemOrange),
+                UI.body("\(name) is in your Applications folder. ClickGraft builds the "
+                        + "copy first and then checks it over, and it was the check that "
+                        + "failed — not the copy."),
+                UI.panel([
+                    UI.point("Your original HP Click was not changed.",
+                             "That hasn't been touched at any point."),
+                    UI.point("The copy is most likely fine.", "Try opening it. If it "
+                             + "starts and finds your printer, you're done."),
+                    UI.point("If it doesn't work,", "drag it to the Trash and nothing "
+                             + "about your Mac has changed."),
+                ], tint: NSColor.systemOrange.withAlphaComponent(0.10)),
+                UI.section("WHAT THE CHECK SAID"),
+                UI.small(message),
+                Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
+            ]
+        } else {
+            rows = [
+                UI.text("The copy wasn't finished", size: 22, weight: .semibold,
+                        color: .systemRed),
+                UI.body(message),
+                UI.panel([
+                    UI.point("Your original HP Click was not changed.",
+                             "Nothing was installed. You can try again, or send a report "
+                             + "if it keeps happening."),
+                ]),
+                Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
+            ]
+        }
+
+        var buttons: [NSView] = [UI.button("Back", self, #selector(showReview)),
+                                 UI.button("Send a report", self, #selector(sendReport))]
+        if madeIt { buttons.append(UI.button("Open the copy", self, #selector(revealOutput))) }
+        buttons += [UI.spacer(),
+                    UI.button("Try again", self, #selector(startBuild), primary: !madeIt)]
+        present(rows, buttons: buttons)
+    }
+
+    // MARK: - Reporting a problem
+
+    static let reportURL = "https://clickgraft.elusive.net/report"
+    static let appcastURL = "https://clickgraft.elusive.net/appcast.json"
+
+    /// Everything the report will contain, assembled so it can be SHOWN to the
+    /// user before it goes anywhere. Nothing is sent that they have not read.
+    private func reportBody() -> String {
+        let pi = ProcessInfo.processInfo
+        var out = "ClickGraft \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")\n"
+        out += "macOS \(pi.operatingSystemVersionString)\n"
+        out += "arch: \(machineArch())\n"
+        out += "stage: \(lastError.isEmpty ? "n/a" : "build/verify")\n"
+        out += "source: \((picked?["path"] as? String).map(scrub) ?? "none")\n"
+        out += "version: \(picked?["version"] as? String ?? "?")\n\n"
+        out += "error:\n\(scrub(lastError))\n\n"
+        out += "log:\n\(scrub(logBuffer))"
+        return out
+    }
+
+    /// The home directory carries a real name often enough to matter. Nothing
+    /// about a path under /Users/<someone> helps diagnose a build, so it goes.
+    private func scrub(_ s: String) -> String {
+        let home = NSHomeDirectory()
+        let user = (home as NSString).lastPathComponent
+        return s.replacingOccurrences(of: home, with: "~")
+                .replacingOccurrences(of: "/Users/\(user)", with: "/Users/~")
+    }
+
+    private func machineArch() -> String {
+        var si = utsname(); uname(&si)
+        return withUnsafePointer(to: &si.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+        }
+    }
+
+    @objc func sendReport() {
+        let body = reportBody()
+
+        let a = NSAlert()
+        a.messageText = "Send this to the ClickGraft developers?"
+        a.informativeText = "This is everything that will be sent. Nothing else leaves "
+            + "your Mac — no file names from your work, no printer details, no personal "
+            + "information. Your home folder name has been removed. Read it first; if "
+            + "anything in it bothers you, don't send it."
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
+        tv.string = body
+        tv.isEditable = false
+        tv.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        let sc = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
+        sc.hasVerticalScroller = true
+        sc.documentView = tv
+        a.accessoryView = sc
+        a.addButton(withTitle: "Send")
+        a.addButton(withTitle: "Copy instead")
+        a.addButton(withTitle: "Cancel")
+
+        switch a.runModal() {
+        case .alertFirstButtonReturn:  postReport(body)
+        case .alertSecondButtonReturn:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(body, forType: .string)
+            let d = NSAlert()
+            d.messageText = "Copied"
+            d.informativeText = "Paste it into an email or a GitHub issue whenever suits."
+            d.runModal()
+        default: break
+        }
+    }
+
+    private func postReport(_ body: String) {
+        guard let url = URL(string: Wizard.reportURL) else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body.data(using: .utf8)
+        req.timeoutInterval = 20
+
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            DispatchQueue.main.async {
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                let ok = err == nil && (200...299).contains(code)
+                let d = NSAlert()
+                d.messageText = ok ? "Report sent" : "The report didn't go through"
+                d.informativeText = ok
+                    ? "Thank you. There's nothing to follow up on — if you want a reply, "
+                    + "open an issue on GitHub as well."
+                    : "No harm done, and nothing was sent. Press Send a report again to "
+                    + "retry, or use Copy instead and paste it into a GitHub issue."
+                d.runModal()
+            }
+        }.resume()
+    }
+
+    // MARK: - Updates
+
+    /// Checked once at launch, quietly. A tool people run twice a year is
+    /// exactly the kind that goes stale without anyone noticing, and a stale
+    /// copy is how someone concludes their HP Click version is unsupported when
+    /// it has been supported for months.
+    func checkForUpdate(_ done: @escaping (String?, String?) -> Void) {
+        guard let url = URL(string: Wizard.appcastURL) else { return done(nil, nil) }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 8
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            guard let data = data,
+                  let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let latest = o["version"] as? String else { return DispatchQueue.main.async { done(nil, nil) } }
+            let here = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+            let newer = latest.compare(here, options: .numeric) == .orderedDescending
+            DispatchQueue.main.async {
+                done(newer ? latest : nil, o["url"] as? String)
+            }
+        }.resume()
+    }
+
+    @objc func openDownloadPage() {
+        if let u = URL(string: updateURL.isEmpty
+                        ? "https://clickgraft.elusive.net/" : updateURL) {
+            NSWorkspace.shared.open(u)
+        }
     }
 
     @objc func revealOutput() {

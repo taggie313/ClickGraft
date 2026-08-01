@@ -44,8 +44,14 @@ sed "s|{{ZIP_SHA256}}|$SHA|g" "$SITE/index.html" > /tmp/cg-build/html/index.html
 printf '%s  ClickGraft.zip\n' "$SHA" > /tmp/cg-build/html/ClickGraft.zip.sha256
 grep -q '{{ZIP_SHA256}}' /tmp/cg-build/html/index.html && { echo "✗ hash placeholder not substituted" >&2; exit 1; }
 echo "    sha256 $SHA"
+
+# Advertised version comes from the app itself, never from a hand-edited file.
+sh "$HERE/make-appcast.sh" "$ROOT/dist/ClickGraft.app" \
+   /tmp/cg-build/html/appcast.json "$SHA"
+echo "    appcast $(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
 cp "$HERE/docker-compose.yml" "$HERE/nginx.conf" /tmp/cg-build/
 cp "$HERE/stats/run-goaccess.sh" /tmp/cg-build/stats/
+mkdir -p /tmp/cg-build/collector && cp "$HERE/collector/collector.py" /tmp/cg-build/collector/
 cp "$HERE/summary.sh"        /tmp/cg-build/
 printf '%s\n' "$(cd "$ROOT" && git rev-parse --short HEAD)" > /tmp/cg-build/html/.build
 
@@ -66,6 +72,19 @@ tar -C '$STAGE' -cf - . | pct exec $CT_ID -- tar -C '$REMOTE_DIR' -xf -
 pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && chmod +x stats/run-goaccess.sh summary.sh'
 pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && test -s .env || { echo "✗ $REMOTE_DIR/.env has no tunnel token" >&2; exit 1; }'
 pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose up -d --remove-orphans'
+# nginx.conf is a SINGLE-FILE bind mount, and tar replaces the file rather than
+# writing through it — new inode, so the running container stays bound to the
+# old one. Neither `compose up -d` nor `nginx -s reload` picks the change up:
+# reload faithfully re-reads the config the container is still bound to, the
+# deploy reports success, and the edit does nothing. The container has to be
+# recreated to rebind.
+#
+# Validate first, in a throwaway container against the file on disk. Recreating
+# with a broken config would take the site down, and this is a static page whose
+# whole job is being up.
+pct exec $CT_ID -- sh -lc 'docker run --rm -v $REMOTE_DIR/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine nginx -t' \
+  || { echo "✗ nginx rejected the new config; the running site is untouched" >&2; exit 1; }
+pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose up -d --force-recreate web'
 EOF
 
 echo "==> verify inside the CT"

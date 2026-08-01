@@ -20,6 +20,18 @@ services:
     depends_on:
       - web
 
+  # Takes bug reports from the app. Not on the internet directly — nginx
+  # proxies /report to it, with a size cap and a rate limit.
+  report:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    command: ["python3", "/srv/collector.py"]
+    volumes:
+      - ./collector/collector.py:/srv/collector.py:ro
+      - reports:/srv/reports
+    expose:
+      - "8080"
+
   # Rebuilds the report from the same logs nginx is writing. Reads only —
   # it cannot serve anything, and it shares no network with the tunnel.
   stats:
@@ -35,3 +47,4 @@ services:
 
 volumes:
   logs:
+  reports:

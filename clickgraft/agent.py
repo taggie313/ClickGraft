@@ -202,14 +202,22 @@ def main(argv):
             build_apple_silicon_bundle(source_app_path=source, output_app_path=output,
                                        manifest=m, progress_callback=progress)
         except Exception as exc:                                   # noqa: BLE001
-            emit({"type": "error", "error": str(exc)})
+            emit({"type": "error", "error": str(exc), "stage": "build",
+                  "output_exists": os.path.isdir(output), "output": output,
+                  "log_path": log or ""})
             return 1
 
         emit({"type": "progress", "pct": 1.0, "msg": "Verifying the result…"})
         try:
             _ok, results = verify_app_bundle(output, manifest=m)
         except Exception as exc:                                   # noqa: BLE001
-            emit({"type": "error", "error": str(exc)})
+            # The build finished before this ran. The copy is on disk, and in
+            # every case seen so far it launches fine — a failed check here
+            # means "we could not confirm it", not "it is broken", and
+            # certainly not "nothing was installed".
+            emit({"type": "error", "error": str(exc), "stage": "verify",
+                  "output_exists": os.path.isdir(output), "output": output,
+                  "log_path": log or ""})
             return 1
 
         emit({"type": "done", "results": results, "output": output, "log_path": log or ""})
