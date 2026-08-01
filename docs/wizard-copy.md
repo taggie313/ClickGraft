@@ -27,8 +27,10 @@ them, it should probably go.
   "the output artifact is provisioned".
 - **No hedging, no salesmanship.** State what happens. Don't say "safely" or
   "simply" — showing is what makes it feel safe.
-- **Jargon budget: two terms, each glossed once.** "Apple Silicon" and "the
-  engine". Everything else gets said in ordinary words.
+- **Jargon budget: three terms, each glossed once.** "Apple Silicon", "Rosetta"
+  and "the engine". Everything else gets said in ordinary words. Rosetta earns
+  its place because a user who has already searched why Click is slow has met
+  the word, and because it lets them verify the fix themselves.
 - **Never blame the user.** If something can't proceed, the screen says what to
   do next.
 
@@ -37,9 +39,9 @@ them, it should probably go.
 Used in full on the welcome screen, in short form on the review screen:
 
 > In 2020 Apple started replacing the Intel processors in Macs with its own,
-> called Apple Silicon. Apps built for the older Intel chips still run, but your
-> Mac has to translate them as they go, and that translation is what costs the
-> speed.
+> called Apple Silicon. Apps built for the older Intel chips still run: macOS
+> translates them as they go, using a system called Rosetta. That translation is
+> what costs the speed.
 >
 > HP already builds most of HP Click for Apple Silicon. The parts that do the
 > real work — page layout, colour handling, the print engine — are compiled for
@@ -68,11 +70,11 @@ for anything.
 **Body:**
 
 > In 2020 Apple started replacing the Intel processors in Macs with its own,
-> called Apple Silicon. Your Mac still runs apps built for the older Intel chips,
-> but it has to translate them as they go.
+> called Apple Silicon. Your Mac still runs apps built for the older Intel chips
+> by translating them as they go — that's Rosetta.
 >
-> HP Click for Mac is one of those. The translation is why it's slow to start and
-> why clicks take a moment to register.
+> HP Click for Mac is one of those. That translation is why it's slow to start
+> and why clicks take a moment to register.
 >
 > HP already builds the important parts of HP Click for Apple Silicon — page
 > layout, colour, the print engine. They're inside the app you have installed
@@ -290,8 +292,11 @@ half-made copy. If we add one later it must delete the partial copy and say so.
 
 **Now the numbers land** — as a result, not a promise:
 
-> On this Mac it starts about 11× faster than the Intel version and does it
-> without the freezes.
+> On this Mac it starts about 11× faster than it did under Rosetta, and without
+> the freezes.
+>
+> You can confirm it yourself: open Activity Monitor, find HP Click, and look at
+> the Kind column. It now says Apple instead of Intel.
 
 **Important block:**
 
@@ -362,9 +367,9 @@ The product is called ClickGraft; the verb is never "graft".
    which is exactly why it builds credit: unprompted candour about something
    unflattering to HP is what makes the rest of the plan believable.
 
-## Still open
-
-- **Name Rosetta explicitly?** The background paragraph describes the translation
-  without naming it. Activity Monitor and HP's own support forums both say
-  "Rosetta", so naming it once may help recognition — at the cost of a term the
-  user otherwise never needs. Currently left out.
+4. **Name Rosetta — yes.** Used three times: once in the background paragraph,
+   once on Welcome, once on Done. It costs a term but buys two things. Anyone who
+   has already searched why HP Click is slow has met the word, so it connects this
+   tool to a problem they've already named. And it makes the result checkable —
+   Activity Monitor's Kind column is where they can see Intel become Apple for
+   themselves, which is worth more than any number we print.
