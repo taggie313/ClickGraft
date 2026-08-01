@@ -77,9 +77,9 @@ Are you sure you want to open it?"* confirmation, and the very first launch can
 take a few extra seconds while macOS checks the notarization. Both are normal
 and happen once.
 
-The wizard walks you through five screens: requirements, choose your app,
-review the plan, build, done. Nothing is written until you approve the plan,
-which lists every patch, every library added, and everything downloaded.
+The wizard walks you through six screens: what it does, requirements, choose
+your app, review the plan, build, done. Nothing is written until you approve the
+plan, which lists every patch, every library added, and everything downloaded.
 
 > **Running from source instead?** Build the app with `./packaging/build_app.sh`
 > and open `dist/ClickGraft.app`. The command line works too — see below.
