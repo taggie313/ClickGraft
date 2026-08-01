@@ -103,7 +103,7 @@ def cmd_probe(args):
 
 
 def cmd_gui(args):
-    from clickgraft.gui.wizard import run_wizard
+    from clickgraft.gui.server import run_wizard
     run_wizard()
 
 
