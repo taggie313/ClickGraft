@@ -49,6 +49,16 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ClickGraft: could not set PYTHONPATH\n");
         return 1;
     }
+    /* Python puts the working directory at the FRONT of sys.path, ahead of
+     * anything in PYTHONPATH. Launched from Finder the cwd is "/", so the
+     * bundle wins — but run from a directory that happens to contain a
+     * `clickgraft` folder (a clone of this repo, say) and that copy would
+     * silently shadow the packaged one. Anchor the cwd to Resources so the
+     * code we ship is always the code that runs. */
+    if (chdir(resources) != 0) {
+        fprintf(stderr, "ClickGraft: could not enter %s\n", resources);
+        return 1;
+    }
     /* Without this, Python writes __pycache__ directories into Contents/
      * Resources on first run, which invalidates the bundle's code signature.
      * That is exactly how HP Click breaks its own signature -- JDFPrintProcessor

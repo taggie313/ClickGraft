@@ -60,8 +60,13 @@ no HP software and cannot obtain it for you.
 3. Double-click it.
 
 That's it. ClickGraft is signed with an Apple Developer ID and notarized by
-Apple, so it opens normally — no right-click, no security warning, no
-"unidentified developer" dialog.
+Apple, so it opens normally — no right-click, no "unidentified developer"
+warning, and no "damaged, move to Trash" dialog.
+
+macOS may show a one-time *"ClickGraft is an app downloaded from the Internet.
+Are you sure you want to open it?"* confirmation, and the very first launch can
+take a few extra seconds while macOS checks the notarization. Both are normal
+and happen once.
 
 The wizard walks you through eight screens: welcome, requirements, choose your
 app, compatibility check, **review plan**, build, verify, done. Nothing is
