@@ -745,8 +745,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     private func showDone(_ ev: [String: Any]) {
         let out = ev["output"] as? String ?? outputPath
-        outcome = "the build finished and every check passed"
+        outcome = (ev["results"] as? [String: String] ?? [:])["smoke_launch"]?
+                    .hasPrefix("SKIPPED") == true
+                  ? "the build finished; the test-launch was skipped because this Mac "
+                  + "cannot run an Apple Silicon app"
+                  : "the build finished and every check passed"
         lastResults = ev["results"] as? [String: String] ?? [:]
+        let crossBuilt = lastResults["smoke_launch"]?.hasPrefix("SKIPPED") == true
         logPath = ev["log_path"] as? String ?? logPath
         let name = (out as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
 
@@ -754,18 +759,31 @@ final class Wizard: NSObject, NSApplicationDelegate {
             UI.text("Your Apple Silicon copy is ready", size: 22, weight: .semibold,
                     color: .systemGreen),
             UI.body("\(name) is in your Applications folder, next to your original."),
-            UI.body(lastResults["smoke_launch"]?.hasPrefix("SKIPPED") == true
+            UI.body(crossBuilt
                     ? "It's built for Apple Silicon and it's signed. It has not been "
                     + "started up, because this Mac can't run it — try it on the Mac you "
                     + "made it for."
                     : "Everything checked out: it's built for your Mac's processor, it's "
                     + "signed, and it starts up correctly."),
-            UI.panel([
-                UI.point("On this Mac it starts about 11× faster than it did under Rosetta,",
-                         "and without the freezes."),
-                UI.small("You can confirm it yourself: open Activity Monitor, find HP Click, "
-                         + "and look at the Kind column. It now says Apple instead of Intel."),
-            ], tint: NSColor.systemGreen.withAlphaComponent(0.10)),
+            // The numbers and the Activity Monitor tip are both about running
+            // it, so neither belongs on a Mac that cannot. Saying "on this Mac
+            // it starts 11× faster" one line under "this Mac can't run it" is
+            // the same mistake as the sentence above, one paragraph later.
+            UI.panel(crossBuilt
+                ? [
+                    UI.point("On the Mac you made it for, it should start about 11× faster "
+                             + "than it does under Rosetta,", "and without the freezes."),
+                    UI.small("You can confirm it over there: open Activity Monitor, find "
+                             + "HP Click, and look at the Kind column. It should say Apple "
+                             + "instead of Intel."),
+                  ]
+                : [
+                    UI.point("On this Mac it starts about 11× faster than it did under Rosetta,",
+                             "and without the freezes."),
+                    UI.small("You can confirm it yourself: open Activity Monitor, find HP Click, "
+                             + "and look at the Kind column. It now says Apple instead of Intel."),
+                  ],
+                tint: NSColor.systemGreen.withAlphaComponent(0.10)),
             UI.panel([
                 UI.point("Don't run both at once.",
                          "The two apps share your printers and settings, so opening one while "
@@ -865,7 +883,14 @@ final class Wizard: NSObject, NSApplicationDelegate {
         let pi = ProcessInfo.processInfo
         var out = "ClickGraft \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")\n"
         out += "macOS \(pi.operatingSystemVersionString)\n"
-        out += "arch: \(machineArch())\n"
+        out += "arch: \(machineArch())"
+        if let h = env["host"] as? [String: Any] {
+            let silicon = h["apple_silicon"] as? Bool ?? true
+            let translated = h["translated"] as? Bool ?? false
+            out += "  (hardware: \(silicon ? "Apple Silicon" : "Intel")"
+                 + (translated ? ", running under Rosetta" : "") + ")"
+        }
+        out += "\n"
         out += "outcome: \(outcome)\n"
         out += "source: \((picked?["path"] as? String).map(scrub) ?? "none")\n"
         out += "version: \(picked?["version"] as? String ?? "?")\n\n"
