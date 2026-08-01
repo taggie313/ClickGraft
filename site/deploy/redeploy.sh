@@ -32,8 +32,18 @@ fi
 
 echo "==> staging"
 rm -rf /tmp/cg-build && mkdir -p /tmp/cg-build/html /tmp/cg-build/stats
-cp "$SITE/index.html"        /tmp/cg-build/html/
 cp "$ZIP"                    /tmp/cg-build/html/ClickGraft.zip
+
+# The page quotes the download's SHA-256. Substituting it at deploy time from
+# the very file being shipped is the only way that number cannot drift: a hash
+# typed into the HTML would silently go stale the first time the app is rebuilt,
+# and a wrong fingerprint is worse than none — it teaches people the check is
+# meaningless.
+SHA="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
+sed "s|{{ZIP_SHA256}}|$SHA|g" "$SITE/index.html" > /tmp/cg-build/html/index.html
+printf '%s  ClickGraft.zip\n' "$SHA" > /tmp/cg-build/html/ClickGraft.zip.sha256
+grep -q '{{ZIP_SHA256}}' /tmp/cg-build/html/index.html && { echo "✗ hash placeholder not substituted" >&2; exit 1; }
+echo "    sha256 $SHA"
 cp "$HERE/docker-compose.yml" "$HERE/nginx.conf" /tmp/cg-build/
 cp "$HERE/stats/run-goaccess.sh" /tmp/cg-build/stats/
 cp "$HERE/summary.sh"        /tmp/cg-build/

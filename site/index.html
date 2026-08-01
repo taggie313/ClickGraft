@@ -254,6 +254,35 @@ then stop.</p>
   you open the other.</p>
 </div>
 
+<h2>Checking what you downloaded</h2>
+
+<p>The strongest check doesn't involve us at all. The app is signed with an Apple
+Developer ID and notarized, and macOS verifies that against Apple's own
+certificates before it will run. In Terminal:</p>
+
+<div class="panel">
+<p class="mono" style="font-size:.85rem;margin:0">spctl -a -vvv -t install /path/to/ClickGraft.app</p>
+</div>
+
+<p>It should answer <span class="mono">accepted</span>, <span class="mono">source=Notarized
+Developer ID</span>, and name the developer. If it says anything else, don't run
+it. That check is worth more than any fingerprint printed here, because it's
+verified against Apple rather than against this page.</p>
+
+<p>If you'd still like the fingerprint, the SHA-256 of
+<span class="mono">ClickGraft.zip</span> is:</p>
+
+<div class="panel">
+<p class="mono" style="font-size:.8rem;margin:0;word-break:break-all">{{ZIP_SHA256}}</p>
+</div>
+
+<p>Check it with <span class="mono">shasum -a 256 ClickGraft.zip</span>. Be aware
+what this does and doesn't prove: it catches a truncated or corrupted download,
+but anyone able to alter the file here could alter this line too. The same
+fingerprint is published on the
+<a href="https://github.com/taggie313/ClickGraft/releases">GitHub release</a>,
+which is a genuinely independent place to compare it against.</p>
+
 <h2>Which versions work</h2>
 
 <p><strong>HP Click 4.8.117, for now.</strong> ClickGraft won't touch a version
