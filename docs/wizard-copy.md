@@ -307,7 +307,16 @@ half-made copy. If we add one later it must delete the partial copy and say so.
 > **Your original is untouched.** If anything about the new copy bothers you, drag
 > it to the Trash and carry on as before.
 
-**Controls:** `Show me the app` · `Open the log` · `Done`
+**Controls:** `Show me the app` · `Open the log` · `Report a problem` ·
+`Share how it went` · `Done`
+
+**Share how it went — why it exists:** only failures ever reach us otherwise, so
+a working install is invisible and "does this tool work" can only be answered
+from an absence of complaints, which is not evidence. Framed as a favour asked
+plainly, never as a nag: one button, no badge, no reminder, and "No thanks" is a
+real answer. The same rules as the bug report apply — the exact text is shown
+first, nothing is sent that has not been read, the home folder name is removed,
+and there is no account, identifier, or way to link two submissions.
 
 **Note:** the can't-run-both warning is the single most likely support question.
 It gets a heading, not a footnote.

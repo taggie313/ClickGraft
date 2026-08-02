@@ -806,6 +806,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
                      // the person best placed to tell us is standing at a
                      // plotter looking at a finished copy.
                      UI.button("Report a problem", self, #selector(sendReport)),
+                     UI.button("Share how it went", self, #selector(shareResult)),
                      UI.spacer(),
                      UI.button("Done", self, #selector(quit), primary: true)])
     }
@@ -879,9 +880,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     /// Everything the report will contain, assembled so it can be SHOWN to the
     /// user before it goes anywhere. Nothing is sent that they have not read.
-    private func reportBody(note: String = "", printer: String = "") -> String {
+    private func reportBody(note: String = "", printer: String = "",
+                            kind: String = "problem") -> String {
         let pi = ProcessInfo.processInfo
-        var out = "ClickGraft \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")\n"
+        var out = "kind: \(kind)\n"
+        out += "ClickGraft \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")\n"
         out += "macOS \(pi.operatingSystemVersionString)\n"
         out += "arch: \(machineArch())"
         if let h = env["host"] as? [String: Any] {
@@ -932,6 +935,62 @@ final class Wizard: NSObject, NSApplicationDelegate {
         return withUnsafePointer(to: &si.machine) {
             $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
         }
+    }
+
+    /// The other half of the picture. Only failures ever reach us otherwise, so
+    /// a working install is invisible and "is this tool actually working" can
+    /// only be answered from the absence of complaints — which is not evidence.
+    @objc func shareResult() {
+        let ask = NSAlert()
+        ask.messageText = "Share how this went?"
+        ask.informativeText = "Knowing that it worked is genuinely useful, and nobody "
+            + "sends that in unprompted. This is what would be sent — you can read all "
+            + "of it first, and it goes nowhere unless you press Send.\n\nNo account, "
+            + "no identifier, nothing that says who or where you are, and no way to link "
+            + "this to anything else you send."
+        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 104))
+        let note = NSTextField(frame: NSRect(x: 0, y: 36, width: 460, height: 68))
+        note.placeholderString = "Anything worth knowing? (optional)"
+        note.usesSingleLineMode = false
+        note.cell?.wraps = true
+        note.cell?.isScrollable = false
+        let inclPrinter = NSButton(checkboxWithTitle:
+            "Include my printer's model and firmware", target: nil, action: nil)
+        inclPrinter.frame = NSRect(x: 0, y: 6, width: 460, height: 22)
+        inclPrinter.state = .off
+        inclPrinter.toolTip = "Model, firmware version and paper sizes. Never the "
+            + "printer's name, address, serial number or any password."
+        wrap.addSubview(note)
+        wrap.addSubview(inclPrinter)
+        ask.accessoryView = wrap
+        ask.addButton(withTitle: "Continue")
+        ask.addButton(withTitle: "No thanks")
+        ask.window.initialFirstResponder = note
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+
+        var printer = ""
+        if inclPrinter.state == .on,
+           let r = agent.once(["printerinfo"]), let t = r["text"] as? String {
+            printer = t
+        }
+        let body = reportBody(note: note.stringValue, printer: printer, kind: "result")
+
+        let a = NSAlert()
+        a.messageText = "Send this?"
+        a.informativeText = "Everything below, and nothing else. Your home folder name "
+            + "has already been removed. If anything here bothers you, don't send it — "
+            + "the app works exactly the same either way."
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
+        tv.string = body
+        tv.isEditable = false
+        tv.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        let sc = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
+        sc.hasVerticalScroller = true
+        sc.documentView = tv
+        a.accessoryView = sc
+        a.addButton(withTitle: "Send")
+        a.addButton(withTitle: "Cancel")
+        if a.runModal() == .alertFirstButtonReturn { postReport(body) }
     }
 
     @objc func sendReport() {

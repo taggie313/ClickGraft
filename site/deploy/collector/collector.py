@@ -40,10 +40,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         os.makedirs(REPORTS, exist_ok=True)
         stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S-%f")
+
+        # The app labels each submission. Filing them apart matters because the
+        # counts answer different questions: "problem" is a queue to work
+        # through, "result" is the denominator that says whether the tool works
+        # at all. Mixed into one pile, neither number means anything.
+        kind = "problem"
+        head = body[:200].decode("utf-8", "ignore")
+        if head.startswith("kind: result"):
+            kind = "result"
+        elif body.strip() == b"healthcheck":
+            kind = "healthcheck"
         # Country only, never the address. Enough to spot "every report is from
         # one place", not enough to identify a reporter.
         cc = re.sub(r"[^A-Za-z]", "", self.headers.get("CF-IPCountry", "") or "")[:2]
-        with open(os.path.join(REPORTS, f"report-{stamp}-{cc or 'xx'}.txt"), "wb") as f:
+        # The deploy script POSTs "healthcheck" to prove this endpoint works.
+        # Keeping those would mean every deploy silently added a report and the
+        # numbers you actually act on would drift upward on their own.
+        if kind == "healthcheck":
+            return self._reply(200, b"ok\n")
+
+        name = f"{kind}-{stamp}-{cc or 'xx'}.txt"
+        with open(os.path.join(REPORTS, name), "wb") as f:
             f.write(body)
         self._reply(200, b"thanks\n")
 

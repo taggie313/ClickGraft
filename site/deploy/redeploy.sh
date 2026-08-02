@@ -102,6 +102,11 @@ pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose up -d --remove-orpha
 pct exec $CT_ID -- sh -lc 'docker run --rm -v $REMOTE_DIR/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine nginx -t' \
   || { echo "✗ nginx rejected the new config; the running site is untouched" >&2; exit 1; }
 pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose up -d --force-recreate web'
+# collector.py is a single-file bind mount too, so it has exactly the same
+# problem as nginx.conf: compose sees no change to the service and leaves the
+# container bound to the old inode. Caught when a deploy shipped new collector
+# code and the running container carried on with the old.
+pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose up -d --force-recreate report'
 EOF
 
 echo "==> verify inside the CT"
