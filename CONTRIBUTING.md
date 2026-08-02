@@ -3,6 +3,13 @@
 Thanks for looking. The two most useful things you can bring are **a manifest for
 a version ClickGraft doesn't support yet** and **testing against real hardware**.
 
+On that second one: printing has been verified end to end exactly once, on an
+HP DesignJet T1600dr PostScript — a nested job with cut marks, three pages sent
+and three printed. Every other model, and auto-rotation and multi-roll
+selection on any model, is still unproven. A single sentence saying what you
+printed and whether it came out right is worth more than it sounds; the app's
+"Share how it went" button on the finish screen exists for exactly this.
+
 ---
 
 ## Scope — please read before opening a PR

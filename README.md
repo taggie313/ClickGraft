@@ -185,9 +185,13 @@ renderer on every launch. The patched build logs zero.
   deliberately. Attaching a developer identity to a modified copy of someone
   else's application would misrepresent its origin. The build stays on your
   machine, where ad-hoc signing is both sufficient and more honest.
-- **Printing is not yet independently verified.** Everything here is structural
-  and startup behaviour. Nesting, auto-rotation, roll selection, and end-to-end
-  job submission still need testing against real hardware.
+- **Printing works, on one printer, verified once.** A ClickGraft build printed
+  a real job to an HP DesignJet T1600dr PostScript on 2 August 2026: three
+  pages sent, three pages printed, with nesting and cut marks enabled. Colour
+  gradients, fine line art and small type all came out correctly. That is one
+  printer, one operator and one job — encouraging rather than conclusive, and
+  reports from other DesignJets are still the most useful thing you can send.
+  Auto-rotation and multi-roll selection remain unexercised.
 - **One unresolved symbol.** `_png_init_filter_functions_neon` comes from a
   libpng compiled into HP's native module and cannot be supplied externally. It
   is recorded as an accepted, unverified risk in the manifest.

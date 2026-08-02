@@ -115,9 +115,12 @@ ssh "$PVE_HOST" "pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose exe
 
 echo "==> verify ${HEALTH_URL}"
 sleep 4
-if curl -fsS --max-time 20 "$HEALTH_URL" | grep -q 'ClickGraft'; then
+# Same marker as healthcheck.sh, for the same reason: these two are ours, and
+# the HEAD on the zip was being counted as a download on every deploy.
+CHECK=(-H "X-ClickGraft-Check: 1")
+if curl -fsS --max-time 20 "${CHECK[@]}" "$HEALTH_URL" | grep -q 'ClickGraft'; then
   echo "✓ page is live"
-  code=$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 30 "${HEALTH_URL}ClickGraft.zip")
+  code=$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 30 "${CHECK[@]}" "${HEALTH_URL}ClickGraft.zip")
   [ "$code" = 200 ] && echo "✓ download reachable" || { echo "✗ ClickGraft.zip returned HTTP $code" >&2; exit 1; }
   # Check every endpoint a user's Mac touches, not just the two obvious ones.
   # A deploy once reported success while /report returned 404, and the first we
