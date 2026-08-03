@@ -1,58 +1,97 @@
 #!/bin/sh
 # "How much interest is there?" — answered from the access log, on the CT.
 #
-# GoAccess's report is the detailed view; this is the answer to the question
-# actually being asked. No dependencies beyond awk, so it works in the nginx
-# container or anywhere the log is mounted.
+#   sh summary.sh [logfile]
 #
-#   docker compose exec -T web sh /srv/summary.sh
+# Classifies by USER-AGENT rather than by excluding our own addresses. That
+# earlier approach depended on knowing which IP we were coming from, and the
+# answer changed three times in two days while travelling — a hand-typed curl
+# from a phone hotspot was reported as a second real download for a day before
+# the pattern gave it away.
+#
+# A request now has to look like a browser to count as a visit. Anything else
+# is still shown, just under its own heading where it cannot be mistaken for a
+# person. Being wrong about which bucket something lands in is recoverable;
+# silently inflating the only numbers anyone acts on is not.
 set -eu
 
 LOG="${1:-/var/log/nginx/clickgraft-access.log}"
 [ -f "$LOG" ] || { echo "no log at $LOG"; exit 1; }
 
-# Field layout of the `privacy` format in nginx.conf:
-#   $1 prefix  $4 [date:time  $6 method  $7 path  $9 status  ... last: country
 echo "ClickGraft — clickgraft.elusive.net"
 echo "log: $LOG   (addresses are truncated at source; no full IPs are kept)"
 echo
 
-awk '
-  { gsub(/^\[/, "", $4); split($4, d, ":"); day = d[1] }
-  $7 == "/" || $7 == "/index.html" { if ($9 == 200 || $9 == 304) views[day]++ ; seen[day"|"$1]++ }
-  $7 == "/ClickGraft.zip" && $9 == 200 { dl[day]++ }
-  { all[day] = 1 }
+awk -F'"' '
+  function class(ua) {
+    if (ua ~ /bot|crawler|spider|Slurp|facebookexternalhit|RecordedFuture|trendiction/) return "bot"
+    if (ua ~ /^ClickGraft\//)                                    return "app"
+    if (ua ~ /^(curl|Wget|Python-urllib|Go-http|libwww|ClickGraft-healthcheck)/) return "tool"
+    if (ua ~ /Mozilla|AppleWebKit|Gecko|Safari|Chrome|Firefox/)  return "browser"
+    return "other"
+  }
+  {
+    split($1, f, " "); pfx = f[1]
+    split($2, r, " "); path = r[2]
+    # s[1], not s[2]: awk given " " as the separator splits on runs of
+    # whitespace and discards leading blanks, so field 3 " 200 6529 " yields
+    # s[1]=status, s[2]=bytes. Reading s[2] silently compared byte counts to
+    # 200 and every view and download counted zero.
+    split($3, s, " "); status = s[1]
+    ua = $6; ref = $4
+    d = f[4]; gsub(/^\[/, "", d); split(d, dd, ":"); day = dd[1]
+    c = class(ua)
+    seen[c]++
+    if (c == "browser") {
+      all[day] = 1
+      if (path == "/" || path == "/index.html") { if (status ~ /^(200|304)$/) { v[day]++; u[day "|" pfx] = 1 } }
+      if (path == "/ClickGraft.zip" && status == "200") dl[day]++
+      # Self-referrals are the page asking for its own favicon, not a source.
+      if (ref != "-" && ref != "") {
+        split(ref, x, "/")
+        if (x[3] != "" && x[3] !~ /clickgraft\.elusive\.net/) {
+          if (!(x[3] in refs)) nref++
+          refs[x[3]]++
+        }
+      }
+    }
+    if (c == "app") { appseen[pfx] = 1; appreq++ }
+  }
   END {
-    n = 0
-    for (k in seen) { split(k, p, "|"); uniq[p[1]]++ }
     printf "%-12s %8s %8s %8s\n", "DAY", "VIEWS", "UNIQUE", "DOWNLOADS"
-    for (day in all) days[n++] = day
-    # crude but dependency-free chronological-ish sort on the log date string
+    n = 0; for (day in all) days[n++] = day
     for (i = 0; i < n; i++) for (j = i+1; j < n; j++)
       if (days[i] > days[j]) { t = days[i]; days[i] = days[j]; days[j] = t }
-    # `cur`, not `d`: d is already the split() array above, and awk refuses to
-    # let a name be both an array and a scalar.
     for (i = 0; i < n; i++) {
-      cur = days[i]
-      printf "%-12s %8d %8d %8d\n", cur, views[cur]+0, uniq[cur]+0, dl[cur]+0
-      tv += views[cur]; tu += uniq[cur]; td += dl[cur]
+      cur = days[i]; uu = 0
+      # parts, not p: p is the loop variable in the appseen loop below, and
+      # mawk refuses a name used as both array and scalar. No apostrophes in
+      # here either - the whole awk program is single quoted.
+      for (k in u) { split(k, parts, "|"); if (parts[1] == cur) uu++ }
+      printf "%-12s %8d %8d %8d\n", cur, v[cur]+0, uu, dl[cur]+0
+      tv += v[cur]; tu += uu; td += dl[cur]
     }
     printf "%-12s %8d %8d %8d\n", "TOTAL", tv, tu, td
-    if (tv > 0) printf "\nconversion: %.1f%% of page views started a download\n", (td*100.0)/tv
+    print ""
+    print "BROWSERS ONLY. Everything else is below, where it cannot be"
+    print "mistaken for a person."
+    print ""
+    ni = 0; for (ap in appseen) ni++
+    printf "  %-34s %d request(s) from %d machine(s)\n", "the app checking for updates:", appreq+0, ni
+    printf "  %-34s %d\n", "crawlers:", seen["bot"]+0
+    printf "  %-34s %d\n", "command line (curl/wget/etc):", seen["tool"]+0
+    printf "  %-34s %d\n", "unclassified:", seen["other"]+0
+    print ""
+    print "WHERE THEY CAME FROM"
+    for (h in refs) printf "%8d  %s\n", refs[h], h
+    # length(array) is a gawk extension; the CT runs mawk.
+    if (nref+0 == 0) print "       (none recorded)"
   }
 ' "$LOG"
 
-echo
-echo "WHERE THEY CAME FROM"
-# Splitting on the quote character: field 2 is the request, 4 the referrer,
-# 6 the user-agent, 8 the country. Counting from the left, not from $NF.
-awk -F'"' '$4 != "-" && $4 != "" { split($4, u, "/"); host = u[3]; if (host != "") c[host]++ }
-           END { for (h in c) printf "%8d  %s\n", c[h], h }' "$LOG" \
-  | sort -rn | head -15
 echo "  (blank means typed in directly or the referrer was withheld)"
-
 echo
-echo "COUNTRIES"
-awk -F'"' '{ gsub(/^ +| +$/, "", $8); if ($8 != "" && $8 != "-") c[$8]++ }
-           END { for (k in c) printf "%8d  %s\n", c[k], k }' "$LOG" \
-  | sort -rn | head -12
+echo "COUNTRIES (browsers only)"
+awk -F'"' '$6 ~ /Mozilla|AppleWebKit|Gecko/ && $6 !~ /bot|crawler|spider/ {
+    gsub(/^ +| +$/, "", $8); if ($8 != "" && $8 != "-") c[$8]++ }
+  END { for (k in c) printf "%8d  %s\n", c[k], k }' "$LOG" | sort -rn | head -12
