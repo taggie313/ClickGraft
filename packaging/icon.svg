@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    ClickGraft's mark. A plaster holding two halves together: "patched" and
+    "grafted" in one image, which is what the tool does — it splices a new
+    engine onto an existing app, and the join is the whole point.
+
+    Deliberately NOT derived from HP's Click icon. The project's position is
+    that it is not HP, ships none of their assets, and says so on every page; a
+    mark that borrowed theirs would undercut the disclaimer beside it.
+
+    FULL BLEED on purpose. macOS 26 masks app icons into the system shape
+    itself, so artwork with its own rounded rect and transparent margin comes
+    out as a small tile floating on a white square. The web copy gets its
+    corners from CSS instead — see the .mark rule in site/index.html — which
+    keeps this file the single source for both.
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0"    stop-color="#178B78"/>
+      <stop offset="0.55" stop-color="#0F6E62"/>
+      <stop offset="1"    stop-color="#0A4F47"/>
+    </linearGradient>
+
+    <linearGradient id="plaster" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBF6EC"/>
+      <stop offset="1" stop-color="#EADFCB"/>
+    </linearGradient>
+
+    <filter id="lift" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#04322C" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#tile)"/>
+
+  <!-- Artwork scaled about the centre so it keeps the same visual weight now
+       that the tile fills the canvas rather than being inset to 824px. -->
+  <g transform="translate(512 512) scale(1.243) translate(-512 -512)">
+
+    <!-- The seam the plaster is holding: two halves, slightly parted. -->
+    <g>
+      <path d="M 200 1100 L 840 -60" stroke="#062F2A" stroke-opacity="0.55" stroke-width="30" fill="none"/>
+      <path d="M 200 1100 L 840 -60" stroke="#3FBFA8" stroke-opacity="0.28" stroke-width="6" fill="none"/>
+    </g>
+
+    <!-- The plaster, crossing the seam at right angles. -->
+    <g transform="rotate(-30 512 512)" filter="url(#lift)">
+      <rect x="182" y="404" width="660" height="216" rx="108" fill="url(#plaster)"/>
+      <rect x="392" y="428" width="240" height="168" rx="30" fill="#DFD1B6"/>
+      <g fill="#C6B394">
+        <circle cx="447" cy="474" r="17"/><circle cx="512" cy="474" r="17"/><circle cx="577" cy="474" r="17"/>
+        <circle cx="447" cy="550" r="17"/><circle cx="512" cy="550" r="17"/><circle cx="577" cy="550" r="17"/>
+      </g>
+    </g>
+  </g>
+</svg>

@@ -34,6 +34,13 @@ echo "--> copying payload"
 /usr/bin/rsync -a "$ROOT/manifests" "$APP/Contents/Resources/"
 cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$APP/Contents/Resources/"
 
+# Icon. Rendered from packaging/icon.svg if it is missing or older than the
+# source, so editing the SVG is enough — nobody has to remember a second step.
+if [ ! -f "$HERE/AppIcon.icns" ] || [ "$HERE/icon.svg" -nt "$HERE/AppIcon.icns" ]; then
+  sh "$HERE/make-icon.sh" >/dev/null
+fi
+cp "$HERE/AppIcon.icns" "$APP/Contents/Resources/"
+
 # --- Info.plist ------------------------------------------------------------
 echo "--> writing Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -42,6 +49,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>              <string>ClickGraft</string>
+    <key>CFBundleIconFile</key>          <string>AppIcon</string>
     <key>CFBundleDisplayName</key>       <string>ClickGraft</string>
     <key>CFBundleExecutable</key>        <string>ClickGraft</string>
     <key>CFBundleIdentifier</key>        <string>$BUNDLE_ID</string>

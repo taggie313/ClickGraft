@@ -10,8 +10,11 @@
 <meta property="og:description" content="Make HP Click run properly on your Mac. Free and open source.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://clickgraft.elusive.net/">
+<meta property="og:image" content="https://clickgraft.elusive.net/icon-1024.png">
+<meta name="twitter:card" content="summary">
 
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F5A8;</text></svg>">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-512.png">
 
 <style>
 /* One accent, one font stack, no external requests. The whole page is a
@@ -77,6 +80,12 @@ code {
 
 /* ---- masthead ---- */
 header { padding: clamp(3.5rem, 9vw, 6rem) 0 0; }
+.brand { display: flex; align-items: center; gap: 18px; margin: 0 0 .35em; }
+.brand h1 { margin: 0; }
+/* icon.svg is deliberately square — macOS 26 masks app icons itself, so the
+   file cannot carry its own rounded corners. The web copy gets them here. */
+.mark { border-radius: 22.4%; flex: 0 0 auto; width: clamp(56px, 11vw, 76px);
+        height: auto; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
 .lede { font-size: 1.19rem; color: var(--muted); margin: 0 0 2rem; max-width: 34em; }
 
 .cta { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; }
@@ -139,7 +148,11 @@ footer p { margin: 0 0 .7em; }
 <body>
 
 <header class="wrap">
-  <h1>ClickGraft</h1>
+  <div class="brand">
+    <img class="mark" src="icon.svg" width="72" height="72"
+         alt="ClickGraft: a sticking plaster across a seam">
+    <h1>ClickGraft</h1>
+  </div>
   <p class="lede">HP Click for Mac is an Intel app. On a modern Mac it runs
      through a translator, and it crawls. ClickGraft makes a copy of your HP
      Click and puts the Apple&nbsp;Silicon (M-series) engine into the copy.</p>

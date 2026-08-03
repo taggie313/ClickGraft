@@ -66,6 +66,7 @@ sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
     -e "s|{{UPDATED}}|$UPDATED|g" \
     "$SITE/index.html" > /tmp/cg-build/html/index.html
 printf '%s  ClickGraft.zip\n' "$SHA" > /tmp/cg-build/html/ClickGraft.zip.sha256
+cp "$SITE/icon.svg" "$SITE/icon-512.png" "$SITE/icon-1024.png" /tmp/cg-build/html/
 
 # Any surviving placeholder means the page would ship with {{...}} visible.
 if grep -o '{{[A-Z_]*}}' /tmp/cg-build/html/index.html | sort -u | grep .; then
