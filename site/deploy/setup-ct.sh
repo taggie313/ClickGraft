@@ -69,18 +69,10 @@ pct exec "$CT_ID" -- sh -lc '
   systemctl enable --now docker
 '
 
-echo "==> log retention (30 days, and the report survives rotation)"
-pct exec "$CT_ID" -- sh -lc 'cat > /etc/logrotate.d/clickgraft-nginx <<EOF
-/var/lib/docker/volumes/clickgraft_logs/_data/clickgraft-*.log {
-    daily
-    rotate 30
-    compress
-    delaycompress
-    missingok
-    notifempty
-    copytruncate
-}
-EOF'
+# No log rotation on purpose. This is a single static page; the access log runs
+# to a few lines a day, so rotation only ever cost something — it split the
+# history across two files and made "is that number real" harder to answer.
+# If it ever does grow, rotate then.
 
 pct exec "$CT_ID" -- mkdir -p /opt/clickgraft
 

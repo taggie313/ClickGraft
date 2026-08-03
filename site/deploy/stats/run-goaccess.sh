@@ -18,8 +18,8 @@ LOGFMT='%h - - [%d:%t %^] "%m %U %H" %s %b "%R" "%u" "%^"'
 
 while :; do
   if [ -f "$LOG" ]; then
-    # --persist/--restore keep a running total across log rotations, so the
-    # 30-day retention on the raw logs doesn't erase the history that matters.
+    # --persist/--restore keep a running total independent of the raw log, which
+    # is what made the one rotation that did happen survivable.
     goaccess "$LOG" \
       --log-format="$LOGFMT" \
       --date-format='%d/%b/%Y' \

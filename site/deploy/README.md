@@ -57,8 +57,10 @@ knowing who anyone is:
   and none of it is worth keeping.
 - **No cookies, no JavaScript, no third party.** The page makes zero external
   requests, and the CSP enforces that.
-- **30 days**, then logrotate deletes it. GoAccess keeps aggregate totals past
-  that so history survives without the raw lines.
+- **Kept, not rotated.** A few lines a day; rotation only split the history
+  across two files and made auditing an individual hit harder. `fetch-stats.sh`
+  still reads `clickgraft-access.log.1` as well, because one rotation happened
+  before this was turned off and those lines are real.
 - The footer of the page says all of this in plain words.
 
 The report is deliberately not served. `fetch-stats.sh` pulls it over SSH.
