@@ -20,6 +20,7 @@ CT.
 | `deploy.env.example` | Copy to `deploy.env` (gitignored) and set your host/CT. |
 | `setup-ct.sh` | One-time provisioning. Run on the PVE node. |
 | `redeploy.sh` | Push the page + `dist/ClickGraft.zip` and restart. Run from a checkout. |
+| `_common.sh` | Shared preflight. Refuses to report numbers it could not read. |
 | `fetch-stats.sh` | Read the traffic numbers over SSH. `--html` also pulls the GoAccess report. |
 | `docker-compose.yml` · `nginx.conf` | The stack. |
 | `summary.sh` · `stats/run-goaccess.sh` | Traffic analysis, run inside the CT. |
@@ -74,3 +75,24 @@ permanently empty while everything looks fine. Hence `clickgraft-access.log`.
 
 **`$server_protocol` is already `HTTP/1.1`.** Writing `HTTP/$server_protocol`
 produces `HTTP/HTTP/1.1`, which GoAccess parses as nothing at all.
+
+
+## When a tool says it cannot reach the host
+
+The PVE nodes are on a tailnet, so an unreachable host is an ordinary condition
+here, not a crisis. Every read tool refuses rather than printing zeros:
+
+```
+✗ cannot reach root@… over SSH.
+  Tailscale is not running on this Mac…
+  NOTHING WAS READ. This is not "no traffic" …
+```
+
+That wording exists because the opposite once happened. `ssh` failed with its
+stderr discarded, the log came back empty, and the summary printed a clean table
+of zeros — indistinguishable from a quiet day. "No visitors" and "I could not
+look" are opposite facts and must never render the same way.
+
+`healthcheck.sh` has the mirror image of the problem: if every check returns
+HTTP 000 it now tests whether this machine can reach the internet at all, so a
+local outage is not reported as the site being down.

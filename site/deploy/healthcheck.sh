@@ -54,4 +54,19 @@ if command -v gh >/dev/null 2>&1; then
   fi
 fi
 
-[ "$fail" = 0 ] && echo "all good" || { echo "FAILURES ABOVE" >&2; exit 1; }
+if [ "$fail" = 0 ]; then
+  echo "all good"
+  exit 0
+fi
+
+# curl reports 000 when it never got a response at all. If EVERY check is 000
+# the site is not necessarily down — this machine may simply be offline, and
+# saying "the site is broken" then would send someone to fix the wrong thing.
+if ! curl -s -o /dev/null --max-time 10 https://cloudflare.com/cdn-cgi/trace; then
+  echo >&2
+  echo "  Note: this machine cannot reach the wider internet either, so the" >&2
+  echo "  failures above may be local. Check your own connection before" >&2
+  echo "  concluding the site is down." >&2
+fi
+echo "FAILURES ABOVE" >&2
+exit 1

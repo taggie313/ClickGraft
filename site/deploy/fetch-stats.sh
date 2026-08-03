@@ -3,31 +3,26 @@
 # internet by design, so this pulls them over SSH on demand.
 #
 #   ./site/deploy/fetch-stats.sh          # the summary
-#   ./site/deploy/fetch-stats.sh --html   # also pull GoAccess's report and open it
+#   ./site/deploy/fetch-stats.sh --html   # also pull the GoAccess report and open it
 set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/_common.sh"
+require_host
 
-# Local settings — host, container id, paths. Not in git; see deploy.env.example.
-_ENV="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/deploy.env"
-# shellcheck disable=SC1090
-[ -f "$_ENV" ] && . "$_ENV"
-
-PVE_HOST="${PVE_HOST:?set PVE_HOST in site/deploy/deploy.env}"
-CT_ID="${CT_ID:-117}"
-REMOTE_DIR="${REMOTE_DIR:-/opt/clickgraft}"
-# The named volume as the CT sees it. Reading it directly rather than through
-# `compose exec` means the summary still works when the web container is down,
-# which is exactly when you want to look at it.
+# Both files: one rotation happened before rotation was turned off, and those
+# lines are real history rather than something to tidy away.
 VOL="/var/lib/docker/volumes/clickgraft_logs/_data"
 
-ssh "$PVE_HOST" "pct exec $CT_ID -- sh -lc '
+ct "
   set -e
-  cat $VOL/clickgraft-access.log $VOL/clickgraft-access.log.1 2>/dev/null > /tmp/cg-access.log || true
+  cat $VOL/clickgraft-access.log.1 $VOL/clickgraft-access.log 2>/dev/null > /tmp/cg-access.log || true
+  [ -s /tmp/cg-access.log ] || { echo \"the access log exists but is empty — nginx may not be writing\" >&2; exit 3; }
   sh $REMOTE_DIR/summary.sh /tmp/cg-access.log
-'"
+"
 
 if [ "${1:-}" = "--html" ]; then
   OUT="/tmp/clickgraft-report.html"
-  ssh "$PVE_HOST" "pct exec $CT_ID -- cat $REMOTE_DIR/stats/report.html" > "$OUT"
+  ct "cat $REMOTE_DIR/stats/report.html" > "$OUT"
+  [ -s "$OUT" ] || die "the GoAccess report came back empty"
   echo; echo "wrote $OUT"
   command -v open >/dev/null && open "$OUT"
 fi

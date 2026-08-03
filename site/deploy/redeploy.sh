@@ -12,6 +12,18 @@ _ENV="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/deploy.env"
 [ -f "$_ENV" ] && . "$_ENV"
 
 PVE_HOST="${PVE_HOST:?set PVE_HOST in site/deploy/deploy.env}"
+
+# Fail before staging a gigabyte and half-writing a deploy. An unreachable host
+# is a normal condition here — the PVE nodes are on a tailnet — and it should
+# read as that rather than as a mysterious rsync error.
+if ! ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" true 2>/dev/null; then
+  echo "✗ cannot reach $PVE_HOST over SSH — nothing was staged or deployed." >&2
+  TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  if [ -x "$TS" ] && ! "$TS" status >/dev/null 2>&1; then
+    echo "  Tailscale is not running. Start it:  Tailscale up --accept-dns=false" >&2
+  fi
+  exit 1
+fi
 CT_ID="${CT_ID:-117}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/clickgraft}"
 HEALTH_URL="${HEALTH_URL:-https://clickgraft.elusive.net/}"
