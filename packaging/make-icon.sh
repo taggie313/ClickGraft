@@ -38,4 +38,15 @@ echo "✓ $OUT ($(du -h "$OUT" | cut -f1))"
 cp "$MASTER" "$HERE/../site/icon-1024.png"
 sips -s format png -z 512 512 "$MASTER" --out "$HERE/../site/icon-512.png" >/dev/null 2>&1
 cp "$SVG" "$HERE/../site/icon.svg"
-echo "✓ site/icon.svg, icon-512.png, icon-1024.png"
+
+# favicon.ico as well as the SVG. Browsers request /favicon.ico implicitly
+# whatever the page declares — four such requests had already 404'd on real
+# visits — and it covers anything that will not take an SVG favicon.
+#
+# ImageMagick is fine here: it only ever sees PNG. It is the SVG renderer that
+# is unusable, which is why the master comes from qlmanage.
+for z in 16 32 48; do
+  sips -s format png -z $z $z "$MASTER" --out "$WORK/f$z.png" >/dev/null 2>&1
+done
+magick "$WORK/f16.png" "$WORK/f32.png" "$WORK/f48.png" "$HERE/../site/favicon.ico"
+echo "✓ site/icon.svg, icon-512.png, icon-1024.png, favicon.ico"
