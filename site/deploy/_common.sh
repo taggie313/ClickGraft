@@ -31,10 +31,17 @@ require_host() {
 }
 
 # Run a command in the CT, failing loudly rather than returning empty output.
+#
+# The script is base64'd rather than interpolated into a quoted string. It has
+# to survive two shells (local -> ssh -> pct exec -> sh) and the first version
+# wrapped it in single quotes, so a sed expression containing one broke the
+# remote parse and the tool exited 2 with no output — the same silent-empty
+# failure this file exists to prevent, reintroduced by the fix for it.
 ct() {
-  local out rc
+  local payload out rc
+  payload="$(printf '%s' "$1" | base64 | tr -d '\n')"
   out="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$PVE_HOST" \
-          "pct exec $CT_ID -- sh -lc '$1'" 2>&1)" ; rc=$?
+          "pct exec $CT_ID -- sh -c \"echo $payload | base64 -d | sh\"" 2>&1)" ; rc=$?
   if [ $rc -ne 0 ]; then
     printf '✗ command failed inside CT %s (exit %d):\n%s\n' "$CT_ID" "$rc" "$out" >&2
     exit 1
