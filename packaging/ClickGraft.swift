@@ -376,16 +376,43 @@ final class Wizard: NSObject, NSApplicationDelegate {
         // Checked in the background so a slow or blocked network never delays
         // the first screen. If it fails, nothing is said — an update notice is
         // not worth an error dialog.
-        checkForUpdate { [weak self] latest, url in
-            guard let self = self, let latest = latest else { return }
-            self.updateURL = url ?? ""
+        checkForUpdate { [weak self] up in
+            guard let self = self, let up = up else { return }
+            self.updateURL = up.url
             self.updateBanner?.removeFromSuperview()
+            let here = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+
+            // Tell people whether it matters. A tool that shouts equally about
+            // a new icon and a broken build teaches them to ignore both, and
+            // the one that mattered is the one they then miss.
+            let lead: String, rest: String, action: String, tint: NSColor
+            switch up.importance {
+            case "optional":
+                lead = "Version \(up.version) is available, but you don't need it."
+                rest = (up.summary.isEmpty ? "Nothing about how ClickGraft works has changed."
+                                           : up.summary)
+                     + " You're on \(here), and it will keep working exactly as it does now."
+                action = "Get it anyway"
+                tint = NSColor.secondaryLabelColor.withAlphaComponent(0.08)
+            case "important":
+                lead = "Version \(up.version) fixes something that stops ClickGraft working."
+                rest = (up.summary.isEmpty ? "Updating is strongly recommended." : up.summary)
+                     + " You're on \(here)."
+                action = "Get the update"
+                tint = NSColor.systemOrange.withAlphaComponent(0.13)
+            default:
+                lead = "Version \(up.version) is available."
+                rest = (up.summary.isEmpty
+                        ? "Newer versions usually mean support for newer HP Click releases."
+                        : up.summary) + " You're on \(here)."
+                action = "Get the update"
+                tint = NSColor.systemBlue.withAlphaComponent(0.10)
+            }
+
             let b = UI.panel([
-                UI.point("Version \(latest) is available.",
-                         "You're running \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"). "
-                         + "Newer versions usually mean support for newer HP Click releases."),
-                UI.button("Get the update", self, #selector(self.openDownloadPage)),
-            ], tint: NSColor.systemBlue.withAlphaComponent(0.10))
+                UI.point(lead, rest),
+                UI.button(action, self, #selector(self.openDownloadPage)),
+            ], tint: tint)
             self.updateBanner = b
             if let stack = self.container.subviews.first(where: { $0 is NSScrollView })
                             .flatMap({ ($0 as? NSScrollView)?.documentView?.subviews.first as? NSStackView }) {
@@ -1137,19 +1164,37 @@ final class Wizard: NSObject, NSApplicationDelegate {
     /// exactly the kind that goes stale without anyone noticing, and a stale
     /// copy is how someone concludes their HP Click version is unsupported when
     /// it has been supported for months.
-    func checkForUpdate(_ done: @escaping (String?, String?) -> Void) {
-        guard let url = URL(string: Wizard.appcastURL) else { return done(nil, nil) }
+    struct Update {
+        let version: String
+        let url: String
+        /// "optional" | "recommended" | "important". Anything unrecognised —
+        /// including a server that has never heard of this field — becomes
+        /// "recommended". An update whose importance cannot be read must never
+        /// be presented as ignorable.
+        let importance: String
+        let summary: String
+    }
+
+    func checkForUpdate(_ done: @escaping (Update?) -> Void) {
+        guard let url = URL(string: Wizard.appcastURL) else { return done(nil) }
         var req = URLRequest(url: url)
         req.timeoutInterval = 8
         req.cachePolicy = .reloadIgnoringLocalCacheData
         URLSession.shared.dataTask(with: req) { data, _, _ in
             guard let data = data,
                   let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let latest = o["version"] as? String else { return DispatchQueue.main.async { done(nil, nil) } }
+                  let latest = o["version"] as? String else { return DispatchQueue.main.async { done(nil) } }
             let here = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
-            let newer = latest.compare(here, options: .numeric) == .orderedDescending
+            guard latest.compare(here, options: .numeric) == .orderedDescending else {
+                return DispatchQueue.main.async { done(nil) }
+            }
+            let raw = (o["importance"] as? String ?? "").lowercased()
+            let known = ["optional", "recommended", "important"].contains(raw)
             DispatchQueue.main.async {
-                done(newer ? latest : nil, o["url"] as? String)
+                done(Update(version: latest,
+                            url: o["url"] as? String ?? "",
+                            importance: known ? raw : "recommended",
+                            summary: o["summary"] as? String ?? ""))
             }
         }.resume()
     }

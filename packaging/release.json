@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "How the next release should be announced by the in-app update check.",
+    "Lives with the code, not in a deploy-time flag, so it is reviewed in the",
+    "same commit as the change it describes and cannot be forgotten at ship time.",
+    "",
+    "importance:",
+    "  optional     nothing about how the tool works has changed. Say so, and",
+    "               tell people they can ignore it.",
+    "  recommended  worth having. The default, and what an unknown value falls",
+    "               back to.",
+    "  important    fixes something that stops the tool working. Never use this",
+    "               for anything less — it is the only word left that means it.",
+    "",
+    "summary: one plain sentence, shown under the version number."
+  ],
+  "importance": "optional",
+  "summary": "It adds an icon and makes future update notices honest about whether they matter."
+}
