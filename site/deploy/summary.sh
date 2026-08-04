@@ -76,8 +76,14 @@ awk -F'"' '
     print "BROWSERS ONLY. Everything else is below, where it cannot be"
     print "mistaken for a person."
     print ""
+    # Prefixes, NOT machines. A truncated address is all we keep, so one
+    # laptop that moves between networks counts several times and an office of
+    # Macs behind one NAT counts once. Reported as what it is: this was quoted
+    # as "3 machines" when it was one stranger and the same test Mac twice.
     ni = 0; for (ap in appseen) ni++
-    printf "  %-34s %d request(s) from %d machine(s)\n", "the app checking for updates:", appreq+0, ni
+    printf "  %-34s %d request(s) from %d address prefix(es)\n", "the app checking for updates:", appreq+0, ni
+    print  "                                     (prefixes, not machines - one roaming"
+    print  "                                      laptop counts twice, an office counts once)"
     printf "  %-34s %d\n", "crawlers:", seen["bot"]+0
     printf "  %-34s %d\n", "command line (curl/wget/etc):", seen["tool"]+0
     printf "  %-34s %d\n", "unclassified:", seen["other"]+0
