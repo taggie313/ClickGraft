@@ -66,7 +66,7 @@ sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
     -e "s|{{UPDATED}}|$UPDATED|g" \
     "$SITE/index.html" > /tmp/cg-build/html/index.html
 printf '%s  ClickGraft.zip\n' "$SHA" > /tmp/cg-build/html/ClickGraft.zip.sha256
-cp "$SITE/icon.svg" "$SITE/icon-512.png" "$SITE/icon-1024.png" \
+cp "$SITE/icon.svg" "$SITE/og.jpg" "$SITE/apple-touch-icon.png" \
    "$SITE/favicon.ico" /tmp/cg-build/html/
 
 # Any surviving placeholder means the page would ship with {{...}} visible.
@@ -99,6 +99,16 @@ set -euo pipefail
 pct exec $CT_ID -- mkdir -p '$REMOTE_DIR'
 # --exclude .env would be wrong here: tar only carries what we staged, and we
 # never stage .env. The secret lives on the CT and is never copied off it.
+# Empty html/ first. tar -x MERGES, so a file deleted locally is never deleted
+# on the server: two oversized icons kept being served for a day after they
+# were replaced, and any retired page would linger the same way. The staging
+# dir is already an exact copy (rsync --delete), so wiping the contents and
+# repopulating is the whole fix.
+#
+# Contents, not the directory itself — ./html is a bind mount, and replacing
+# the directory would leave the container attached to the old inode, which is
+# the same trap nginx.conf and collector.py already fell into.
+pct exec $CT_ID -- sh -lc 'rm -f $REMOTE_DIR/html/* 2>/dev/null || true'
 tar -C '$STAGE' -cf - . | pct exec $CT_ID -- tar -C '$REMOTE_DIR' -xf -
 pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && chmod +x stats/run-goaccess.sh summary.sh'
 pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && test -s .env || { echo "✗ $REMOTE_DIR/.env has no tunnel token" >&2; exit 1; }'
