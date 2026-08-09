@@ -29,6 +29,19 @@ for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x
             "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
   set -- $spec
   sips -s format png -z "$1" "$1" "$MASTER" --out "$SET/$2.png" >/dev/null 2>&1
+
+  # Quantize to a 256-colour palette, WITHOUT dithering. The artwork is a
+  # smooth gradient plus a soft drop shadow, which is close to worst case for
+  # PNG: the 1024 slice alone was 957 KB and the whole .icns was 1.4 MB, more
+  # than five times the size the entire app used to be.
+  #
+  # +dither is the whole trick. Dithering scatters noise across the gradient,
+  # which is exactly what PNG cannot compress — dithered 128 colours came to
+  # 262 KB with RMSE 0.0107, while UNdithered 256 colours is 67 KB with RMSE
+  # 0.0033. Smaller and closer to the original at the same time. Checked by
+  # eye at full size as well: no banding at 256, and none visible even at 128.
+  magick "$SET/$2.png" +dither -colors 256 \
+         -define png:compression-level=9 "$SET/$2.png" 2>/dev/null || true
 done
 
 iconutil -c icns "$SET" -o "$OUT"
