@@ -1188,13 +1188,57 @@ final class Wizard: NSObject, NSApplicationDelegate {
             guard latest.compare(here, options: .numeric) == .orderedDescending else {
                 return DispatchQueue.main.async { done(nil) }
             }
-            let raw = (o["importance"] as? String ?? "").lowercased()
-            let known = ["optional", "recommended", "important"].contains(raw)
+            // Walk every release NEWER than this one and take the most
+            // serious. importance describes a release against the one before
+            // it, so reading only the newest is wrong for anyone who skipped:
+            // on 1.3.0, with an important 1.4.0 followed by a cosmetic 1.4.1,
+            // the flat field alone would say "you don't need it" and bury the
+            // release that mattered.
+            //
+            // Falls back to the flat field when there is no history — an older
+            // server, or a hand-written appcast.
+            let rank = ["optional": 0, "recommended": 1, "important": 2]
+            func normalise(_ v: Any?) -> String {
+                let s = (v as? String ?? "").lowercased()
+                return rank[s] != nil ? s : "recommended"
+            }
+
+            var importance = normalise(o["importance"])
+            var summary = o["summary"] as? String ?? ""
+            var skipped = 0
+
+            if let history = o["releases"] as? [[String: Any]] {
+                var worst = "optional"
+                var worstSummary = ""
+                for r in history {
+                    guard let v = r["version"] as? String,
+                          v.compare(here, options: .numeric) == .orderedDescending
+                    else { continue }
+                    skipped += 1
+                    let imp = normalise(r["importance"])
+                    if rank[imp]! >= rank[worst]! {
+                        worst = imp
+                        let s = r["summary"] as? String ?? ""
+                        if !s.isEmpty { worstSummary = s }
+                    }
+                }
+                if skipped > 0 {
+                    importance = worst
+                    // Prefer the sentence belonging to the most serious
+                    // release, not the newest one — that is the release the
+                    // wording is about.
+                    if !worstSummary.isEmpty { summary = worstSummary }
+                    if skipped > 1 && worst != "optional" {
+                        summary += " (\(skipped) releases since yours.)"
+                    }
+                }
+            }
+
             DispatchQueue.main.async {
                 done(Update(version: latest,
                             url: o["url"] as? String ?? "",
-                            importance: known ? raw : "recommended",
-                            summary: o["summary"] as? String ?? ""))
+                            importance: importance,
+                            summary: summary))
             }
         }.resume()
     }
