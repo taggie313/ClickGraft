@@ -5,7 +5,10 @@
 # today" and "I could not reach the server" are opposite facts and must never
 # render the same way.
 
-_ENV="$(cd "$(dirname "${BASH_SOURCE[1]:-$0}")" && pwd)/deploy.env"
+# BASH_SOURCE[0] — this file — not [1], the caller. deploy.env sits next to THIS
+# script, and keying off the caller silently broke the moment a script lived in
+# a subdirectory (watch/), which then failed claiming PVE_HOST was unset.
+_ENV="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deploy.env"
 # shellcheck disable=SC1090
 [ -f "$_ENV" ] && . "$_ENV"
 

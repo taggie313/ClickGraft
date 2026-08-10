@@ -1,0 +1,21 @@
+[Unit]
+Description=ClickGraft visitor watcher (pings ntfy on a non-crawler request)
+Documentation=https://github.com/taggie313/ClickGraft
+# The log it tails lives in a docker volume, so there is nothing to read until
+# docker has started.
+After=docker.service network-online.target
+Wants=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/clickgraft-watch.sh
+# Restart forever rather than giving up after N tries: a watcher that has
+# quietly exited is indistinguishable from a site nobody is visiting, which is
+# the one failure this is supposed to make impossible.
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
