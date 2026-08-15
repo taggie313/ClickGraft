@@ -24,7 +24,10 @@ echo
 
 awk -F'"' '
   function class(ua) {
-    if (ua ~ /bot|crawler|spider|Slurp|facebookexternalhit|RecordedFuture|trendiction/) return "bot"
+    # tolower(): the AI crawlers (ClaudeBot, Claude-SearchBot) matched /bot/ only
+    # via their lowercase contact address, not their name. One of them downloads
+    # the zip, so a miss here inflates the only number anyone acts on.
+    if (tolower(ua) ~ /bot|crawler|spider|slurp|facebookexternalhit|recordedfuture|trendiction/) return "bot"
     if (ua ~ /^ClickGraft\//)                                    return "app"
     if (ua ~ /^(curl|Wget|Python-urllib|Go-http|libwww|ClickGraft-healthcheck)/) return "tool"
     if (ua ~ /Mozilla|AppleWebKit|Gecko|Safari|Chrome|Firefox/)  return "browser"
