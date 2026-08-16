@@ -48,18 +48,18 @@ iconutil -c icns "$SET" -o "$OUT"
 echo "✓ $OUT ($(du -h "$OUT" | cut -f1))"
 
 # Web: the same master, for the page header and social previews.
-cp "$SVG" "$HERE/../site/icon.svg"
+cp "$SVG" "$HERE/../site/clickgraft-icon.svg"
 
 # Social preview as JPEG, not PNG. The artwork is a smooth gradient over an
 # opaque tile: PNG stores every pixel of that and came to 957 KB at 1024px,
 # which every link-preview bot then fetched — four times in one evening from a
 # single share. JPEG at 640px is visually identical in a chat bubble.
 sips -s format jpeg -s formatOptions 82 -z 640 640 "$MASTER" \
-     --out "$HERE/../site/og.jpg" >/dev/null 2>&1
+     --out "$HERE/../site/clickgraft-og.jpg" >/dev/null 2>&1
 
 # apple-touch-icon has a defined size of 180px. Shipping a 512px one just made
 # iOS download four times the pixels it uses.
-sips -s format png -z 180 180 "$MASTER" --out "$HERE/../site/apple-touch-icon.png" >/dev/null 2>&1
+sips -s format png -z 180 180 "$MASTER" --out "$HERE/../site/clickgraft-apple-touch-icon.png" >/dev/null 2>&1
 rm -f "$HERE/../site/icon-512.png" "$HERE/../site/icon-1024.png"
 
 # favicon.ico as well as the SVG. Browsers request /favicon.ico implicitly
@@ -71,5 +71,5 @@ rm -f "$HERE/../site/icon-512.png" "$HERE/../site/icon-1024.png"
 for z in 16 32 48; do
   sips -s format png -z $z $z "$MASTER" --out "$WORK/f$z.png" >/dev/null 2>&1
 done
-magick "$WORK/f16.png" "$WORK/f32.png" "$WORK/f48.png" "$HERE/../site/favicon.ico"
-echo "✓ site/icon.svg, og.jpg, apple-touch-icon.png, favicon.ico"
+magick "$WORK/f16.png" "$WORK/f32.png" "$WORK/f48.png" "$HERE/../site/clickgraft-favicon.ico"
+echo "✓ site/clickgraft-{icon.svg,og.jpg,apple-touch-icon.png,favicon.ico}"

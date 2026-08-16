@@ -10,14 +10,19 @@
 <meta property="og:description" content="Make HP Click run properly on your Mac. Free and open source.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://clickgraft.elusive.net/">
-<meta property="og:image" content="https://clickgraft.elusive.net/og.jpg">
+<meta property="og:image" content="https://clickgraft.elusive.net/clickgraft-og.jpg">
 <meta property="og:image:width" content="640">
 <meta property="og:image:height" content="640">
 <meta property="og:image:alt" content="The ClickGraft mark: a sticking plaster across a seam">
 <meta name="twitter:card" content="summary">
 
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="clickgraft-icon.svg" type="image/svg+xml">
+<!-- Named rather than left at /favicon.ico. Browsers only fall back to that
+     conventional path when no rel=icon is declared, and a site-specific name
+     means a misrouted request 404s instead of quietly serving another site's
+     mark — which is exactly what happened once with a co-tenant container. -->
+<link rel="icon" href="clickgraft-favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="clickgraft-apple-touch-icon.png">
 
 <style>
 /* One accent, one font stack, no external requests. The whole page is a
@@ -152,7 +157,7 @@ footer p { margin: 0 0 .7em; }
 
 <header class="wrap">
   <div class="brand">
-    <img class="mark" src="icon.svg" width="72" height="72"
+    <img class="mark" src="clickgraft-icon.svg" width="72" height="72"
          alt="ClickGraft: a sticking plaster across a seam">
     <h1>ClickGraft</h1>
   </div>

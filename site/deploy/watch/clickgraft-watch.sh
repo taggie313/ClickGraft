@@ -92,7 +92,7 @@ events() {
       # A page asset is what separates a browser that RENDERED the page from a
       # scanner that only grabbed the HTML. See the note on "view" in notify().
       else if (c == "browser" && (status == "200" || status == "304") &&
-               path ~ /^\/(icon\.svg|favicon\.ico|icon-1024\.png|apple-touch-icon\.png)$/) kind = "asset"
+               path ~ /^\/(clickgraft-icon\.svg|clickgraft-favicon\.ico|clickgraft-apple-touch-icon\.png)$/) kind = "asset"
       else if (c == "app" && path ~ /appcast/)                                     kind = "app"
       if (kind == "") next
 
