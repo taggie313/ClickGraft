@@ -23,8 +23,13 @@ SCRIPT_B64="$(base64 < "$HERE/clickgraft-watch.sh" | tr -d '\n')"
 UNIT_B64="$(base64 < "$HERE/clickgraft-watch.service" | tr -d '\n')"
 # The config carries the publish password, so it is built here and written with
 # a restrictive umask rather than echoed into a world-readable file.
-CONF_B64="$(printf 'NTFY_URL=%s\nNTFY_TOPIC=%s\nNTFY_USER=%s\nNTFY_PASS=%s\n' \
-              "$NTFY_URL" "$NTFY_TOPIC" "$NTFY_USER" "$NTFY_PASS" | base64 | tr -d '\n')"
+# LOG is written into the config rather than left to the script's default.
+# The default was CT 117's own docker volume; on the shared edge host the file
+# lives under edge_logs, and a watcher pointed at a path that no longer exists
+# fails at startup instead of silently watching nothing.
+WATCH_LOG="${LOG_VOL:-/var/lib/docker/volumes/edge_logs/_data}/clickgraft-access.log"
+CONF_B64="$(printf 'NTFY_URL=%s\nNTFY_TOPIC=%s\nNTFY_USER=%s\nNTFY_PASS=%s\nLOG=%s\n' \
+              "$NTFY_URL" "$NTFY_TOPIC" "$NTFY_USER" "$NTFY_PASS" "$WATCH_LOG" | base64 | tr -d '\n')"
 
 echo "==> installing into CT ${CT_ID}"
 ct "

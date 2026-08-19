@@ -96,3 +96,22 @@ look" are opposite facts and must never render the same way.
 `healthcheck.sh` has the mirror image of the problem: if every check returns
 HTTP 000 it now tests whether this machine can reach the internet at all, so a
 local outage is not reported as the site being down.
+
+## This directory no longer describes a container
+
+ClickGraft is served by the shared **edge** host (CT 136); see
+`~/JoshCode/elusive-edge`. `nginx.conf`, `docker-compose.yml` and `stats/` were
+deleted rather than left behind: config that is no longer authoritative invites
+someone to edit it and wonder why nothing changed. Routing for this site lives
+in edge's `nginx/conf.d/clickgraft.conf`, and the collector runs there as
+`clickgraft-report`.
+
+`redeploy.sh` now ships **content only** — `html/`, `collector/collector.py` and
+`summary.sh` into `sites/clickgraft/` — and restarts nothing but ClickGraft's own
+collector. A site deploy must never be able to take the other projects sharing
+that nginx offline.
+
+It also re-runs `watch/install-watch.sh` at the end. The watcher is a systemd
+unit on the CT rather than a container, so nothing else would ever update it: it
+spent four days announcing downloads while silently dropping every visitor,
+because a site change renamed the assets it looked for and no deploy touched it.

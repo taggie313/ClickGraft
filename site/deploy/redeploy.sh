@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Push the site and compose stack to the clickgraft CT and restart it.
+# Push the site's CONTENT to the shared edge host.
 #
 #   ./site/deploy/redeploy.sh
+#
+# Content only. ClickGraft no longer owns a container: nginx, the tunnel and the
+# routing belong to edge (CT 136) and are deployed from ~/JoshCode/elusive-edge.
+# This ships files into sites/clickgraft/ and restarts nothing but ClickGraft's
+# own collector — a site deploy must never be able to take the other projects
+# sharing that nginx offline.
 #
 # House pattern: go THROUGH the PVE host, never ssh into the CT directly.
 set -euo pipefail
@@ -24,8 +30,8 @@ if ! ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" true 2>/dev/null; then
   fi
   exit 1
 fi
-CT_ID="${CT_ID:-117}"
-REMOTE_DIR="${REMOTE_DIR:-/opt/clickgraft}"
+CT_ID="${CT_ID:-136}"
+REMOTE_DIR="${REMOTE_DIR:-/opt/edge/sites/clickgraft}"
 HEALTH_URL="${HEALTH_URL:-https://clickgraft.elusive.net/}"
 STAGE="/tmp/clickgraft-stage"
 
@@ -43,7 +49,7 @@ if [ ! -f "$ZIP" ]; then
 fi
 
 echo "==> staging"
-rm -rf /tmp/cg-build && mkdir -p /tmp/cg-build/html /tmp/cg-build/stats
+rm -rf /tmp/cg-build && mkdir -p /tmp/cg-build/html /tmp/cg-build/collector
 cp "$ZIP"                    /tmp/cg-build/html/ClickGraft.zip
 
 # The page quotes the download's SHA-256. Substituting it at deploy time from
@@ -84,10 +90,12 @@ echo "    sha256 $SHA"
 sh "$HERE/make-appcast.sh" "$ROOT/dist/ClickGraft.app" \
    /tmp/cg-build/html/appcast.json "$SHA" "$ZIP"
 echo "    appcast $(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
-cp "$HERE/docker-compose.yml" "$HERE/nginx.conf" /tmp/cg-build/
-cp "$HERE/stats/run-goaccess.sh" /tmp/cg-build/stats/
-mkdir -p /tmp/cg-build/collector && cp "$HERE/collector/collector.py" /tmp/cg-build/collector/
-cp "$HERE/summary.sh"        /tmp/cg-build/
+# The collector script and summary.sh live under the site directory so the code
+# has ONE home: edge mounts the collector directory rather than keeping a second
+# copy, and fetch-stats.sh runs summary.sh from REMOTE_DIR — it prints nothing at
+# all if that file is missing, which reads exactly like "no traffic".
+cp "$HERE/collector/collector.py" /tmp/cg-build/collector/
+cp "$HERE/summary.sh"             /tmp/cg-build/
 printf '%s\n' "$(cd "$ROOT" && git rev-parse --short HEAD)" > /tmp/cg-build/html/.build
 
 echo "    site $(du -h /tmp/cg-build/html/index.html | cut -f1), download $(du -h /tmp/cg-build/html/ClickGraft.zip | cut -f1)"
@@ -96,50 +104,29 @@ echo "==> rsync to ${PVE_HOST}:${STAGE}"
 ssh "$PVE_HOST" "mkdir -p '$STAGE'"
 rsync -az --delete /tmp/cg-build/ "$PVE_HOST:$STAGE/"
 
-echo "==> push into CT ${CT_ID} and restart compose"
+echo "==> push into CT ${CT_ID} (content only)"
 # Unquoted heredoc on purpose: the vars expand here and arrive as literals.
 ssh "$PVE_HOST" bash -s <<EOF
 set -euo pipefail
-pct exec $CT_ID -- mkdir -p '$REMOTE_DIR'
-# --exclude .env would be wrong here: tar only carries what we staged, and we
-# never stage .env. The secret lives on the CT and is never copied off it.
-# Empty html/ first. tar -x MERGES, so a file deleted locally is never deleted
-# on the server: two oversized icons kept being served for a day after they
-# were replaced, and any retired page would linger the same way. The staging
-# dir is already an exact copy (rsync --delete), so wiping the contents and
-# repopulating is the whole fix.
-#
-# Contents, not the directory itself — ./html is a bind mount, and replacing
-# the directory would leave the container attached to the old inode, which is
-# the same trap nginx.conf and collector.py already fell into.
+pct exec $CT_ID -- mkdir -p '$REMOTE_DIR/html' '$REMOTE_DIR/collector'
+# Empty html/ contents first. tar -x MERGES, so a file deleted locally is never
+# deleted on the server: two oversized icons kept being served for a day after
+# they were replaced. Contents, not the directory — sites/ is bind-mounted into
+# nginx and replacing the directory would leave it on the old inode.
 pct exec $CT_ID -- sh -lc 'rm -f $REMOTE_DIR/html/* 2>/dev/null || true'
 tar -C '$STAGE' -cf - . | pct exec $CT_ID -- tar -C '$REMOTE_DIR' -xf -
-pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && chmod +x stats/run-goaccess.sh summary.sh'
-pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && test -s .env || { echo "✗ $REMOTE_DIR/.env has no tunnel token" >&2; exit 1; }'
-pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose up -d --remove-orphans'
-# nginx.conf is a SINGLE-FILE bind mount, and tar replaces the file rather than
-# writing through it — new inode, so the running container stays bound to the
-# old one. Neither `compose up -d` nor `nginx -s reload` picks the change up:
-# reload faithfully re-reads the config the container is still bound to, the
-# deploy reports success, and the edit does nothing. The container has to be
-# recreated to rebind.
-#
-# Validate first, in a throwaway container against the file on disk. Recreating
-# with a broken config would take the site down, and this is a static page whose
-# whole job is being up.
-pct exec $CT_ID -- sh -lc 'docker run --rm -v $REMOTE_DIR/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine nginx -t' \
-  || { echo "✗ nginx rejected the new config; the running site is untouched" >&2; exit 1; }
-pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose up -d --force-recreate web'
-# collector.py is a single-file bind mount too, so it has exactly the same
-# problem as nginx.conf: compose sees no change to the service and leaves the
-# container bound to the old inode. Caught when a deploy shipped new collector
-# code and the running container carried on with the old.
-pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose up -d --force-recreate report'
+pct exec $CT_ID -- sh -lc 'chmod +x $REMOTE_DIR/summary.sh'
+# The collector is a long-running python process: replacing the file on disk
+# does not reload the code. Its DIRECTORY is mounted, so a restart is enough —
+# no --force-recreate, and nothing else in the shared stack is touched.
+pct exec $CT_ID -- sh -lc 'cd /opt/edge && docker compose restart clickgraft-report'
 EOF
 
 echo "==> verify inside the CT"
-ssh "$PVE_HOST" "pct exec $CT_ID -- sh -lc 'cd $REMOTE_DIR && docker compose exec -T web wget -qO- http://localhost/'" \
-  | grep -q 'ClickGraft' && echo "✓ nginx is serving the page" || { echo "✗ nginx is not serving the page" >&2; exit 1; }
+# Through edge's nginx with an explicit Host: one nginx serves several sites and
+# picks the server block by name, so a request without it proves nothing.
+ssh "$PVE_HOST" "pct exec $CT_ID -- docker exec edge-nginx-1 wget -qO- --header='Host: clickgraft.elusive.net' http://localhost/" \
+  | grep -q 'ClickGraft' && echo "✓ edge is serving the page" || { echo "✗ edge is not serving the page" >&2; exit 1; }
 
 echo "==> verify ${HEALTH_URL}"
 sleep 4
@@ -157,8 +144,19 @@ if curl -fsS --max-time 20 "${CHECK[@]}" "$HEALTH_URL" | grep -q 'ClickGraft'; t
   BASE="${HEALTH_URL%/}" sh "$HERE/healthcheck.sh"
 else
   echo "! ${HEALTH_URL} did not answer."
-  echo "  The container is serving correctly, so this is the tunnel: check that"
-  echo "  /opt/clickgraft/.env has a live token and that the Cloudflare public"
-  echo "  hostname routes clickgraft.elusive.net -> http://web:80."
+  echo "  edge is serving correctly, so this is DNS or the tunnel. Check that"
+  echo "  clickgraft.elusive.net CNAMEs to edge's tunnel"
+  echo "  (67bb46b9-96e5-4250-96c5-ca439065108f.cfargotunnel.com, proxied) and"
+  echo "  that its Public Hostname routes to http://nginx:80. A 530/1033 means"
+  echo "  the record points at a tunnel that no longer exists."
   exit 2
 fi
+
+
+# The watcher is a systemd unit on the CT, not a container, so nothing else
+# would ever update it. It went four days announcing downloads while silently
+# dropping every visitor because a site change renamed the assets it looked for
+# and no deploy touched it. Re-running the installer here is what couples them.
+echo
+echo "==> refreshing the visitor watcher"
+sh "$HERE/watch/install-watch.sh" >/dev/null && echo "✓ watcher reinstalled and running"

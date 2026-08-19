@@ -12,7 +12,7 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/_common.sh"
 require_host
 
-VOL="/var/lib/docker/volumes/clickgraft_reports/_data"
+VOL="${REPORT_VOL:-/var/lib/docker/volumes/edge_clickgraft_reports/_data}"
 
 if [ "${1:-}" = "--all" ]; then
   ct "

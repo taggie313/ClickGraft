@@ -10,7 +10,7 @@ require_host
 
 # Both files: one rotation happened before rotation was turned off, and those
 # lines are real history rather than something to tidy away.
-VOL="/var/lib/docker/volumes/clickgraft_logs/_data"
+VOL="${LOG_VOL:-/var/lib/docker/volumes/edge_logs/_data}"
 
 ct "
   set -e
