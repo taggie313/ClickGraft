@@ -1,0 +1,21 @@
+# ClickGraft — https://clickgraft.elusive.net
+#
+# Indexing the page is welcome. That is how people find the tool, and the
+# Reddit traffic shows search and links are doing most of the work.
+#
+# Fetching the download is not. ClickGraft.zip is half a megabyte, and crawlers
+# have been helping themselves to it — Claude-SearchBot pulled the whole thing
+# on 14 August. That wastes bandwidth, but the real cost is that it lands in the
+# download count, which is the one number used to judge whether anybody is
+# actually using this. A crawler that inflates it makes the only honest signal
+# useless.
+#
+# Cloudflare injects its own managed block after this one, covering AI training
+# agents. It does not list Claude-SearchBot, and it says nothing about the
+# binary, so these rules are not redundant with it.
+
+User-agent: *
+Allow: /
+Disallow: /ClickGraft.zip
+Disallow: /ClickGraft.zip.sha256
+Disallow: /appcast.json

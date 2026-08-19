@@ -68,6 +68,10 @@ sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
 printf '%s  ClickGraft.zip\n' "$SHA" > /tmp/cg-build/html/ClickGraft.zip.sha256
 cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple-touch-icon.png" \
    "$SITE/clickgraft-favicon.ico" /tmp/cg-build/html/
+# Keeps crawlers off the download. Cloudflare serves a managed robots.txt of its
+# own and merges this into it; without an origin file there is nothing telling
+# anyone to leave the half-megabyte binary alone.
+cp "$SITE/robots.txt" /tmp/cg-build/html/
 
 # Any surviving placeholder means the page would ship with {{...}} visible.
 if grep -o '{{[A-Z_]*}}' /tmp/cg-build/html/index.html | sort -u | grep .; then

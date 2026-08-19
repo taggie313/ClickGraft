@@ -91,8 +91,15 @@ events() {
                (status == "200" || status == "304"))                               kind = "view"
       # A page asset is what separates a browser that RENDERED the page from a
       # scanner that only grabbed the HTML. See the note on "view" in notify().
+      #
+      # Matched by EXTENSION, not by filename. The previous version listed the
+      # exact asset names, the site later renamed them all with a clickgraft-
+      # prefix, and this rule went on looking for the old ones — so every real
+      # visitor was suppressed for days while downloads still reported, which
+      # made it look like people were installing without ever visiting.
       else if (c == "browser" && (status == "200" || status == "304") &&
-               path ~ /^\/(clickgraft-icon\.svg|clickgraft-favicon\.ico|clickgraft-apple-touch-icon\.png)$/) kind = "asset"
+               path !~ /ClickGraft\.zip|appcast/ &&
+               path ~ /\.(svg|ico|png|jpg|jpeg|webp|css|js)$/) kind = "asset"
       else if (c == "app" && path ~ /appcast/)                                     kind = "app"
       if (kind == "") next
 
