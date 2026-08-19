@@ -125,15 +125,24 @@ EOF
 echo "==> verify inside the CT"
 # Through edge's nginx with an explicit Host: one nginx serves several sites and
 # picks the server block by name, so a request without it proves nothing.
-ssh "$PVE_HOST" "pct exec $CT_ID -- docker exec edge-nginx-1 wget -qO- --header='Host: clickgraft.elusive.net' http://localhost/" \
-  | grep -q 'ClickGraft' && echo "✓ edge is serving the page" || { echo "✗ edge is not serving the page" >&2; exit 1; }
+# Captured, not piped into grep. `cmd | grep -q` under `set -o pipefail` is a
+# false-negative generator: grep exits the moment it matches, curl/wget then
+# dies on EPIPE, and pipefail reports the whole pipeline as failed. It passes
+# while the page is small enough to fit the pipe buffer and starts "failing"
+# the day the page grows — which is exactly how it behaved.
+PAGE="$(ssh "$PVE_HOST" "pct exec $CT_ID -- docker exec edge-nginx-1 wget -qO- --header='Host: clickgraft.elusive.net' http://localhost/")"
+case "$PAGE" in
+  *ClickGraft*) echo "✓ edge is serving the page" ;;
+  *) echo "✗ edge is not serving the page" >&2; exit 1 ;;
+esac
 
 echo "==> verify ${HEALTH_URL}"
 sleep 4
 # Same marker as healthcheck.sh, for the same reason: these two are ours, and
 # the HEAD on the zip was being counted as a download on every deploy.
 CHECK=(-H "X-ClickGraft-Check: 1")
-if curl -fsS --max-time 20 "${CHECK[@]}" "$HEALTH_URL" | grep -q 'ClickGraft'; then
+LIVE="$(curl -fsS --max-time 20 "${CHECK[@]}" "$HEALTH_URL" || true)"
+if [ -n "$LIVE" ] && [ "${LIVE#*ClickGraft}" != "$LIVE" ]; then
   echo "✓ page is live"
   code=$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 30 "${CHECK[@]}" "${HEALTH_URL}ClickGraft.zip")
   [ "$code" = 200 ] && echo "✓ download reachable" || { echo "✗ ClickGraft.zip returned HTTP $code" >&2; exit 1; }
