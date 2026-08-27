@@ -81,7 +81,7 @@ events() {
       # s[1], not s[2] — awk splitting on " " collapses whitespace runs and
       # drops the leading blank, so field 3 " 200 6529 " gives s[1]=status.
       split($3, s, " "); status = s[1]
-      ref = $4; ua = $6
+      ref = $4; ua = $6; camp = $10
       c = class(ua)
       if (c != "browser" && c != "app") next
 
@@ -103,8 +103,8 @@ events() {
       else if (c == "app" && path ~ /appcast/)                                     kind = "app"
       if (kind == "") next
 
-      gsub(/\|/, " ", ref); gsub(/\|/, " ", ua)
-      print kind "|" pfx "|" ref "|" ua
+      gsub(/\|/, " ", ref); gsub(/\|/, " ", ua); gsub(/\|/, " ", camp)
+      print kind "|" pfx "|" ref "|" ua "|" camp
       fflush()
     }
   '
@@ -112,7 +112,7 @@ events() {
 
 # events on stdin -> notifications
 notify() {
-  while IFS='|' read -r kind prefix ref ua; do
+  while IFS='|' read -r kind prefix ref ua camp; do
     pfxkey=$(printf '%s' "$prefix" | tr -c 'A-Za-z0-9.' '_')
 
     # A page view is held back until the same address also fetches one of the
@@ -128,7 +128,7 @@ notify() {
     # notification channel.
     case "$kind" in
       view)
-        printf '%s|%s|%s\n' "$(date +%s)" "$ref" "$ua" > "$STATE/pending-$pfxkey"
+        printf '%s|%s|%s|%s\n' "$(date +%s)" "$ref" "$ua" "$camp" > "$STATE/pending-$pfxkey"
         # Unconfirmed views are never read again; do not let them pile up.
         find "$STATE" -name 'pending-*' -mmin +1440 -delete 2>/dev/null || true
         continue
@@ -136,7 +136,7 @@ notify() {
       asset)
         pend="$STATE/pending-$pfxkey"
         [ -f "$pend" ] || continue
-        IFS='|' read -r pend_at ref ua < "$pend" || continue
+        IFS='|' read -r pend_at ref ua camp < "$pend" || continue
         rm -f "$pend"
         # if/fi rather than `[ ... ] && continue`: under set -e a false test
         # makes that statement return non-zero and kills the whole script.
@@ -178,6 +178,9 @@ notify() {
     fi
 
     body="$prefix · $plat"
+    # A campaign tag beats the referrer: it is the only signal from sources that
+    # strip Referer entirely, which is what HP's forum does.
+    if [ -n "$camp" ]; then body="$body · via $camp"; fi
     case "$ref" in
       -|""|*clickgraft.elusive.net*) : ;;
       # The scheme pattern allows +.- because referrers are not all http: the

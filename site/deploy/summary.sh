@@ -41,7 +41,7 @@ awk -F'"' '
     # s[1]=status, s[2]=bytes. Reading s[2] silently compared byte counts to
     # 200 and every view and download counted zero.
     split($3, s, " "); status = s[1]
-    ua = $6; ref = $4
+    ua = $6; ref = $4; camp = $10
     d = f[4]; gsub(/^\[/, "", d); split(d, dd, ":"); day = dd[1]
     c = class(ua)
     seen[c]++
@@ -49,6 +49,10 @@ awk -F'"' '
       all[day] = 1
       if (path == "/" || path == "/index.html") { if (status ~ /^(200|304)$/) { v[day]++; u[day "|" pfx] = 1 } }
       if (path == "/ClickGraft.zip" && status == "200") dl[day]++
+      # HP's forum sends no referrer at all (no-referrer policy), so a tagged
+      # link is the only way traffic from there is distinguishable from
+      # someone typing the URL.
+      if (camp != "") { if (!(camp in camps)) ncamp++; camps[camp]++ }
       # Self-referrals are the page asking for its own favicon, not a source.
       if (ref != "-" && ref != "") {
         split(ref, x, "/")
