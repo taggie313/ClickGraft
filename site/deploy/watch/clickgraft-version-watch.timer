@@ -1,0 +1,13 @@
+[Unit]
+Description=Check HP for a newer macOS build of HP Click
+Documentation=https://github.com/taggie313/ClickGraft
+
+[Timer]
+# 06:00 UTC, well clear of the 13:00 digest so the two never contend, and early
+# enough that a find is waiting before the working day in Europe.
+OnCalendar=*-*-* 06:00:00 UTC
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

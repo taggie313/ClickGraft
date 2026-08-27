@@ -1,0 +1,11 @@
+[Unit]
+Description=Check HP for a newer macOS build of HP Click
+Documentation=https://github.com/taggie313/ClickGraft
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/clickgraft-version-watch.sh
+StandardOutput=journal
+StandardError=journal

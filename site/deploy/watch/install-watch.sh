@@ -23,6 +23,9 @@ SCRIPT_B64="$(base64 < "$HERE/clickgraft-watch.sh" | tr -d '\n')"
 DIGEST_B64="$(base64 < "$HERE/clickgraft-digest.sh" | tr -d '\n')"
 DSVC_B64="$(base64 < "$HERE/clickgraft-digest.service" | tr -d '\n')"
 DTMR_B64="$(base64 < "$HERE/clickgraft-digest.timer" | tr -d '\n')"
+VW_B64="$(base64 < "$HERE/clickgraft-version-watch.sh" | tr -d '\n')"
+VSVC_B64="$(base64 < "$HERE/clickgraft-version-watch.service" | tr -d '\n')"
+VTMR_B64="$(base64 < "$HERE/clickgraft-version-watch.timer" | tr -d '\n')"
 UNIT_B64="$(base64 < "$HERE/clickgraft-watch.service" | tr -d '\n')"
 # The config carries the publish password, so it is built here and written with
 # a restrictive umask rather than echoed into a world-readable file.
@@ -50,11 +53,16 @@ echo '$DIGEST_B64' | base64 -d > /usr/local/bin/clickgraft-digest.sh
 chmod 0755 /usr/local/bin/clickgraft-digest.sh
 echo '$DSVC_B64' | base64 -d > /etc/systemd/system/clickgraft-digest.service
 echo '$DTMR_B64' | base64 -d > /etc/systemd/system/clickgraft-digest.timer
+echo '$VW_B64'   | base64 -d > /usr/local/bin/clickgraft-version-watch.sh
+chmod 0755 /usr/local/bin/clickgraft-version-watch.sh
+echo '$VSVC_B64' | base64 -d > /etc/systemd/system/clickgraft-version-watch.service
+echo '$VTMR_B64' | base64 -d > /etc/systemd/system/clickgraft-version-watch.timer
 systemctl daemon-reload
 systemctl enable clickgraft-watch.service >/dev/null 2>&1 || true
 # restart, not start: this script is also the update path.
 systemctl restart clickgraft-watch.service
 systemctl enable --now clickgraft-digest.timer >/dev/null 2>&1 || true
+systemctl enable --now clickgraft-version-watch.timer >/dev/null 2>&1 || true
 sleep 2
 systemctl is-active clickgraft-watch.service
 "
