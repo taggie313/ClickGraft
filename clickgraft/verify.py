@@ -154,6 +154,63 @@ def verify_app_bundle(target_app_path, manifest=None):
 
     results["bundle_audit"] = "PASSED (0 unexpected x86_64 binaries, 0 Homebrew path leaks)"
 
+    # 2b. Unprovided flat-namespace symbols.
+    #
+    # This exists because of a real crash: importing a PNG killed the app with
+    # PC=0x0 and LR inside DjCoreServicesNative. The arm64 slice referenced
+    # png_init_filter_functions_neon, nothing in the bundle exported it, and the
+    # call bound to null. HP never meets this because they ship an Intel Electron
+    # and never load the arm64 slice -- grafting one makes that code live.
+    #
+    # Only FLAT-namespace undefined symbols can do this. A two-level symbol names
+    # its library, so dyld fails loudly at load if it is missing; a flat one is
+    # looked up across everything loaded, and resolves to null when nobody has it.
+    # That distinction is the whole check: the bundle has ~1100 flat undefined
+    # symbols and all but a handful are Adobe C++ resolving between its own
+    # sibling dylibs, which is fine.
+    #
+    # Known-unprovided symbols are listed in the manifest and accepted. Anything
+    # NOT on that list is a new time bomb of exactly the kind that already went
+    # off once, so it fails the build rather than a customer's print job.
+    accepted_missing = set(manifest.get("accepted_unprovided_symbols", []))
+    flat_undef, exported = set(), set()
+    for root, _dirs, files in os.walk(target_app_path):
+        for f in files:
+            fp = os.path.join(root, f)
+            if not is_macho(fp) or "arm64" not in get_archs(fp):
+                continue
+            u = subprocess.run(["nm", "-m", "-arch", "arm64", "-u", fp],
+                               capture_output=True, text=True)
+            for line in u.stdout.splitlines():
+                if "dynamically looked up" not in line:
+                    continue
+                parts = line.split()
+                for tok in parts:
+                    if tok.startswith("_") and len(tok) > 1:
+                        flat_undef.add(tok[1:])
+                        break
+            d = subprocess.run(["nm", "-arch", "arm64", "-g", "--defined-only", fp],
+                               capture_output=True, text=True)
+            for line in d.stdout.splitlines():
+                cols = line.split()
+                if len(cols) >= 3 and cols[2].startswith("_"):
+                    exported.add(cols[2][1:])
+
+    unprovided = flat_undef - exported
+    unexpected = sorted(unprovided - accepted_missing)
+    if unexpected:
+        raise ValueError(
+            "Flat-namespace symbols that nothing in the bundle provides: "
+            f"{unexpected}. These bind to NULL and crash when called -- the same "
+            "failure as png_init_filter_functions_neon. Either add a shim, or "
+            "record them in the manifest's accepted_unprovided_symbols with a "
+            "reason if they are genuinely never reached."
+        )
+    results["flat_symbols"] = (
+        f"PASSED ({len(flat_undef)} flat undefined, {len(unprovided)} unprovided, "
+        f"all accepted)"
+    )
+
     # 3. Code Signatures & Entitlements (D7: single call, no --deep)
     cs_res = subprocess.run(["codesign", "--verify", target_app_path], capture_output=True, text=True)
     if cs_res.returncode != 0:

@@ -168,6 +168,37 @@ def build_apple_silicon_bundle(
             os.chmod(dst_dylib, 0o755)
             run_cmd(["install_name_tool", "-id", f"@rpath/{d_name}", dst_dylib])
 
+        # Supply png_init_filter_functions_neon, which HP references and nobody
+        # provides.
+        #
+        # The arm64 slice of DjCoreServicesNative-Electron.node has an undefined
+        # flat-namespace reference to it; the x86_64 slice does not. HP never
+        # trips over this because they ship an Intel Electron and never load the
+        # arm64 slice. Grafting an arm64 runtime makes that code live, the call
+        # binds to null, and the app dies with PC=0x0 the moment it decodes a
+        # PNG. Confirmed from a real crash: EXC_BAD_ACCESS at 0x0 with LR inside
+        # DjCoreServices, while importing PNGs.
+        #
+        # A no-op is correct rather than a fudge: libpng installs its portable C
+        # filter implementations first and calls this only to override them with
+        # NEON versions. Doing nothing leaves the C paths, which is exactly what
+        # this build has always actually used -- the symbol was never resolvable.
+        #
+        # Compiled here rather than shipped as a binary: the toolchain is already
+        # a hard requirement (preflight checks for it), and a 16KB .dylib in git
+        # that nobody can diff is worse than four lines of C.
+        shim_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shims", "pngshim.c")
+        shim_name = "libclickgraft-pngshim.dylib"
+        shim_dst = os.path.join(dst_lib_dir, shim_name)
+        if os.path.exists(shim_src):
+            run_cmd(["clang", "-arch", "arm64", "-dynamiclib", "-O2",
+                     "-install_name", f"@rpath/{shim_name}",
+                     "-o", shim_dst, shim_src])
+            os.chmod(shim_dst, 0o755)
+            _log("Built libpng NEON shim (HP references a symbol nothing exports)", 0.55)
+        else:
+            raise FileNotFoundError(f"png shim source missing: {shim_src}")
+
         # Rewrite internal Homebrew paths inside bundled dylibs to @rpath
         for dylib_info in manifest.get("required_dylibs", []):
             dst_d = os.path.join(dst_lib_dir, dylib_info["name"])
@@ -246,6 +277,10 @@ def build_apple_silicon_bundle(
             for dinfo in manifest.get("required_dylibs", []):
                 if dinfo.get("preload") is True:
                     preload_dylibs.append(f"$APP_DATA_DIR/lib/{dinfo['name']}")
+            # The shim must be inserted too, or the symbol stays unresolved.
+            shim_path = os.path.join(dst_lib_dir, "libclickgraft-pngshim.dylib")
+            if os.path.exists(shim_path):
+                preload_dylibs.append("$APP_DATA_DIR/lib/libclickgraft-pngshim.dylib")
             if preload_dylibs:
                 preload_str = ":".join(preload_dylibs)
                 preload_lines = f'export DYLD_INSERT_LIBRARIES="{preload_str}"'

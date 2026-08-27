@@ -96,15 +96,20 @@
       "$preload_note": "MUST be true. These symbols are flat-namespace ('dynamically looked up'), which dyld resolves only against images ACTUALLY LOADED in the process. Nothing declares a load command for libnghttp2, so with preload:false the dylib sits in the bundle, satisfies an `nm -gU` scan, and is never loaded -- verified with vmmap: libidn2/libunistring/libintl LOADED, libnghttp2 NOT LOADED. Presence on disk is not satisfaction."
     }
   ],
-  "$required_dylibs_verified": "Re-measured on this build: the arm64 slice of both Dj{Core,Conn}ServicesNative-Electron.node still has 4 undefined _idn2_* and 32 undefined _nghttp2_* flat-namespace symbols, matching 4.8.117 exactly. NOTE: the 4.8.117 manifest says 36 nghttp2 symbols; both builds measure 32 by `nm -arch arm64 -u`. The older number was probably counted differently -- it is not evidence of a change.",
+  "$required_dylibs_verified": "Re-measured on this build: the arm64 slice of both Dj{Core,Conn}ServicesNative-Electron.node has 36 undefined flat-namespace symbols -- 4 _idn2_* and 32 _nghttp2_* -- matching 4.8.117 exactly. (An earlier draft of this note claimed the 4.8.117 manifest's figure of 36 was wrong because nghttp2 alone counts 32. It was not: 36 is the correct total across both symbol families.)",
   "$not_a_dependency": {
     "libmagic.1.dylib": "HP already ships this, already universal (x86_64 arm64). Linked by both .node modules, JDFPrintProcessor and goyaApp. Do not copy or replace it."
   },
   "$unresolved_symbols_note": {
-    "_png_init_filter_functions_neon": "ACCEPTED, UNVERIFIED RISK -- do not restate this as established. Flat-namespace symbol from a libpng statically compiled into DjCoreServicesNative-Electron.node; nothing in the bundle exports it. An earlier note claimed the lookup 'never fires in practice because libpng's C filter fallback handles image decoding'. No evidence was cited, and the symbol being REFERENCED means a call site exists -- on arm64 libpng calls png_init_filter_functions_neon from png_init_filter_functions whenever PNG_ARM_NEON_OPT > 0. If it fires, dyld aborts the process. Left unaddressed because there is no obvious way to supply it (it is internal to a static libpng, not a shipped dylib). TO RESOLVE: exercise a PNG-decoding path in the patched build (stage a PNG, load a thumbnail) and confirm no abort; record the result here either way."
+    "_png_init_filter_functions_neon": "RESOLVED 2026-08-27. This fired: importing PNGs crashed the app with EXC_BAD_ACCESS, PC=0x0, LR inside DjCoreServicesNative -- a call through a null pointer. The earlier note called it an accepted, unverified risk and warned that a call site existed; it did. The build now compiles clickgraft/shims/pngshim.c and preloads it, which supplies the symbol as a no-op. That is correct rather than a workaround: libpng installs its portable C filter implementations first and calls this only to override them with NEON versions, so nothing is lost that this build ever had."
   },
   "expected_x86_only": [],
   "$expected_x86_only_note": "EMPTY on purpose, and that is a real difference from 4.8.117: HP dropped AdobeAXE16SharedExpat.framework, the orphaned x86-only framework the older build shipped. Everything else still x86-only here is the Electron shell itself (HPClickExe, the four helpers) plus Mantle and ReactiveObjC from Squirrel -- all replaced or made irrelevant by the graft.",
-  "verified_by": "Measured from the stock DMG: asar hash, entry counts, Electron version, patch anchors and native-module symbols all confirmed. NOT YET BUILT AND NOT PRINT-TESTED -- 'the patches apply' is not 'the application works'. Do not ship without a real job on real hardware.",
-  "verified_on": "2026-08-27"
+  "verified_by": "Measured from the stock DMG: asar hash, entry counts, Electron version, patch anchors and native-module symbols. Built, verified (native arm64, 0 unexpected x86_64 binaries, asar integrity intact) and PRINT-TESTED on a DesignJet T1600 -- a real job reached the printer successfully.",
+  "verified_on": "2026-08-27",
+  "accepted_unprovided_symbols": [
+    "MPCurrentTaskID",
+    "MPGetTaskStorageValue"
+  ],
+  "$accepted_unprovided_symbols_note": "Carbon Multiprocessing Services, removed from macOS long ago. Referenced by AdobePDFL, libACR, libACRstd, JDFPrintProcessor and DjCoreServicesNative -- Adobe's RIP stack. ACCEPTED, not shimmed: unlike png_init_filter_functions_neon, where a no-op is the correct behaviour because libpng installs C fallbacks first, these return values a caller acts on (a task id, per-task storage). A plausible-looking lie could cause subtly wrong rendering instead of an honest crash. They are equally unresolvable in HP's own x86_64 build, so Adobe's code has evidently guarded these paths for years. Revisit if a crash ever lands with PC=0 and LR inside the Adobe stack."
 }

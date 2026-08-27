@@ -1,11 +1,11 @@
 {
-  "$comment": "Worked example. Every value here is verified against a real stock 4.8.117 bundle -- use it as the schema reference for new versions.",
-  "app_version": "4.8.117",
-  "asar_sha256": "47709539778938bca5b6128278b545b4f490609175a7e16cade84ccbd803bb21",
+  "$comment": "HP Click 4.8.118 for macOS. NEVER PUBLISHED AS A DMG -- it exists only as a Squirrel auto-update payload, delivered silently in the background to machines running 4.8.117. That is why people who have it cannot patch it and cannot reinstall it: there is nothing to download. This manifest was drafted with `clickgraft probe` against a copy rescued from an update cache (HP signature verified intact) after HP's own installer failed to apply it.",
+  "app_version": "4.8.118",
+  "asar_sha256": "227ad6bc07957a6e7b6875bf6bf242c826cb9dbf34f94c6e27521fa5bb5731f1",
   "electron_version": "39.8.4",
   "$electron_version_source": "Contents/Frameworks/Electron Framework.framework/Resources/Info.plist -> CFBundleVersion. NOTE: CFBundleShortVersionString is absent from that plist; read CFBundleVersion. Must match the fetched runtime EXACTLY -- the .node modules are Nan-built, so the ABI is not stable across Electron majors.",
   "asar_entries": {
-    "packed": 19202,
+    "packed": 19198,
     "unpacked": 25
   },
   "patches": [
@@ -62,6 +62,7 @@
       ]
     }
   ],
+  "$patches_verified": "Probe confirms each replace anchor occurs exactly once and the json_set target exists. Identical to 4.8.117 -- a patch release that did not touch these paths.",
   "$do_not_patch": {
     "app/shared/shared.module.js": "Dead code -- the live copy is webpacked into bundle.js. An earlier pass half-converted it (rewrote the export, left a top-level import), which is pure noise. Leave it alone.",
     "app/machan.js": "Dead code -- 242 concatenated module bodies with colliding const declarations; cannot load as a single CommonJS module."
@@ -94,6 +95,7 @@
       "$preload_note": "MUST be true. These symbols are flat-namespace ('dynamically looked up'), which dyld resolves only against images ACTUALLY LOADED in the process. Nothing declares a load command for libnghttp2, so with preload:false the dylib sits in the bundle, satisfies an `nm -gU` scan, and is never loaded -- verified with vmmap: libidn2/libunistring/libintl LOADED, libnghttp2 NOT LOADED. Presence on disk is not satisfaction."
     }
   ],
+  "$required_dylibs_verified": "36 undefined flat-namespace symbols in the arm64 slice of both native modules (4 _idn2_*, 32 _nghttp2_*), the same as 4.8.117 and 4.10.42.",
   "$not_a_dependency": {
     "libmagic.1.dylib": "HP already ships this, already universal (x86_64 arm64). Linked by both .node modules, JDFPrintProcessor and goyaApp. Do not copy or replace it."
   },
@@ -104,8 +106,8 @@
     "Contents/Resources/app/appData/macx/Frameworks/AdobeAXE16SharedExpat.framework/Versions/A/AdobeAXE16SharedExpat"
   ],
   "$expected_x86_only_note": "Orphaned: nothing in the bundle links it and it is not mapped into any running process. The live APPE path uses AdobeAXE8SharedExpat, which is universal. Leave it; just do not let verify fail on it.",
-  "verified_by": "audited against a working build; asar rebuild confirmed to change exactly these 4 entries with 19198 unpatched entries byte-identical and 0 blob slack",
-  "verified_on": "2026-07-31",
+  "verified_by": "DRAFT -- probed and hardened, NOT yet built and NOT print-tested.",
+  "verified_on": "2026-08-27",
   "accepted_unprovided_symbols": [
     "MPCurrentTaskID",
     "MPGetTaskStorageValue"
