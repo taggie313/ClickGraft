@@ -1,0 +1,16 @@
+[Unit]
+Description=Send the ClickGraft digest once a day
+Documentation=https://github.com/taggie313/ClickGraft
+
+[Timer]
+# 13:00 UTC — mid-morning in the Americas, evening in Europe. The log is written
+# in UTC and the digest reports a whole UTC day, so the boundary and the report
+# agree; picking a local-time schedule would split a day in half.
+OnCalendar=*-*-* 13:00:00 UTC
+# If the box was down at 13:00, send late rather than skip. A missing digest is
+# indistinguishable from a broken one.
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

@@ -49,9 +49,9 @@ awk -F'"' '
       all[day] = 1
       if (path == "/" || path == "/index.html") { if (status ~ /^(200|304)$/) { v[day]++; u[day "|" pfx] = 1 } }
       if (path == "/ClickGraft.zip" && status == "200") dl[day]++
-      # HP's forum sends no referrer at all (no-referrer policy), so a tagged
-      # link is the only way traffic from there is distinguishable from
-      # someone typing the URL.
+      # The HP forum sends no referrer at all (a no-referrer policy), so a
+      # tagged link is the only way traffic from there can be told apart from
+      # someone typing the URL. No apostrophes here - see the note below.
       if (camp != "") { if (!(camp in camps)) ncamp++; camps[camp]++ }
       # Self-referrals are the page asking for its own favicon, not a source.
       if (ref != "-" && ref != "") {
@@ -99,6 +99,10 @@ awk -F'"' '
     for (h in refs) printf "%8d  %s\n", refs[h], h
     # length(array) is a gawk extension; the CT runs mawk.
     if (nref+0 == 0) print "       (none recorded)"
+    print ""
+    print "TAGGED LINKS (?from=)"
+    for (t in camps) printf "%8d  %s\n", camps[t], t
+    if (ncamp+0 == 0) print "       (none recorded)"
   }
 ' "$LOG"
 
