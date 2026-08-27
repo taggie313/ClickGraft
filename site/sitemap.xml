@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One page, so this is a small file. It exists because crawlers ask for it by
+     name and were getting a 404, and because lastmod tells them when to bother
+     re-reading rather than guessing. The date is substituted at deploy time from
+     the shipped zip's mtime — the same source as the page's "last updated" — so
+     redeploying the page without releasing anything cannot advance it. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://clickgraft.elusive.net/</loc>
+    <lastmod>{{UPDATED_ISO}}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

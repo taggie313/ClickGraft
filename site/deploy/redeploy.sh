@@ -66,6 +66,8 @@ SHA="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
 # decide whether to bother re-downloading.
 VERSION="$(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
 UPDATED="$(date -r "$ZIP" '+%-d %B %Y')"
+# ISO form of the same date for the sitemap, so the two can never disagree.
+UPDATED_ISO="$(date -r "$ZIP" '+%Y-%m-%d')"
 
 sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
     -e "s|{{VERSION}}|$VERSION|g" \
@@ -78,9 +80,11 @@ cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple
 # own and merges this into it; without an origin file there is nothing telling
 # anyone to leave the half-megabyte binary alone.
 cp "$SITE/robots.txt" /tmp/cg-build/html/
+# Crawlers ask for /sitemap.xml by name and were getting a 404.
+sed -e "s|{{UPDATED_ISO}}|$UPDATED_ISO|g" "$SITE/sitemap.xml" > /tmp/cg-build/html/sitemap.xml
 
 # Any surviving placeholder means the page would ship with {{...}} visible.
-if grep -o '{{[A-Z_]*}}' /tmp/cg-build/html/index.html | sort -u | grep .; then
+if grep -ho '{{[A-Z_]*}}' /tmp/cg-build/html/index.html /tmp/cg-build/html/sitemap.xml | sort -u | grep .; then
   echo "✗ the placeholders above were not substituted" >&2; exit 1
 fi
 echo "    version $VERSION, updated $UPDATED"

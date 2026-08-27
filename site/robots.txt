@@ -19,3 +19,5 @@ Allow: /
 Disallow: /ClickGraft.zip
 Disallow: /ClickGraft.zip.sha256
 Disallow: /appcast.json
+
+Sitemap: https://clickgraft.elusive.net/sitemap.xml
