@@ -1,0 +1,110 @@
+{
+  "$comment": "HP Click 4.10.42 for macOS. Published to HP's file host on 2026-08-26 but NOT listed on their download page, which still offers 4.8.117 -- the file is reachable only by exact URL. Every value below was measured from the real DMG (sha256 9688a6e596e22e5d732c6cf19b7ca4e2f9fc05a0d2e7807e6ae058b9ae4d8118).",
+  "app_version": "4.10.42",
+  "asar_sha256": "061e0c9b4b9b91f874a607784ef0a13c0870dd83c14679450c3de3960fad8829",
+  "electron_version": "39.8.4",
+  "$electron_version_source": "Contents/Frameworks/Electron Framework.framework/Resources/Info.plist -> CFBundleVersion. NOTE: CFBundleShortVersionString is absent from that plist; read CFBundleVersion. Must match the fetched runtime EXACTLY -- the .node modules are Nan-built, so the ABI is not stable across Electron majors.",
+  "$electron_unchanged": "Identical to 4.8.117. That is the single most important fact here: the arm64 Electron 39.8.4 runtime ClickGraft already downloads serves this version too, so supporting it needs no new runtime and no new dependency work.",
+  "asar_entries": {
+    "packed": 19337,
+    "unpacked": 25
+  },
+  "patches": [
+    {
+      "path": "package.json",
+      "why": "hp_configs.crashAutoSubmit stays true otherwise, and crash dumps auto-upload to http://15.23.17.24:9100 in plaintext. A previous attempt set a TOP-LEVEL key of the same name, which the code never reads -- crash-reporter.js reads packagejson.hp_configs.crashAutoSubmit.",
+      "ops": [
+        {
+          "type": "json_set",
+          "path": "hp_configs.crashAutoSubmit",
+          "value": false
+        }
+      ]
+    },
+    {
+      "path": "app/node/main/app-updater.js",
+      "why": "Squirrel otherwise downloads HP's x86_64 build and offers to replace ours. This early return is the real gate: Squirrel.Mac does NOT version-compare client-side, so bumping package.json version does not stop it. Reached via main.js -> app-starter.js -> require('./app-updater').",
+      "ops": [
+        {
+          "type": "replace",
+          "anchor": "function startup(e){",
+          "replacement": "function startup(e){return;"
+        }
+      ]
+    },
+    {
+      "path": "app/shared/constants.js",
+      "why": "PRE-EXISTING HP BUG, present on Intel too. index.html loads this as a classic <script src>, where top-level `export` is a syntax error; the main process gets away with require()ing it only because Node 22+ can require an ES module. Converting to CommonJS satisfies both consumers. Stock build logs 'Uncaught SyntaxError: Unexpected token export'; patched build logs zero.",
+      "ops": [
+        {
+          "type": "replace",
+          "anchor": "export var SharedConstants;",
+          "replacement": "var SharedConstants;"
+        },
+        {
+          "type": "append",
+          "text": "\nif (typeof exports !== 'undefined') { exports.SharedConstants = SharedConstants; }\n"
+        }
+      ]
+    },
+    {
+      "path": "app/shared/industries.js",
+      "why": "Same pre-existing bug as constants.js.",
+      "ops": [
+        {
+          "type": "replace",
+          "anchor": "export const Industries = [",
+          "replacement": "const Industries = ["
+        },
+        {
+          "type": "append",
+          "text": "\nif (typeof exports !== 'undefined') { exports.Industries = Industries; }\n"
+        }
+      ]
+    }
+  ],
+  "$patches_verified": "All four ops were checked against this exact archive: each replace anchor occurs exactly once, the json_set target exists (hp_configs.crashAutoSubmit is still true), and neither append has already been applied. Unchanged from 4.8.117 -- HP did not touch these code paths.",
+  "$do_not_patch": {
+    "app/shared/shared.module.js": "Dead code -- the live copy is webpacked into bundle.js. An earlier pass half-converted it (rewrote the export, left a top-level import), which is pure noise. Leave it alone.",
+    "app/machan.js": "Dead code -- 242 concatenated module bodies with colliding const declarations; cannot load as a single CommonJS module."
+  },
+  "required_dylibs": [
+    {
+      "name": "libidn2.0.dylib",
+      "brew_formula": "libidn2",
+      "why": "The arm64 slice of Dj{Core,Conn}ServicesNative-Electron.node has flat-namespace undefined symbols _idn2_check_version, _idn2_free, _idn2_lookup_ul, _idn2_strerror and ZERO libidn2 load commands. The x86_64 slice has none of them. HP's arm64 build links a curl with IDN support and never ships the library. Flat lookup resolves at CALL time, so the app launches fine and only dies on IDN code paths -- do not conclude from a clean launch that this is unnecessary.",
+      "preload": true
+    },
+    {
+      "name": "libunistring.5.dylib",
+      "brew_formula": "libunistring",
+      "why": "dependency of libidn2",
+      "preload": false
+    },
+    {
+      "name": "libintl.8.dylib",
+      "brew_formula": "gettext",
+      "why": "dependency of libidn2",
+      "preload": false
+    },
+    {
+      "name": "libnghttp2.14.dylib",
+      "brew_formula": "libnghttp2",
+      "why": "The arm64 slice of Dj{Core,Conn}ServicesNative-Electron.node has 36 flat-namespace undefined _nghttp2_* symbols from HP's libcurl build with HTTP/2 support. Same class as the idn2 gap: HP links a curl with h2 and ships no nghttp2. nghttp2 is MIT licensed.  NOTE: the formula is libnghttp2, NOT nghttp2. Homebrew split the library out into its own formula; the nghttp2 bottle now contains the command-line tools and no .dylib at all, so fetching it downloads and verifies fine and then finds nothing to extract.",
+      "$measured": "ALPN measured 2026-07-31: us1.api.ws-hp.com negotiates http/1.1 ONLY -- an earlier note wrongly cited it as an h2 endpoint. lfp-downloads.hpcloud.hp.com DOES negotiate h2, but that is the updater host, which this patch disables. So no confirmed h2 path is exercised by the patched build today. Bundled anyway because the cost is one small MIT dylib and the failure mode is a hard process abort at call time on any HP endpoint that later enables h2.",
+      "preload": true,
+      "$preload_note": "MUST be true. These symbols are flat-namespace ('dynamically looked up'), which dyld resolves only against images ACTUALLY LOADED in the process. Nothing declares a load command for libnghttp2, so with preload:false the dylib sits in the bundle, satisfies an `nm -gU` scan, and is never loaded -- verified with vmmap: libidn2/libunistring/libintl LOADED, libnghttp2 NOT LOADED. Presence on disk is not satisfaction."
+    }
+  ],
+  "$required_dylibs_verified": "Re-measured on this build: the arm64 slice of both Dj{Core,Conn}ServicesNative-Electron.node still has 4 undefined _idn2_* and 32 undefined _nghttp2_* flat-namespace symbols, matching 4.8.117 exactly. NOTE: the 4.8.117 manifest says 36 nghttp2 symbols; both builds measure 32 by `nm -arch arm64 -u`. The older number was probably counted differently -- it is not evidence of a change.",
+  "$not_a_dependency": {
+    "libmagic.1.dylib": "HP already ships this, already universal (x86_64 arm64). Linked by both .node modules, JDFPrintProcessor and goyaApp. Do not copy or replace it."
+  },
+  "$unresolved_symbols_note": {
+    "_png_init_filter_functions_neon": "ACCEPTED, UNVERIFIED RISK -- do not restate this as established. Flat-namespace symbol from a libpng statically compiled into DjCoreServicesNative-Electron.node; nothing in the bundle exports it. An earlier note claimed the lookup 'never fires in practice because libpng's C filter fallback handles image decoding'. No evidence was cited, and the symbol being REFERENCED means a call site exists -- on arm64 libpng calls png_init_filter_functions_neon from png_init_filter_functions whenever PNG_ARM_NEON_OPT > 0. If it fires, dyld aborts the process. Left unaddressed because there is no obvious way to supply it (it is internal to a static libpng, not a shipped dylib). TO RESOLVE: exercise a PNG-decoding path in the patched build (stage a PNG, load a thumbnail) and confirm no abort; record the result here either way."
+  },
+  "expected_x86_only": [],
+  "$expected_x86_only_note": "EMPTY on purpose, and that is a real difference from 4.8.117: HP dropped AdobeAXE16SharedExpat.framework, the orphaned x86-only framework the older build shipped. Everything else still x86-only here is the Electron shell itself (HPClickExe, the four helpers) plus Mantle and ReactiveObjC from Squirrel -- all replaced or made irrelevant by the graft.",
+  "verified_by": "Measured from the stock DMG: asar hash, entry counts, Electron version, patch anchors and native-module symbols all confirmed. NOT YET BUILT AND NOT PRINT-TESTED -- 'the patches apply' is not 'the application works'. Do not ship without a real job on real hardware.",
+  "verified_on": "2026-08-27"
+}

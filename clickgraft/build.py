@@ -265,6 +265,47 @@ exec "$DIR/HPClickExe" "$@"
             lf.write(launcher_script)
         os.chmod(launcher_path, 0o755)
 
+        # 9b. Neutralise Squirrel's installer.
+        #
+        # HP ships Squirrel, whose ShipIt helper replaces the whole .app in
+        # place. Pointed at a ClickGraft copy it would swap the arm64 build for
+        # HP's Intel one -- silently undoing the patch, and any local patches on
+        # top of it, without asking.
+        #
+        # The manifest already stubs app-updater.js so startup() returns before
+        # the updater is configured, which means nothing should ever reach this
+        # binary. This is the second lock: even if a future build re-enables the
+        # check, the step that overwrites the bundle cannot run.
+        #
+        # ONLY the ShipIt executable is replaced. Squirrel.framework's dylib is
+        # linked by Electron Framework itself (@rpath/Squirrel.framework/Squirrel)
+        # -- delete that and the app will not launch at all.
+        _log("Disabling Squirrel's in-place installer...", 0.85)
+        shipit_stub = (
+            "#!/bin/sh\n"
+            "# Replaced by ClickGraft. The real ShipIt overwrites the .app in place.\n"
+            "logger -t ClickGraft \"blocked an auto-update: ShipIt was invoked in a patched copy\"\n"
+            "echo \"ClickGraft: auto-update blocked. Installing HP's update here would\" >&2\n"
+            "echo \"replace this patched arm64 copy with HP's Intel build.\" >&2\n"
+            "exit 1\n"
+        )
+        shipit_count = 0
+        squirrel_root = os.path.join(staging_dir, "Contents", "Frameworks", "Squirrel.framework")
+        for root, _dirs, files in os.walk(squirrel_root):
+            for fn in files:
+                if fn != "ShipIt":
+                    continue
+                target = os.path.join(root, fn)
+                if os.path.islink(target):
+                    continue
+                os.remove(target)
+                with open(target, "w", encoding="utf-8") as sf:
+                    sf.write(shipit_stub)
+                os.chmod(target, 0o755)
+                shipit_count += 1
+        if shipit_count:
+            _log(f"Squirrel installer disabled ({shipit_count} ShipIt binary replaced)", 0.88)
+
         # 10. Code Signing
         _log("Signing application bundle inner-to-outer...", 0.90)
         sign_bundle(staging_dir)
