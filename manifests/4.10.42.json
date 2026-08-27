@@ -105,7 +105,7 @@
   },
   "expected_x86_only": [],
   "$expected_x86_only_note": "EMPTY on purpose, and that is a real difference from 4.8.117: HP dropped AdobeAXE16SharedExpat.framework, the orphaned x86-only framework the older build shipped. Everything else still x86-only here is the Electron shell itself (HPClickExe, the four helpers) plus Mantle and ReactiveObjC from Squirrel -- all replaced or made irrelevant by the graft.",
-  "verified_by": "Measured from the stock DMG: asar hash, entry counts, Electron version, patch anchors and native-module symbols. Built, verified (native arm64, 0 unexpected x86_64 binaries, asar integrity intact) and PRINT-TESTED on a DesignJet T1600 -- a real job reached the printer successfully.",
+  "verified_by": "Measured from the stock DMG, built, verified and PRINT-TESTED on a DesignJet T1600. The PNG crash path was fixed and proven on 4.8.118; this build carries the same shim.",
   "verified_on": "2026-08-27",
   "accepted_unprovided_symbols": [
     "MPCurrentTaskID",

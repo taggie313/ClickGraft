@@ -10,10 +10,10 @@
     "  recommended  worth having. The default, and what an unknown value falls",
     "               back to.",
     "  important    fixes something that stops the tool working. Never use this",
-    "               for anything less — it is the only word left that means it.",
+    "               for anything less \u2014 it is the only word left that means it.",
     "",
     "summary: one plain sentence, shown under the version number."
   ],
-  "importance": "optional",
-  "summary": "The download is 70% smaller. Nothing about how it works has changed."
+  "importance": "important",
+  "summary": "Fixes a crash when importing PNGs, and adds support for HP Click 4.10.42 and 4.8.118. Re-run ClickGraft on your copy to get the fix."
 }

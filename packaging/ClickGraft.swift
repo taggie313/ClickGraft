@@ -820,6 +820,18 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          "If anything about the new copy bothers you, drag it to the Trash and "
                          + "carry on as before."),
             ], tint: NSColor.systemOrange.withAlphaComponent(0.11)),
+            // The checks above prove the bundle is sound; they cannot prove a
+            // page came out of a plotter. This project has shipped to people in
+            // six countries and heard back from none of them, so the only
+            // evidence it works in a print shop is the evidence someone chooses
+            // to send. Ask plainly, say what it costs, and leave it optional.
+            UI.panel([
+                UI.point("If it printed, say so.",
+                         "There is no telemetry in here, so a note from you is the only way "
+                         + "anyone learns whether this holds up on a real printer. Share how "
+                         + "it went takes one sentence, you can read every word before it "
+                         + "leaves, and it carries nothing that identifies you."),
+            ], tint: NSColor.systemBlue.withAlphaComponent(0.10)),
             Disclosure(label: "Show what was checked") {
                 (ev["results"] as? [String: String] ?? [:])
                     .sorted { $0.key < $1.key }

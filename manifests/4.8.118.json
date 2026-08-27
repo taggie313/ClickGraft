@@ -106,7 +106,7 @@
     "Contents/Resources/app/appData/macx/Frameworks/AdobeAXE16SharedExpat.framework/Versions/A/AdobeAXE16SharedExpat"
   ],
   "$expected_x86_only_note": "Orphaned: nothing in the bundle links it and it is not mapped into any running process. The live APPE path uses AdobeAXE8SharedExpat, which is universal. Leave it; just do not let verify fail on it.",
-  "verified_by": "DRAFT -- probed and hardened, NOT yet built and NOT print-tested.",
+  "verified_by": "Probed, hardened, built, verified and PRINT-TESTED on a DesignJet T1600 -- a real job reached the printer, including PNG import, which exercises the libpng NEON path that used to crash.",
   "verified_on": "2026-08-27",
   "accepted_unprovided_symbols": [
     "MPCurrentTaskID",

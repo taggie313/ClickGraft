@@ -104,8 +104,8 @@
     "Contents/Resources/app/appData/macx/Frameworks/AdobeAXE16SharedExpat.framework/Versions/A/AdobeAXE16SharedExpat"
   ],
   "$expected_x86_only_note": "Orphaned: nothing in the bundle links it and it is not mapped into any running process. The live APPE path uses AdobeAXE8SharedExpat, which is universal. Leave it; just do not let verify fail on it.",
-  "verified_by": "audited against a working build; asar rebuild confirmed to change exactly these 4 entries with 19198 unpatched entries byte-identical and 0 blob slack",
-  "verified_on": "2026-07-31",
+  "verified_by": "Long-supported. Rebuilt 2026-08-27 with the libpng shim after the null-call crash was found; verified. Its print path has been exercised since the project began.",
+  "verified_on": "2026-08-27",
   "accepted_unprovided_symbols": [
     "MPCurrentTaskID",
     "MPGetTaskStorageValue"
