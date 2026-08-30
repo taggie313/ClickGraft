@@ -45,18 +45,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # counts answer different questions: "problem" is a queue to work
         # through, "result" is the denominator that says whether the tool works
         # at all. Mixed into one pile, neither number means anything.
-        kind = "problem"
+        #
+        # Every report the app builds starts "kind: " — see reportBody() in
+        # ClickGraft.swift. Anything that does not is not from the app, so it is
+        # filed as "unknown" rather than defaulting to "problem". This endpoint
+        # is public and unauthenticated by design, and "problem" is a number
+        # someone acts on; letting any stray POST land in that pile is how the
+        # queue stops meaning anything. Kept rather than dropped, because if the
+        # app's format ever changes, reports going quietly missing is the worse
+        # failure of the two.
+        kind = "unknown"
         head = body[:200].decode("utf-8", "ignore")
         if head.startswith("kind: result"):
             kind = "result"
-        elif body.strip() == b"healthcheck":
+        elif head.startswith("kind: "):
+            kind = "problem"
+        # The deploy script POSTs "healthcheck" to prove this endpoint works.
+        # Keeping those would mean every deploy silently added a report and the
+        # numbers you actually act on would drift upward on their own.
+        #
+        # The second clause is untofu's probe, which shares this host. On
+        # 29 Aug 2026 one arrived here and was stored as a genuine problem
+        # report, because a guard that matched one exact byte string could not
+        # recognise a neighbour asking the same question in its own words.
+        elif body.strip() == b"healthcheck" or b"__healthcheck__" in body:
             kind = "healthcheck"
         # Country only, never the address. Enough to spot "every report is from
         # one place", not enough to identify a reporter.
         cc = re.sub(r"[^A-Za-z]", "", self.headers.get("CF-IPCountry", "") or "")[:2]
-        # The deploy script POSTs "healthcheck" to prove this endpoint works.
-        # Keeping those would mean every deploy silently added a report and the
-        # numbers you actually act on would drift upward on their own.
         if kind == "healthcheck":
             return self._reply(200, b"ok\n")
 
