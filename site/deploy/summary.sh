@@ -23,6 +23,19 @@ echo "log: $LOG   (addresses are truncated at source; no full IPs are kept)"
 echo
 
 awk -F'"' '
+  # "27/Aug/2026" -> "20260827", so days sort by date instead of by text.
+  # A plain string compare orders the day-of-month first, which was invisible
+  # while the log held one month and put 01/Sep above 02/Aug the moment it held
+  # two. No apostrophes in here - the whole awk program is single quoted.
+  function daykey(d,   parts, pos) {
+    # Both guards matter. index() finds the empty string at position 1, so a
+    # value that does not split into three parts would silently key as January
+    # rather than falling back.
+    if (split(d, parts, "/") != 3) return d
+    pos = index("JanFebMarAprMayJunJulAugSepOctNovDec", parts[2])
+    if (pos == 0) return d
+    return parts[3] sprintf("%02d%02d", int((pos + 2) / 3), parts[1])
+  }
   function class(ua) {
     # tolower(): the AI crawlers (ClaudeBot, Claude-SearchBot) matched /bot/ only
     # via their lowercase contact address, not their name. One of them downloads
@@ -68,7 +81,7 @@ awk -F'"' '
     printf "%-12s %8s %8s %8s\n", "DAY", "VIEWS", "UNIQUE", "DOWNLOADS"
     n = 0; for (day in all) days[n++] = day
     for (i = 0; i < n; i++) for (j = i+1; j < n; j++)
-      if (days[i] > days[j]) { t = days[i]; days[i] = days[j]; days[j] = t }
+      if (daykey(days[i]) > daykey(days[j])) { t = days[i]; days[i] = days[j]; days[j] = t }
     for (i = 0; i < n; i++) {
       cur = days[i]; uu = 0
       # parts, not p: p is the loop variable in the appseen loop below, and

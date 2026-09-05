@@ -19,7 +19,37 @@ REMOTE_DIR="${REMOTE_DIR:-/opt/clickgraft}"
 die() { printf '✗ %s\n' "$*" >&2; exit 1; }
 
 require_host() {
-  ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" true 2>/dev/null && return 0
+  if ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" true 2>/dev/null; then
+    # Reaching the node is not the same as reaching the container, and this
+    # used to stop at the former. CT 136 was migrated bb2 -> bb1 on 2 Sep 2026;
+    # bb2 kept answering ssh, so this returned 0 and every deploy failed several
+    # steps later with "Configuration file does not exist" — a preflight that
+    # passes and then lets the run die is worse than no preflight, because it
+    # tells you the thing it was asked to rule out has been ruled out.
+    ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" \
+        "pct status $CT_ID" >/dev/null 2>&1 && return 0
+
+    printf '✗ CT %s is not on %s.\n\n' "$CT_ID" "$PVE_HOST" >&2
+    # Ask the cluster where it went. The answer is one query away and the
+    # alternative is the reader guessing which node was rebuilt this week.
+    _node="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" \
+               "pvesh get /cluster/resources --type vm --output-format json" 2>/dev/null \
+             | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+print(next((str(r.get("node","")) for r in d if str(r.get("vmid")) == sys.argv[1]), ""))' \
+               "$CT_ID" 2>/dev/null)"
+    if [ -n "$_node" ]; then
+      printf '  It is on node %s now. Point PVE_HOST at that node in\n' "$_node" >&2
+      printf '  site/deploy/deploy.env, then run this again.\n\n' >&2
+    else
+      printf '  The cluster does not list a guest with id %s at all.\n\n' "$CT_ID" >&2
+    fi
+    printf '  NOTHING WAS DONE.\n' >&2
+    exit 1
+  fi
 
   printf '✗ cannot reach %s over SSH.\n\n' "$PVE_HOST" >&2
   # Almost always this, and the symptom is indistinguishable from silence.
