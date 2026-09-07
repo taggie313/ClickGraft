@@ -13,7 +13,10 @@ _ENV="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deploy.env"
 [ -f "$_ENV" ] && . "$_ENV"
 
 PVE_HOST="${PVE_HOST:?set PVE_HOST in site/deploy/deploy.env}"
-CT_ID="${CT_ID:-117}"
+# 136, not 117: CT 117 was ClickGraft's own container and was destroyed when the
+# shared edge host took the site over. redeploy.sh sources this file, so a stale
+# default here would be a stale default there too.
+CT_ID="${CT_ID:-136}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/clickgraft}"
 
 die() { printf '✗ %s\n' "$*" >&2; exit 1; }
@@ -29,9 +32,17 @@ require_host() {
     ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" \
         "pct status $CT_ID" >/dev/null 2>&1 && return 0
 
-    printf '✗ CT %s is not on %s.\n\n' "$CT_ID" "$PVE_HOST" >&2
-    # Ask the cluster where it went. The answer is one query away and the
-    # alternative is the reader guessing which node was rebuilt this week.
+    # It is not here. Follow it rather than stopping: PVE_HOST is an entry
+    # point into the cluster, not the answer to where the container lives. A
+    # migration is a normal event and it should not cost a failed deploy —
+    # especially since release.sh has already tagged, notarised and published
+    # by the time this runs, leaving the site as the one artifact still
+    # pointing at the old version.
+    #
+    # This asks only after the direct check has failed, so a normal run costs
+    # no extra round trip and there is nothing to compare: the node name that
+    # comes back is never weighed against the configured address, which is
+    # what would otherwise report a move on every single run.
     _node="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" \
                "pvesh get /cluster/resources --type vm --output-format json" 2>/dev/null \
              | python3 -c 'import json,sys
@@ -39,16 +50,34 @@ try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-print(next((str(r.get("node","")) for r in d if str(r.get("vmid")) == sys.argv[1]), ""))' \
+print(next((str(r.get("node","")) for r in d
+            if str(r.get("vmid")) == sys.argv[1] and r.get("status") == "running"), ""))' \
                "$CT_ID" 2>/dev/null)"
-    if [ -n "$_node" ]; then
-      printf '  It is on node %s now. Point PVE_HOST at that node in\n' "$_node" >&2
-      printf '  site/deploy/deploy.env, then run this again.\n\n' >&2
-    else
-      printf '  The cluster does not list a guest with id %s at all.\n\n' "$CT_ID" >&2
+
+    if [ -z "$_node" ]; then
+      printf '✗ CT %s is not on %s, and the cluster does not list it running.\n\n' \
+             "$CT_ID" "$PVE_HOST" >&2
+      printf '  NOTHING WAS DONE.\n' >&2
+      exit 1
     fi
-    printf '  NOTHING WAS DONE.\n' >&2
-    exit 1
+
+    # Confirm the new target before adopting it. Being told a node name is not
+    # the same as being able to reach it and find the container there, and
+    # switching to a host we have not checked would just move the failure.
+    _new="${PVE_HOST%%@*}@$_node"
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=8 "$_new" \
+             "pct status $CT_ID" >/dev/null 2>&1; then
+      printf '✗ CT %s has moved to node %s, which this Mac cannot reach as %s.\n\n' \
+             "$CT_ID" "$_node" "$_new" >&2
+      printf '  Set PVE_HOST in site/deploy/deploy.env to an address for %s.\n\n' "$_node" >&2
+      printf '  NOTHING WAS DONE.\n' >&2
+      exit 1
+    fi
+
+    printf '==> CT %s has moved to %s (deploy.env says %s); following it\n' \
+           "$CT_ID" "$_node" "${PVE_HOST#*@}"
+    PVE_HOST="$_new"
+    return 0
   fi
 
   printf '✗ cannot reach %s over SSH.\n\n' "$PVE_HOST" >&2

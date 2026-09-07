@@ -12,25 +12,21 @@
 # House pattern: go THROUGH the PVE host, never ssh into the CT directly.
 set -euo pipefail
 
-# Local settings — host, container id, paths. Not in git; see deploy.env.example.
-_ENV="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/deploy.env"
-# shellcheck disable=SC1090
-[ -f "$_ENV" ] && . "$_ENV"
+# Local settings — host, container id, paths — and the shared preflight, which
+# loads deploy.env, checks the host is reachable, and follows the container if
+# it has been migrated to another node.
+#
+# This used to be a second copy of that preflight, inlined here. The copy drifted:
+# when require_host was taught to verify the container rather than just the node,
+# redeploy.sh — the one script where a late failure costs the most, since it runs
+# after release.sh has already published — kept the old check and kept failing
+# halfway through. One preflight, one place.
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/_common.sh"
 
-PVE_HOST="${PVE_HOST:?set PVE_HOST in site/deploy/deploy.env}"
+# Fail before staging a gigabyte and half-writing a deploy.
+require_host
 
-# Fail before staging a gigabyte and half-writing a deploy. An unreachable host
-# is a normal condition here — the PVE nodes are on a tailnet — and it should
-# read as that rather than as a mysterious rsync error.
-if ! ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" true 2>/dev/null; then
-  echo "✗ cannot reach $PVE_HOST over SSH — nothing was staged or deployed." >&2
-  TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
-  if [ -x "$TS" ] && ! "$TS" status >/dev/null 2>&1; then
-    echo "  Tailscale is not running. Start it:  Tailscale up --accept-dns=false" >&2
-  fi
-  exit 1
-fi
-CT_ID="${CT_ID:-136}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/edge/sites/clickgraft}"
 HEALTH_URL="${HEALTH_URL:-https://clickgraft.elusive.net/}"
 STAGE="/tmp/clickgraft-stage"
