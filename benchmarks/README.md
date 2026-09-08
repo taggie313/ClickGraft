@@ -18,9 +18,9 @@ the native build. These stop on quiescence of the app's own timestamped log
 instead.
 
 **Control the updater.** The stock build asks HP for an update on every launch
-and, if one is offered, downloads the whole application — 546 MB, measured
-against HPClick-4.8.117.zip on HP's server, not the ~200 MB this file used to
-claim. That dominates any CPU comparison if left enabled.
+and, if one is offered, downloads the whole application — 572 MB
+(572,397,601 bytes, measured against HPClick-4.8.117.zip on HP's server), not
+the ~200 MB this file used to claim. That dominates any CPU comparison if left enabled.
 
 It does not necessarily *install*: HP's ShipIt cannot launch on these bundles
 (its rpaths do not resolve `@rpath/Mantle.framework/Mantle`, verified on
