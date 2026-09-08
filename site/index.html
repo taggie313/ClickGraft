@@ -127,6 +127,11 @@ thead th { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em;
 td.win { font-weight: 660; color: var(--accent); font-variant-numeric: tabular-nums; }
 td.was { color: var(--muted); font-variant-numeric: tabular-nums; }
 .tablewrap { overflow-x: auto; }
+/* The generic rule above right-aligns every column but the first, which is
+   right for the before/after numbers and wrong for a note written in words. */
+.versions td:last-child, .versions th:last-child { text-align: left; color: var(--muted);
+           font-size: .88rem; padding-left: 1.2em; }
+.versions .none { color: var(--faint); font-style: italic; }
 
 /* ---- blocks ---- */
 .panel {
@@ -329,9 +334,57 @@ HP published 4.10.42 for macOS on 26 August 2026 without listing it: the page st
 advertises the June build, and the newer one is reachable only if you already know
 its address. ClickGraft handles either.</p>
 
-<p><strong>4.8.118 was never a download at all.</strong> It only ever arrived as a
-background auto-update, which is why people who have it can't reinstall it and, until
-now, couldn't patch it. If that's you, ClickGraft works on it.</p>
+<p><strong>4.8.118 was never published as a download.</strong> It only ever arrived
+as a background auto-update, which is why people who have it can't reinstall it from
+HP's page. ClickGraft works on it &mdash; and, it turns out, you can get it after all.
+See below.</p>
+
+<h3>Getting a particular version from HP</h3>
+
+<p>HP keeps its Mac builds in two separate places, and the one people know about is
+the smaller of them. The download page serves <code>.dmg</code> installers. The
+auto-updater pulls from a different directory entirely, as zipped copies of the app
+&mdash; and that directory holds builds that were never published as a DMG at all.
+Both are HP's own servers; these are the addresses HP Click itself uses.</p>
+
+<div class="tablewrap">
+<table class="versions">
+<thead><tr><th>Version</th><th>Installer (.dmg)</th><th>App (.zip)</th><th></th></tr></thead>
+<tbody>
+<tr><td>4.10.42</td>
+    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.10.42.dmg">download</a></td>
+    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.10.42.zip">download</a></td>
+    <td>Newest. Not listed on HP's page.</td></tr>
+<tr><td>4.8.118</td>
+    <td><span class="none">never published</span></td>
+    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.8.118.zip">download</a></td>
+    <td>The auto-update one. This is the only place it exists.</td></tr>
+<tr><td>4.8.117</td>
+    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.8.117.dmg">download</a></td>
+    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.8.117.zip">download</a></td>
+    <td>What HP's download page still offers.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p class="disclaim">All three are around 570&nbsp;MB. The <code>.zip</code> is the
+application itself rather than an installer: unzip it and drag the result where you
+want it. ClickGraft grafts any of the three, so pick whichever you can actually get
+&mdash; there is no reason to prefer one over another for ClickGraft's sake.</p>
+
+<div class="panel">
+<h3>If you have 4.10.38, the project would like a copy</h3>
+<p>HP did publish 4.10.38 to that second directory, but the file there is broken
+&mdash; seven megabytes of a build that should be five hundred and seventy, an upload
+that stopped early and was never fixed. It cannot be unzipped, so it is not linked
+above and nobody can obtain it from HP any more.</p>
+<p>If 4.10.38 is what is installed on your Mac, a copy of it would let ClickGraft
+support that version for everyone else still on it. Nothing automated is needed
+&mdash; <a href="mailto:clickgraft@elusive.net">get in touch</a> and we will sort out
+the details. The same goes for any version not listed here: if ClickGraft doesn't
+recognise what you have, that is the missing piece, and your copy is the only way to
+close the gap.</p>
+</div>
 
 <p><strong>New versions shouldn't stay unsupported for long.</strong> When HP
 ships an update, most of the work is mechanical: read the new app, check that
