@@ -991,7 +991,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
     /// Everything the report will contain, assembled so it can be SHOWN to the
     /// user before it goes anywhere. Nothing is sent that they have not read.
     private func reportBody(note: String = "", printer: String = "",
-                            kind: String = "problem") -> String {
+                            contact: String = "", kind: String = "problem") -> String {
         let pi = ProcessInfo.processInfo
         var out = "kind: \(kind)\n"
         out += "ClickGraft \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")\n"
@@ -1007,6 +1007,19 @@ final class Wizard: NSObject, NSApplicationDelegate {
         out += "outcome: \(outcome)\n"
         out += "source: \((picked?["path"] as? String).map(scrub) ?? "none")\n"
         out += "version: \(picked?["version"] as? String ?? "?")\n\n"
+
+        // Only if they typed one. Everything else in this report is scrubbed of
+        // anything identifying; this is the one field that is personal by
+        // definition, so it exists only when someone has deliberately filled it
+        // in, and it is visible in the preview they approve before sending.
+        //
+        // NOT scrubbed: scrub() strips /Users/<name>, and an address like
+        // name@users.example would be mangled by a careless pattern. It is
+        // checked for a newline instead, so it cannot forge extra report fields.
+        if !contact.isEmpty {
+            out += "contact: \(contact.replacingOccurrences(of: "\n", with: " "))\n"
+            out += "  (they asked to be told when this is fixed)\n\n"
+        }
 
         // What the person says beats anything we can infer. A copy that builds
         // cleanly and then won't print looks identical to a perfect run from
@@ -1112,8 +1125,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
         ask.informativeText = "In your own words. \"It prints nothing\", \"the page "
             + "comes out rotated\", \"it won't find my printer\" — whatever you'd say "
             + "out loud is exactly right. You can leave it blank if you'd rather."
-        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 104))
-        let note = NSTextField(frame: NSRect(x: 0, y: 36, width: 460, height: 68))
+        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 156))
+        let note = NSTextField(frame: NSRect(x: 0, y: 88, width: 460, height: 62))
         note.placeholderString = "What happened?"
         note.usesSingleLineMode = false
         note.cell?.wraps = true
@@ -1124,12 +1137,29 @@ final class Wizard: NSObject, NSApplicationDelegate {
         // equipment, so they get asked rather than told.
         let inclPrinter = NSButton(checkboxWithTitle:
             "Include my printer's model and firmware", target: nil, action: nil)
-        inclPrinter.frame = NSRect(x: 0, y: 6, width: 460, height: 22)
+        inclPrinter.frame = NSRect(x: 0, y: 58, width: 460, height: 22)
         inclPrinter.state = .off
         inclPrinter.toolTip = "Model, firmware version and paper sizes. Never the "
             + "printer's name, address, serial number or any password."
+        // Optional, and the only field in this report that is personal by
+        // definition. Without it a report is a dead end in one direction: the
+        // Indonesian failure told us exactly what was wrong, it was fixed the
+        // same day, and there was no way to tell them. Blank is a perfectly
+        // good answer and the label says so before it says anything else.
+        let contactLabel = NSTextField(labelWithString:
+            "Optional \u{2014} where to reach you, if you would like an answer:")
+        contactLabel.frame = NSRect(x: 0, y: 30, width: 460, height: 18)
+        contactLabel.font = .systemFont(ofSize: 11)
+        contactLabel.textColor = .secondaryLabelColor
+        let contact = NSTextField(frame: NSRect(x: 0, y: 4, width: 460, height: 22))
+        contact.placeholderString = "you@example.com \u{2014} or leave it blank"
+        contact.toolTip = "Used only to reply about this report: to ask a question, "
+            + "or to tell you when it is fixed. Never added to a mailing list, "
+            + "never used for anything else, never given to anyone."
         wrap.addSubview(note)
         wrap.addSubview(inclPrinter)
+        wrap.addSubview(contactLabel)
+        wrap.addSubview(contact)
         ask.accessoryView = wrap
         ask.addButton(withTitle: "Continue")
         ask.addButton(withTitle: "Cancel")
@@ -1141,14 +1171,24 @@ final class Wizard: NSObject, NSApplicationDelegate {
            let r = agent.once(["printerinfo"]), let t = r["text"] as? String {
             printer = t
         }
-        let body = reportBody(note: note.stringValue, printer: printer)
+        let contactValue = contact.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = reportBody(note: note.stringValue, printer: printer,
+                              contact: contactValue)
 
         let a = NSAlert()
         a.messageText = "Send this to the ClickGraft developers?"
+        // The old wording promised "no personal information" flatly. With a
+        // contact field that would be false the moment someone uses it, and a
+        // privacy promise that is false in one case is worth less than none.
         a.informativeText = "This is everything that will be sent. Nothing else leaves "
-            + "your Mac — no file names from your work, no printer details, no personal "
-            + "information. Your home folder name has been removed. Read it first; if "
-            + "anything in it bothers you, don't send it."
+            + "your Mac — no file names from your work, no printer details, and nothing "
+            + "identifying that you did not type yourself. Your home folder name has "
+            + "been removed. Read it first; if anything in it bothers you, don't send it."
+            + (contactValue.isEmpty ? ""
+               : "\n\nYour address is in there because you entered it. It will be used "
+               + "to reply about this report and for nothing else — no mailing list, no "
+               + "newsletter, and it is not passed to anyone.")
         let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
         tv.string = body
         tv.isEditable = false
