@@ -611,6 +611,37 @@ final class Wizard: NSObject, NSApplicationDelegate {
             let file = dir.appendingPathComponent("ClickGraft report.txt")
             try? report.write(to: file, atomically: true, encoding: .utf8)
             NSWorkspace.shared.selectFile(file.path, inFileViewerRootedAtPath: "")
+
+            // Then ask for it. Saving the file to the Desktop and stopping there
+            // put the whole burden on the user to find somewhere to send it, and
+            // an unsupported version is precisely the case where their copy is
+            // the only thing that can close the gap: HP does not publish most of
+            // these, so if nobody sends one, that version stays unsupported for
+            // everyone on it. Shown in full first, like every other report.
+            let offer = NSAlert()
+            offer.messageText = "Send this description to the ClickGraft developers?"
+            offer.informativeText = "ClickGraft doesn't know your version of HP Click. "
+                + "This describes it — version numbers, file sizes and fingerprints — "
+                + "and it is what makes supporting that version possible. HP does not "
+                + "publish every build it ships, so for some versions a description "
+                + "from someone who has one is the only way it can ever be added.\n\n"
+                + "No file names from your work, no printer details, no personal "
+                + "information. Your home folder name has been removed. It is on your "
+                + "Desktop either way — read it first, and don't send it if anything "
+                + "in it bothers you."
+            let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
+            tv.string = report
+            tv.isEditable = false
+            tv.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            let sc = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
+            sc.hasVerticalScroller = true
+            sc.documentView = tv
+            offer.accessoryView = sc
+            offer.addButton(withTitle: "Send it")
+            offer.addButton(withTitle: "Not now")
+            if offer.runModal() == .alertFirstButtonReturn {
+                postReport("kind: unsupported-version\n" + report)
+            }
         }
     }
 
@@ -916,18 +947,39 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 UI.body(message),
                 UI.panel([
                     UI.point("Your original HP Click was not changed.",
-                             "Nothing was installed. You can try again, or send a report "
-                             + "if it keeps happening."),
+                             "Nothing was installed, and nothing about your Mac is "
+                             + "different from a minute ago."),
+                    // "…if it keeps happening" was in this panel, and it cost us the
+                    // one failure report we have. Someone in Indonesia hit an
+                    // unwritable /Applications and retried NINE times before sending
+                    // anything, because the screen told them retrying was the normal
+                    // response. A failure that repeats is not more informative than
+                    // the first one; it is the same report, later.
+                    UI.point("Please send the report.",
+                             "It says which version of HP Click you have and where the "
+                             + "build stopped. That is usually enough to fix it — the "
+                             + "last report like this turned into a fix the same day. "
+                             + "Check back here in a day or so: if a new ClickGraft "
+                             + "solves it, the app will offer you the update itself."),
                 ]),
                 Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
             ]
         }
 
-        var buttons: [NSView] = [UI.button("Back", self, #selector(showReview)),
-                                 UI.button("Send a report", self, #selector(sendReport))]
-        if madeIt { buttons.append(UI.button("Open the copy", self, #selector(revealOutput))) }
-        buttons += [UI.spacer(),
-                    UI.button("Try again", self, #selector(startBuild), primary: !madeIt)]
+        // On a hard failure the report is the primary action, not "Try again".
+        // Retrying an unwritable folder or an unreadable bundle produces the same
+        // failure with no new information, and the button that looks like the
+        // answer is the one people press.
+        var buttons: [NSView] = [UI.button("Back", self, #selector(showReview))]
+        if madeIt {
+            buttons.append(UI.button("Send a report", self, #selector(sendReport)))
+            buttons.append(UI.button("Open the copy", self, #selector(revealOutput)))
+            buttons += [UI.spacer(), UI.button("Try again", self, #selector(startBuild))]
+        } else {
+            buttons.append(UI.button("Try again", self, #selector(startBuild)))
+            buttons += [UI.spacer(),
+                        UI.button("Send a report", self, #selector(sendReport), primary: true)]
+        }
         present(rows, buttons: buttons)
     }
 

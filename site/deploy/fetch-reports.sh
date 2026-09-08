@@ -28,7 +28,8 @@ else
   ct "
     r=\$(ls -1 $VOL/result-*.txt 2>/dev/null | wc -l | tr -d ' ')
     p=\$(ls -1 $VOL/problem-*.txt 2>/dev/null | wc -l | tr -d ' ')
-    echo \"  \${r:-0} working, \${p:-0} problem(s)\"
+    v=\$(ls -1 $VOL/version-*.txt 2>/dev/null | wc -l | tr -d ' ')
+    echo \"  \${r:-0} working, \${p:-0} problem(s), \${v:-0} version submission(s)\"
     ls -1 $VOL/*.txt 2>/dev/null | sed 's|.*/|    |' || true
     exit 0
   "

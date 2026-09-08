@@ -58,6 +58,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         head = body[:200].decode("utf-8", "ignore")
         if head.startswith("kind: result"):
             kind = "result"
+        elif head.startswith("kind: unsupported-version"):
+            # Its own pile. These are not problems -- they are somebody handing
+            # over a description of a build HP never published, which is the only
+            # way that version can ever be supported. Counted with the failures
+            # they would read as breakage and would be worked through as a queue
+            # rather than as the contributions they are.
+            kind = "version"
         elif head.startswith("kind: "):
             kind = "problem"
         # The deploy script POSTs "healthcheck" to prove this endpoint works.
