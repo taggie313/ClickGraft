@@ -36,16 +36,49 @@ def get_dir_hash(directory_path):
     return hasher.hexdigest()
 
 
+def find_stock_bundle(version):
+    """A STOCK HP Click of exactly `version`, or None.
+
+    The suite used to name a path -- "HP Click (x86_64 Backup).app", falling
+    back to "/Applications/HP Click.app" -- while pinning the manifest to
+    4.8.117. That held until HP shipped 4.10.42 and the fallback started
+    resolving to a bundle of a different version, at which point eleven tests
+    failed with "Source is not a stock HP Click 4.8.117 bundle". The tests were
+    fine; they were being handed the wrong app.
+
+    So: look for the version actually required, and confirm it rather than
+    trusting a filename. Stock means x86_64 -- an arm64 slice means it is a
+    ClickGraft output, which must never be used as a build source.
+    """
+    import glob
+    for path in sorted(glob.glob("/Applications/*Click*.app")):
+        plist = os.path.join(path, "Contents", "Info.plist")
+        if not os.path.exists(plist):
+            continue
+        got = subprocess.run(["/usr/bin/defaults", "read", plist,
+                              "CFBundleShortVersionString"],
+                             capture_output=True, text=True).stdout.strip()
+        if got != version:
+            continue
+        exe = os.path.join(path, "Contents", "MacOS", "HPClickExe")
+        archs = subprocess.run(["lipo", "-archs", exe],
+                               capture_output=True, text=True).stdout.split()
+        if "arm64" in archs:          # already grafted; not a stock source
+            continue
+        return path
+    return None
+
+
 class TestClickGraftAcceptanceSuite(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.source_app = "/Applications/HP Click (x86_64 Backup).app"
-        if not os.path.exists(cls.source_app):
-            cls.source_app = "/Applications/HP Click.app"
-        
-        if not os.path.exists(cls.source_app):
-            raise unittest.SkipTest(f"Source app bundle not found: {cls.source_app}")
+        cls.source_app = find_stock_bundle("4.8.117")
+        if cls.source_app is None:
+            raise unittest.SkipTest(
+                "No stock HP Click 4.8.117 in /Applications. These tests build "
+                "against that exact version; HPClick-4.8.117.dmg is still on "
+                "HP's server if you need it.")
 
         cls.mm = ManifestManager()
         cls.manifest = cls.mm.find_manifest(app_version="4.8.117")
@@ -341,9 +374,9 @@ class TestClickGraftCLI(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.source_app = "/Applications/HP Click (x86_64 Backup).app"
-        if not os.path.exists(cls.source_app):
-            raise unittest.SkipTest("Stock source bundle not available")
+        cls.source_app = find_stock_bundle("4.8.117")
+        if cls.source_app is None:
+            raise unittest.SkipTest("No stock HP Click 4.8.117 in /Applications")
 
         # Build once; the CLI tests share it.
         cls._tmp = tempfile.mkdtemp(prefix="clickgraft_cli_")
@@ -493,7 +526,9 @@ class TestClickGraftAgent(unittest.TestCase):
         """Regression guard: an earlier UI hardcoded three dylibs, omitted
         libnghttp2, and could not show which are preloaded."""
         print("\n--- Test 20: plan is manifest-derived ---")
-        src = "/Applications/HP Click (x86_64 Backup).app"
+        src = find_stock_bundle("4.8.117")
+        if src is None:
+            self.skipTest("No stock HP Click 4.8.117 in /Applications")
         if not os.path.exists(src):
             self.skipTest("stock source not present")
         plan = self.agent("plan", "--source", src)["plan"]
@@ -512,7 +547,9 @@ class TestClickGraftAgent(unittest.TestCase):
         """Splitting on the first '.' mangled 'hp_configs.crashAutoSubmit' into
         the single word 'hp_configs.' on the screen whose job is clarity."""
         print("\n--- Test 21: sentence truncation ---")
-        src = "/Applications/HP Click (x86_64 Backup).app"
+        src = find_stock_bundle("4.8.117")
+        if src is None:
+            self.skipTest("No stock HP Click 4.8.117 in /Applications")
         if not os.path.exists(src):
             self.skipTest("stock source not present")
         plan = self.agent("plan", "--source", src)["plan"]
