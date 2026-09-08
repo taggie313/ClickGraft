@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import subprocess
 import time
 from clickgraft.asar import AsarArchive
@@ -237,6 +238,81 @@ def verify_app_bundle(target_app_path, manifest=None):
         raise ValueError(f"Info.plist ElectronAsarIntegrity hash mismatch: plist={plist_hash} != header={header_hash}")
 
     results["asar_integrity"] = "PASSED (Packed/unpacked counts & Info.plist integrity hash verified)"
+
+    # 4b. The two auto-update locks.
+    #
+    # Both are written by build.py and, until now, neither was ever checked
+    # again. A lock that is applied and never verified is a lock you find out
+    # about from a user whose patched copy was replaced by HP's Intel build.
+    #
+    # LOCK ONE, the JS. Every ipcMain registration in app-updater.js is made
+    # from inside startup(), so `function startup(e){return;` removes the feed
+    # URL, the launch check, the renderer's 24h loop handler, quitAndInstall
+    # and the forced-update path in a single edit. Assert the return is there
+    # AND that no registration has escaped to module scope, because the first
+    # assertion only holds while HP keeps them inside the function.
+    updater_path = "app/node/main/app-updater.js"
+    nodes = archive.get_all_file_nodes()
+    if updater_path not in nodes:
+        raise ValueError(
+            f"{updater_path} is missing from the built asar. The updater lock is "
+            f"applied to that file; if HP has moved or renamed it the patch has "
+            f"silently stopped protecting anything.")
+    updater_js = archive.read_file_content(nodes[updater_path]).decode("utf-8", "ignore")
+
+    startup_m = re.search(r"function\s+startup\s*\([^)]*\)\s*\{", updater_js)
+    if not startup_m:
+        raise ValueError(
+            f"No startup() function found in {updater_path}. The manifest patch "
+            f"anchors on it, so this build is unprotected.")
+    body_start = startup_m.end()
+    if not re.match(r"\s*return\s*;", updater_js[body_start:body_start + 32]):
+        raise ValueError(
+            f"The auto-update lock is NOT in place: startup() in {updater_path} "
+            f"does not return immediately. HP's updater would configure its feed "
+            f"and could replace this patched copy with HP's Intel build.")
+
+    escaped = [m.start() for m in re.finditer(r"ipcMain\s*\.\s*on\s*\(", updater_js)
+               if m.start() < body_start]
+    if escaped:
+        raise ValueError(
+            f"{len(escaped)} ipcMain.on registration(s) in {updater_path} sit "
+            f"OUTSIDE startup(), at module scope. Returning early from startup() "
+            f"does not disable those, so the update path is only partly locked. "
+            f"The manifest patch needs revisiting for this version.")
+
+    # LOCK TWO, the ShipIt stub. Only the executable is replaced; the Squirrel
+    # DYLIB must survive because Electron Framework links it and the app will
+    # not launch without it, so check the files individually rather than
+    # asserting anything about the framework as a whole.
+    squirrel_root = os.path.join(target_app_path, "Contents", "Frameworks", "Squirrel.framework")
+    shipit_total = 0
+    shipit_stubbed = 0
+    for root, _dirs, files in os.walk(squirrel_root):
+        for fn in files:
+            if fn != "ShipIt":
+                continue
+            fp = os.path.join(root, fn)
+            if os.path.islink(fp):
+                continue
+            shipit_total += 1
+            try:
+                with open(fp, "rb") as shf:
+                    head = shf.read(512)
+            except OSError as exc:
+                raise ValueError(f"Could not read {fp} to check the ShipIt stub: {exc}") from None
+            if b"Replaced by ClickGraft" in head:
+                shipit_stubbed += 1
+            else:
+                raise ValueError(
+                    f"{fp} is still HP's real ShipIt, not the ClickGraft stub. "
+                    f"That binary replaces the whole .app in place, so an update "
+                    f"reaching it would overwrite this patched copy.")
+
+    results["update_locks"] = (
+        f"PASSED (startup() returns before the updater is configured; "
+        f"{shipit_stubbed}/{shipit_total} ShipIt stubbed)"
+    )
 
     # 5. Automated Smoke Launch & Multi-signature Error Detection Test
     #
