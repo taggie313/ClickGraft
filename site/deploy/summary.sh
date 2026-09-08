@@ -61,7 +61,12 @@ awk -F'"' '
     if (c == "browser") {
       all[day] = 1
       if (path == "/" || path == "/index.html") { if (status ~ /^(200|304)$/) { v[day]++; u[day "|" pfx] = 1 } }
-      if (path == "/ClickGraft.zip" && status == "200") dl[day]++
+      # Both names. The download is published as /ClickGraft-<version>.zip with
+      # /ClickGraft.zip left as a symlink to it, so old links keep working and
+      # every historical log line still counts. A symlink and not a redirect
+      # precisely so this stays one 200 per download - a 302 would log the old
+      # path AND the new one and double every figure below.
+      if (path ~ /^\/ClickGraft(-[0-9]+\.[0-9]+\.[0-9]+)?\.zip$/ && status == "200") dl[day]++
       # The HP forum sends no referrer at all (a no-referrer policy), so a
       # tagged link is the only way traffic from there can be told apart from
       # someone typing the URL. No apostrophes here - see the note below.

@@ -5,6 +5,10 @@
 set -eu
 APP="$1"; OUT="$2"; SHA="$3"; ZIP="$4"
 VER=$(/usr/bin/defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString)
+# The advertised download is the VERSIONED name, never the stable alias. This
+# file publishes a sha256 alongside it, and the two have to describe the same
+# bytes: pointing at a URL whose contents change is how they came apart once
+# already, when a CDN held the previous release behind the new appcast.
 
 # How to announce it. Lives in packaging/release.json beside the code, so it is
 # reviewed in the same commit as the change it describes. Falls back to
@@ -63,7 +67,7 @@ cat > "$OUT" <<JSON
   "summary": "$SUMMARY",
   "released": "$WHEN",
   "url": "https://clickgraft.elusive.net/",
-  "download": "https://clickgraft.elusive.net/ClickGraft.zip",
+  "download": "https://clickgraft.elusive.net/ClickGraft-$VER.zip",
   "sha256": "$SHA",
   "notes": "https://github.com/taggie313/ClickGraft/releases",
   "releases": [

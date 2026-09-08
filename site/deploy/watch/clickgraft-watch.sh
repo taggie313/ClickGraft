@@ -86,7 +86,7 @@ events() {
       if (c != "browser" && c != "app") next
 
       kind = ""
-      if (c == "browser" && path == "/ClickGraft.zip" && status == "200")          kind = "download"
+      if (c == "browser" && path ~ /^\/ClickGraft(-[0-9]+\.[0-9]+\.[0-9]+)?\.zip$/ && status == "200") kind = "download"
       else if (c == "browser" && (path == "/" || path == "/index.html") &&
                (status == "200" || status == "304"))                               kind = "view"
       # A page asset is what separates a browser that RENDERED the page from a

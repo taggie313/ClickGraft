@@ -177,7 +177,7 @@ footer p { margin: 0 0 .7em; }
      Click and puts the Apple&nbsp;Silicon (M-series) engine into the copy.</p>
 
   <div class="cta">
-    <a class="btn" id="dl" href="ClickGraft.zip" download>
+    <a class="btn" id="dl" href="{{ZIP_NAME}}" download>
       Download ClickGraft {{VERSION}}
       <span class="btn-sub">for macOS on Apple Silicon &middot; free</span>
     </a>
@@ -273,7 +273,7 @@ button.</p>
 <h2>Installing it</h2>
 
 <ol class="steps">
-  <li>Download <span class="mono">ClickGraft.zip</span> and unzip it.</li>
+  <li>Download <span class="mono">{{ZIP_NAME}}</span> and unzip it.</li>
   <li>Drag <strong>ClickGraft.app</strong> wherever you like. Applications is
       fine.</li>
   <li>Double-click it and follow the six screens.</li>
@@ -309,13 +309,13 @@ it. That check is worth more than any fingerprint printed here, because it's
 verified against Apple rather than against this page.</p>
 
 <p>If you'd still like the fingerprint, the SHA-256 of
-<span class="mono">ClickGraft.zip</span> is:</p>
+<span class="mono">{{ZIP_NAME}}</span> is:</p>
 
 <div class="panel">
 <p class="mono" style="font-size:.8rem;margin:0;word-break:break-all">{{ZIP_SHA256}}</p>
 </div>
 
-<p>Check it with <span class="mono">shasum -a 256 ClickGraft.zip</span>. Be aware
+<p>Check it with <span class="mono">shasum -a 256 {{ZIP_NAME}}</span>. Be aware
 what this does and doesn't prove: it catches a truncated or corrupted download,
 but anyone able to alter the file here could alter this line too. The same
 fingerprint is published on the

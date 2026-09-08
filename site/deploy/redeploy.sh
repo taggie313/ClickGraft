@@ -46,7 +46,26 @@ fi
 
 echo "==> staging"
 rm -rf /tmp/cg-build && mkdir -p /tmp/cg-build/html /tmp/cg-build/collector
-cp "$ZIP"                    /tmp/cg-build/html/ClickGraft.zip
+
+# Version first, because the download is named after it.
+#
+# The canonical file carries the version: ClickGraft-1.5.0.zip. A fixed name
+# whose CONTENTS change on every release is a URL that can be stale, and on
+# 8 Sep 2026 it was -- Cloudflare served 1.4.0 for hours while appcast.json
+# advertised 1.5.0 and published the new file's sha256, so anyone following
+# this site's own instructions to check the fingerprint got a mismatch. A URL
+# nobody has ever requested cannot be served from anyone's cache.
+#
+# ClickGraft.zip stays, as a SYMLINK to the versioned file rather than a 302.
+# Both keep old links working -- forum posts, the Reddit thread, anyone's
+# bookmarks -- but a redirect would put TWO lines in the access log for one
+# download, a 302 on the old path and a 200 on the new one, and the download
+# counters in summary.sh and clickgraft-watch.sh count 200s on a path. The
+# symlink is one request, one log line, whichever name was asked for.
+VERSION="$(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
+ZIPNAME="ClickGraft-$VERSION.zip"
+cp "$ZIP"                    "/tmp/cg-build/html/$ZIPNAME"
+ln -s "$ZIPNAME"             /tmp/cg-build/html/ClickGraft.zip
 
 # The page quotes the download's SHA-256. Substituting it at deploy time from
 # the very file being shipped is the only way that number cannot drift: a hash
@@ -60,16 +79,18 @@ SHA="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
 # the download must not advance "last updated": a date that moves when nothing
 # was released is worse than no date, because it is the thing people check to
 # decide whether to bother re-downloading.
-VERSION="$(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
 UPDATED="$(date -r "$ZIP" '+%-d %B %Y')"
 # ISO form of the same date for the sitemap, so the two can never disagree.
 UPDATED_ISO="$(date -r "$ZIP" '+%Y-%m-%d')"
 
 sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
     -e "s|{{VERSION}}|$VERSION|g" \
+    -e "s|{{ZIP_NAME}}|$ZIPNAME|g" \
     -e "s|{{UPDATED}}|$UPDATED|g" \
     "$SITE/index.html" > /tmp/cg-build/html/index.html
-printf '%s  ClickGraft.zip\n' "$SHA" > /tmp/cg-build/html/ClickGraft.zip.sha256
+# Both names get a checksum file, naming the file the reader actually has.
+printf '%s  %s\n' "$SHA" "$ZIPNAME" > "/tmp/cg-build/html/$ZIPNAME.sha256"
+printf '%s  %s\n' "$SHA" "$ZIPNAME" > /tmp/cg-build/html/ClickGraft.zip.sha256
 cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple-touch-icon.png" \
    "$SITE/clickgraft-favicon.ico" /tmp/cg-build/html/
 # Keeps crawlers off the download. Cloudflare serves a managed robots.txt of its

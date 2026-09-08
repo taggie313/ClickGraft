@@ -28,6 +28,16 @@ check "GET /"                200 "$(code "$BASE/")"
 check "GET /ClickGraft.zip"  200 "$(code -I "$BASE/ClickGraft.zip")"
 check "GET /appcast.json"    200 "$(code "$BASE/appcast.json")"
 check "GET /ClickGraft.zip.sha256" 200 "$(code "$BASE/ClickGraft.zip.sha256")"
+
+# The versioned name is the one the appcast advertises and the one people
+# actually download; the bare name is only an alias kept alive for old links.
+# Take it from the appcast rather than composing it here, so this checks the
+# URL that is really being published rather than the one we assume is.
+ZIPURL=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/appcast.json" \
+         | sed -n 's/.*"download": "\([^"]*\)".*/\1/p')
+ZIPFILE="${ZIPURL##*/}"
+check "GET /$ZIPFILE"        200 "$(code -I "$BASE/$ZIPFILE")"
+check "GET /$ZIPFILE.sha256" 200 "$(code "$BASE/$ZIPFILE.sha256")"
 check "POST /report"         200 "$(code -X POST --data-binary 'healthcheck' "$BASE/report")"
 check "GET /stats (must 404)" 404 "$(code "$BASE/stats/report.html")"
 
@@ -35,9 +45,14 @@ check "GET /stats (must 404)" 404 "$(code "$BASE/stats/report.html")"
 # check tells people to fetch something that isn't there.
 adv=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/appcast.json" | sed -n 's/.*"sha256": "\([a-f0-9]*\)".*/\1/p')
 pub=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/ClickGraft.zip.sha256" | cut -d' ' -f1)
-real=$(curl -s --max-time 120 -A "$UA" "${MARK[@]}" "$BASE/ClickGraft.zip" | shasum -a 256 | cut -d' ' -f1)
+real=$(curl -s --max-time 120 -A "$UA" "${MARK[@]}" "$BASE/$ZIPFILE" | shasum -a 256 | cut -d' ' -f1)
+# And the alias must be the same bytes. It is a symlink, so this can only fail
+# if the deploy left a stale file behind or a cache is serving an old release
+# under the old name -- which is exactly what happened on 8 Sep 2026.
+alias_real=$(curl -s --max-time 120 -A "$UA" "${MARK[@]}" "$BASE/ClickGraft.zip" | shasum -a 256 | cut -d' ' -f1)
 check "appcast sha == published sha" "$pub" "$adv"
 check "published sha == real bytes"  "$real" "$pub"
+check "ClickGraft.zip alias == same" "$real" "$alias_real"
 
 # The GitHub release must serve the same bytes. Compare the digest the API
 # already publishes rather than downloading the asset: `gh release download`
@@ -45,7 +60,7 @@ check "published sha == real bytes"  "$real" "$pub"
 # the only non-zero numbers GitHub had.
 if command -v gh >/dev/null 2>&1; then
   gh_digest=$(gh api "repos/${REPO:-taggie313/ClickGraft}/releases/latest" \
-                --jq '.assets[] | select(.name=="ClickGraft.zip") | .digest' 2>/dev/null \
+                --jq ".assets[] | select(.name | endswith(\".zip\")) | .digest" 2>/dev/null \
               | sed 's/^sha256://')
   if [ -n "$gh_digest" ]; then
     check "github release == site bytes" "$real" "$gh_digest"
