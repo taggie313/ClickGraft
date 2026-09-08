@@ -18,11 +18,28 @@ set -eu
 LOG="${1:-/var/log/nginx/clickgraft-access.log}"
 [ -f "$LOG" ] || { echo "no log at $LOG"; exit 1; }
 
+# Address prefixes belonging to us, so our own visits stop being counted as
+# other people. Comma or space separated, EMPTY BY DEFAULT -- the numbers do
+# not move for anyone who has not set it.
+#
+# Deliberately not the "exclude our IP" approach this file replaced. That one
+# guessed which address was ours and was wrong for a day while travelling.
+# This is a list someone wrote down and stated is theirs, the hits are reported
+# below rather than hidden, and everything else is still classified by
+# user-agent. Checking against a list you maintain is a different thing from
+# inferring who a visitor is.
+OURS="$(printf '%s' "${EXCLUDE_PREFIX:-}" | tr ',' ' ')"
+
 echo "ClickGraft — clickgraft.elusive.net"
 echo "log: $LOG   (addresses are truncated at source; no full IPs are kept)"
 echo
 
-awk -F'"' '
+awk -F'"' -v ours="$OURS" '
+  function is_ours(pfx,   n, a, i) {
+    n = split(ours, a, " ")
+    for (i = 1; i <= n; i++) if (a[i] != "" && pfx == a[i]) return 1
+    return 0
+  }
   # "27/Aug/2026" -> "20260827", so days sort by date instead of by text.
   # A plain string compare orders the day-of-month first, which was invisible
   # while the log held one month and put 01/Sep above 02/Aug the moment it held
@@ -57,6 +74,10 @@ awk -F'"' '
     ua = $6; ref = $4; camp = $10
     d = f[4]; gsub(/^\[/, "", d); split(d, dd, ":"); day = dd[1]
     c = class(ua)
+    # Checked BEFORE the user-agent buckets, so a page load from one of our own
+    # machines cannot land in the visitor column whatever it claims to be.
+    # Counted and shown, never silently dropped.
+    if (is_ours(pfx)) { mine++; next }
     seen[c]++
     if (c == "browser") {
       all[day] = 1
@@ -112,6 +133,8 @@ awk -F'"' '
     printf "  %-34s %d\n", "crawlers:", seen["bot"]+0
     printf "  %-34s %d\n", "command line (curl/wget/etc):", seen["tool"]+0
     printf "  %-34s %d\n", "unclassified:", seen["other"]+0
+    if (mine+0 > 0)
+      printf "  %-34s %d   (EXCLUDE_PREFIX)\n", "ours, not counted above:", mine
     print ""
     print "WHERE THEY CAME FROM"
     for (h in refs) printf "%8d  %s\n", refs[h], h

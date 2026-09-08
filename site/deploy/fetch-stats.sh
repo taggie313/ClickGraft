@@ -16,7 +16,7 @@ ct "
   set -e
   cat $VOL/clickgraft-access.log.1 $VOL/clickgraft-access.log 2>/dev/null > /tmp/cg-access.log || true
   [ -s /tmp/cg-access.log ] || { echo \"the access log exists but is empty — nginx may not be writing\" >&2; exit 3; }
-  sh $REMOTE_DIR/summary.sh /tmp/cg-access.log
+  EXCLUDE_PREFIX='${EXCLUDE_PREFIX:-}' sh $REMOTE_DIR/summary.sh /tmp/cg-access.log
 "
 
 if [ "${1:-}" = "--html" ]; then

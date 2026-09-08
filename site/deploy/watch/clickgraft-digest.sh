@@ -54,7 +54,7 @@ else
   # summary.sh report a busy day as zero visitors and zero downloads — a wrong
   # number that looks exactly like a quiet day. If the thing that counts cannot
   # run, say so instead of publishing a figure nobody can trust.
-  if ! OUT="$(sh "$SUMMARY" "$SLICE" 2>&1)"; then
+  if ! OUT="$(EXCLUDE_PREFIX="${EXCLUDE_PREFIX:-}" sh "$SUMMARY" "$SLICE" 2>&1)"; then
     echo "✗ summary.sh failed; refusing to publish numbers from it:" >&2
     printf '%s\n' "$OUT" >&2
     exit 1
