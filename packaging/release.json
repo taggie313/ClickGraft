@@ -10,10 +10,10 @@
     "  recommended  worth having. The default, and what an unknown value falls",
     "               back to.",
     "  important    fixes something that stops the tool working. Never use this",
-    "               for anything less \u2014 it is the only word left that means it.",
+    "               for anything less — it is the only word left that means it.",
     "",
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "important",
-  "summary": "Fixes a crash when importing PNGs, and adds support for HP Click 4.10.42 and 4.8.118. Re-run ClickGraft on your copy to get the fix."
+  "summary": "Fixes the build failing on Macs where your account cannot write to the Applications folder. If ClickGraft stopped at “Staging source app copy” with a permission error, this is the fix."
 }
