@@ -260,6 +260,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
     var picked: [String: Any]?
     var plan: [String: Any] = [:]
     var outputPath = ""
+    // Whether outputPath is ~/Applications rather than /Applications, because
+    // this account may not write to the latter. The Review screen has to say
+    // so: a copy landing in the home folder with no explanation reads as the
+    // tool choosing the wrong place, not as the only place it is allowed.
+    var outputPerUser = false
     var logPath = ""
     var env: [String: Any] = [:]
 
@@ -434,6 +439,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
         env = e
         candidates = d["candidates"] as? [[String: Any]] ?? []
         outputPath = d["default_output"] as? String ?? ""
+        outputPerUser = d["output_per_user"] as? Bool ?? false
         let ok = e["clt"] as? Bool ?? false
         // Default true: if an older backend omits the key, fail open rather
         // than blocking every user on a missing field.
@@ -569,6 +575,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
         if let d = agent.once(["env"]) {
             candidates = d["candidates"] as? [[String: Any]] ?? []
             outputPath = d["default_output"] as? String ?? outputPath
+            outputPerUser = d["output_per_user"] as? Bool ?? outputPerUser
         }
         picked = nil
         showChoose()
@@ -640,6 +647,18 @@ final class Wizard: NSObject, NSApplicationDelegate {
                      ? "A copy is already here from a previous run. It will be replaced. "
                      + "Your original HP Click is still untouched."
                      : "A new app. Nothing is overwritten."),
+
+            // Only when the fallback is actually in play. Saying "this is just
+            // for you" on a normal /Applications build would invent a
+            // limitation that is not there.
+            outputPerUser
+                ? UI.small("This is your own Applications folder, not the one at the top "
+                           + "level of the disk. ClickGraft is using it because this account "
+                           + "cannot write to that one, which usually needs an administrator. "
+                           + "The copy works exactly the same and appears in Launchpad and "
+                           + "Spotlight — but it will be available only to you, and other "
+                           + "people who sign in to this Mac will not see it.")
+                : UI.spacer(),
 
             UI.section("THE MAIN CHANGE"),
             UI.point("Replacing the Intel engine with the Apple Silicon one.",

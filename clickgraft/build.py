@@ -58,6 +58,38 @@ def build_apple_silicon_bundle(
         output_app_path = os.path.join(parent_dir, "HP Click (Apple Silicon).app")
     output_app_path = os.path.abspath(output_app_path)
 
+    # Writable BEFORE anything is fetched, staged or written.
+    #
+    # Staging lives beside the output because the final step is os.rename(),
+    # which cannot cross a filesystem — so if the output directory refuses a
+    # write, the build cannot start at all. Without this check it started
+    # anyway, downloaded the Electron runtime, and died at 20% on ditto's
+    # "Permission denied": an error about a staging path the user never chose
+    # and cannot act on. One reporter hit it nine times in a row.
+    #
+    # Probing by creating a directory, not os.access(): permission bits are not
+    # the whole story on macOS, where App Management consent and MDM policy can
+    # refuse a write that the mode says is fine.
+    out_dir = os.path.dirname(output_app_path)
+    if not os.path.isdir(out_dir):
+        raise ValueError(
+            f"There is no folder at {out_dir} to put the finished copy in. "
+            f"Nothing has been downloaded or written.")
+    _probe = os.path.join(out_dir, f".clickgraft-write-probe-{os.getpid()}")
+    try:
+        os.mkdir(_probe)
+        os.rmdir(_probe)
+    except OSError:
+        raise ValueError(
+            f"This account cannot write to {out_dir}, so the finished copy "
+            f"cannot be put there. Nothing has been downloaded or written.\n\n"
+            f"That folder usually needs an administrator account. Either sign "
+            f"in as an administrator, or build into your own Applications "
+            f"folder instead:\n\n"
+            f"    {os.path.expanduser('~/Applications')}\n\n"
+            f"A copy there works exactly the same, and appears in Launchpad "
+            f"and Spotlight, but is available only to you.") from None
+
     # 1. Manifest lookup / validation
     _log("Validating manifest...", 0.05)
     if manifest is None:

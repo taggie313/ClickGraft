@@ -33,7 +33,54 @@ from clickgraft.probe import probe_app_bundle
 from clickgraft.verify import verify_app_bundle
 
 REQUIRED_TOOLS = ["codesign", "install_name_tool", "lipo", "otool", "nm", "ditto"]
-DEFAULT_OUTPUT = "/Applications/HP Click (Apple Silicon).app"
+APP_NAME = "HP Click (Apple Silicon).app"
+SYSTEM_APPS = "/Applications"
+USER_APPS = os.path.expanduser("~/Applications")
+
+
+def _can_create_here(directory):
+    """Can this account actually create something in `directory`?
+
+    Not os.access(): that answers from the permission bits, and on macOS a
+    directory can be mode-writable and still refuse the write — App Management
+    consent, an MDM policy, a managed volume. The only honest test of "may I
+    create a directory here" is creating one and removing it again.
+    """
+    probe = os.path.join(directory, f".clickgraft-write-probe-{os.getpid()}")
+    try:
+        os.mkdir(probe)
+    except OSError:
+        return False
+    try:
+        os.rmdir(probe)
+    except OSError:                                          # pragma: no cover
+        pass
+    return True
+
+
+def resolve_output():
+    """Where the patched copy goes -> (path, is_per_user).
+
+    /Applications belongs to admin accounts. A standard user, or anyone on a
+    managed Mac, gets no warning about that: the build ran for twenty percent
+    and then died on `ditto: Permission denied`, which one reporter hit nine
+    times in a row before giving up. ~/Applications is a real macOS location
+    that Launchpad and Spotlight index like any other, and any account can
+    write to it, so fall back there rather than fail.
+
+    When neither works, hand back the system path anyway. build() checks the
+    directory before it fetches anything and will say so precisely; inventing a
+    third location here would only move the failure somewhere less expected.
+    """
+    if _can_create_here(SYSTEM_APPS):
+        return os.path.join(SYSTEM_APPS, APP_NAME), False
+    try:
+        os.makedirs(USER_APPS, exist_ok=True)
+    except OSError:
+        return os.path.join(SYSTEM_APPS, APP_NAME), False
+    if _can_create_here(USER_APPS):
+        return os.path.join(USER_APPS, APP_NAME), True
+    return os.path.join(SYSTEM_APPS, APP_NAME), False
 
 
 def emit(obj):
@@ -163,11 +210,17 @@ def main(argv):
 
     mm = ManifestManager()
     source = arg("--source")
-    output = arg("--out") or DEFAULT_OUTPUT
+    default_out, out_per_user = resolve_output()
+    output = arg("--out") or default_out
 
     if cmd == "env":
         emit({"type": "env", "env": environment(mm), "candidates": candidates(mm),
-              "default_output": DEFAULT_OUTPUT})
+              "default_output": default_out,
+              # The interface has to be able to say WHY the path is unusual.
+              # A copy appearing in the home folder instead of /Applications,
+              # with no explanation, reads as the tool putting it in the wrong
+              # place rather than the only place this account may write.
+              "output_per_user": out_per_user})
         return 0
 
     if cmd == "plan":
