@@ -101,6 +101,16 @@ events() {
                path !~ /ClickGraft\.zip|appcast/ &&
                path ~ /\.(svg|ico|png|jpg|jpeg|webp|css|js)$/) kind = "asset"
       else if (c == "app" && path ~ /appcast/)                                     kind = "app"
+      # A report someone actually sent. Until now this fell through and was
+      # dropped: the only failure report this project has ever received sat on
+      # disk for hours because nothing announced it. That was survivable while
+      # reports were anonymous; it is not, now that the app offers to take an
+      # address and promises to reply.
+      #
+      # Cannot fire on our own deploys: healthcheck.sh POSTs here every time,
+      # but as ClickGraft-healthcheck/1.0, which class() calls a tool and the
+      # line above drops. Only ClickGraft/<version> reaches this.
+      else if (c == "app" && path == "/report" && status == "200")                 kind = "report"
       if (kind == "") next
 
       gsub(/\|/, " ", ref); gsub(/\|/, " ", ua); gsub(/\|/, " ", camp)
@@ -146,7 +156,12 @@ notify() {
     esac
 
     case "$kind" in
-      download) quiet=$QUIET_DOWNLOAD; title="ClickGraft downloaded";     prio=4; tags="inbox_tray" ;;
+      # No quiet window, and the highest priority available. Every other event
+    # here repeats -- the same person views, downloads, checks for updates --
+    # so those are rate-limited per address. A report does not repeat: someone
+    # sat down and wrote it, and there may be an address waiting for an answer.
+    report)   quiet=0;               title="ClickGraft REPORT";          prio=5; tags="rotating_light" ;;
+    download) quiet=$QUIET_DOWNLOAD; title="ClickGraft downloaded";     prio=4; tags="inbox_tray" ;;
       view)     quiet=$QUIET_VIEW;     title="ClickGraft visitor";        prio=2; tags="eyes" ;;
       app)      quiet=$QUIET_APP;      title="ClickGraft app checked in"; prio=2; tags="satellite" ;;
       *)        continue ;;
@@ -178,6 +193,44 @@ notify() {
     fi
 
     body="$prefix · $plat"
+
+      # For a report, say WHICH kind and whether anyone is waiting on a reply.
+      # "a report arrived" would still mean opening a terminal to find out
+      # whether it was a thank-you or somebody stuck; this is the difference
+      # between a notification and an alarm.
+      #
+      # Matched by recency rather than assumed to be the newest file: the poll
+      # runs every 20s and the collector writes the file before nginx logs the
+      # 200, so a file touched in the last 5 minutes is the one. If that is
+      # ambiguous, say so rather than guess which.
+      if [ "$kind" = "report" ]; then
+        ver=$(printf '%s' "$ua" | sed -n 's|^ClickGraft/\([0-9.]*\).*|\1|p')
+        body="$prefix · ClickGraft v${ver:-?}"
+        recent=$(find "$REPORTS" -maxdepth 1 -name '*.txt' -mmin -5 2>/dev/null | sort)
+        n=$(printf '%s\n' "$recent" | grep -c . || true)
+        if [ "$n" = "1" ]; then
+          case "$(basename "$recent")" in
+            problem-*) head="A PROBLEM was reported" ;;
+            result-*)  head="Someone says it worked" ;;
+            version-*) head="Someone sent a version we do not support" ;;
+            *)         head="A report arrived" ;;
+          esac
+          body="$head
+$body
+$(basename "$recent")"
+          # The whole point of the contact field: an address means somebody is
+          # expecting to hear back, and that has to be in the notification
+          # rather than discovered later.
+          if grep -q '^contact: ' "$recent" 2>/dev/null; then
+            body="$body
+THEY LEFT AN ADDRESS - they are expecting a reply"
+          fi
+        else
+          body="A report arrived
+$body
+(read it with ./site/deploy/fetch-reports.sh --all)"
+        fi
+      fi
     # A campaign tag beats the referrer: it is the only signal from sources that
     # strip Referer entirely, which is what HP's forum does.
     if [ -n "$camp" ]; then body="$body · via $camp"; fi

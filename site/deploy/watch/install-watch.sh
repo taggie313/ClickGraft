@@ -38,9 +38,10 @@ SUMMARY_PATH="${REMOTE_DIR:-/opt/edge/sites/clickgraft}/summary.sh"
 # EXCLUDE_PREFIX goes in too, or the digest and fetch-stats.sh would disagree
 # about the same day -- the daily notification counting our own visits while
 # the summary on this Mac does not.
-CONF_B64="$(printf 'NTFY_URL=%s\nNTFY_TOPIC=%s\nNTFY_USER=%s\nNTFY_PASS=%s\nLOG=%s\nSUMMARY=%s\nEXCLUDE_PREFIX=%s\n' \
+REPORTS_PATH="${REPORT_VOL:-/var/lib/docker/volumes/edge_clickgraft_reports/_data}"
+CONF_B64="$(printf 'NTFY_URL=%s\nNTFY_TOPIC=%s\nNTFY_USER=%s\nNTFY_PASS=%s\nLOG=%s\nSUMMARY=%s\nEXCLUDE_PREFIX=%s\nREPORTS=%s\n' \
               "$NTFY_URL" "$NTFY_TOPIC" "$NTFY_USER" "$NTFY_PASS" "$WATCH_LOG" "$SUMMARY_PATH" \
-              "${EXCLUDE_PREFIX:-}" | base64 | tr -d '\n')"
+              "${EXCLUDE_PREFIX:-}" "$REPORTS_PATH" | base64 | tr -d '\n')"
 
 echo "==> installing into CT ${CT_ID}"
 ct "
