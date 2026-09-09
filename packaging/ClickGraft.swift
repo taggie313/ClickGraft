@@ -277,7 +277,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
     var lastResults: [String: String] = [:]
     var outcome = "no build has been run"
     var updateURL = ""
+    var updateDownloadURL = ""
     var updateBanner: NSView?
+    /// The result of the launch check, kept so screens other than the first can
+    /// use it. The unsupported-version panel is the one that needs it: the
+    /// person seeing that panel is disproportionately someone whose copy predates
+    /// support for the HP Click they have.
+    var latestUpdate: Update?
     var allowIntelHost = false
 
     // MARK: lifecycle
@@ -383,7 +389,9 @@ final class Wizard: NSObject, NSApplicationDelegate {
         // not worth an error dialog.
         checkForUpdate { [weak self] up in
             guard let self = self, let up = up else { return }
+            self.latestUpdate = up
             self.updateURL = up.url
+            self.updateDownloadURL = up.download
             self.updateBanner?.removeFromSuperview()
             let here = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
 
@@ -540,14 +548,39 @@ final class Wizard: NSObject, NSApplicationDelegate {
         // already-made copy is greyed out with its own one-line reason; showing
         // this panel for it reads as "your app is unsupported", which it isn't.
         if candidates.contains(where: { ($0["reason"] as? String ?? "") == "unsupported" }) {
-            rows.append(UI.panel([
-                UI.small("ClickGraft only works with versions it has been tested against, "
-                         + "because it needs to know exactly where to make its changes. "
-                         + "Guessing would risk your app."),
-                UI.small("You can send a report describing this version, and support can be "
-                         + "added."),
-                UI.button("Create a report", self, #selector(makeReport)),
-            ], tint: NSColor.secondaryLabelColor.withAlphaComponent(0.07)))
+            // Lead with the update when there is one, because for this panel it
+            // is usually the answer rather than a suggestion.
+            //
+            // Support for an HP Click version ships inside a ClickGraft release:
+            // 1.3.3 carried one manifest, and every HP Click published after it
+            // looks unsupported to that copy forever. So the person most likely
+            // to be reading this is someone one download away from it working,
+            // and the old wording -- "only works with versions it has been tested
+            // against", then a report button -- reads as a dead end and sends
+            // them away. Measured on the live site: installs three and four
+            // releases behind were still checking for updates daily, and not one
+            // unsupported-version report had ever been submitted.
+            let here = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+            if let up = latestUpdate {
+                rows.append(UI.panel([
+                    UI.point("ClickGraft \(up.version) is available, and may already support this.",
+                             "You're on \(here). Support for a new HP Click version arrives in a "
+                             + "ClickGraft update, so a version this copy doesn't recognise is "
+                             + "often one a newer copy does. Update, then run it again."),
+                    UI.button("Get the update", self, #selector(openDownloadPage)),
+                    UI.small("If the new version doesn't recognise it either, send a report from "
+                             + "there and support can be added."),
+                ], tint: NSColor.systemBlue.withAlphaComponent(0.10)))
+            } else {
+                rows.append(UI.panel([
+                    UI.small("ClickGraft only works with versions it has been tested against, "
+                             + "because it needs to know exactly where to make its changes. "
+                             + "Guessing would risk your app."),
+                    UI.small("You can send a report describing this version, and support can be "
+                             + "added."),
+                    UI.button("Create a report", self, #selector(makeReport)),
+                ], tint: NSColor.secondaryLabelColor.withAlphaComponent(0.07)))
+            }
         }
 
         let next = UI.button("Continue", self, #selector(showReview), primary: true)
@@ -1290,6 +1323,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
     struct Update {
         let version: String
         let url: String
+        /// The zip itself. The appcast has published this all along and the app
+        /// only ever opened `url`, so "Get the update" landed people on the
+        /// front page with the download still to find. Empty when an older
+        /// server does not send it, and `openDownloadPage` falls back to `url`.
+        let download: String
         /// "optional" | "recommended" | "important". Anything unrecognised —
         /// including a server that has never heard of this field — becomes
         /// "recommended". An update whose importance cannot be read must never
@@ -1360,17 +1398,23 @@ final class Wizard: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 done(Update(version: latest,
                             url: o["url"] as? String ?? "",
+                            download: o["download"] as? String ?? "",
                             importance: importance,
                             summary: summary))
             }
         }.resume()
     }
 
+    /// Prefers the zip over the landing page. The banner has already said what
+    /// the update is and why it matters, so the next thing wanted is the file,
+    /// not a page to read and then find a button on. Falls back to the page when
+    /// the appcast carries no download, and to the site when there is no appcast
+    /// at all -- a broken update button is worse than a slow one.
     @objc func openDownloadPage() {
-        if let u = URL(string: updateURL.isEmpty
-                        ? "https://clickgraft.elusive.net/" : updateURL) {
-            NSWorkspace.shared.open(u)
-        }
+        let target = !updateDownloadURL.isEmpty ? updateDownloadURL
+                   : !updateURL.isEmpty         ? updateURL
+                   : "https://clickgraft.elusive.net/"
+        if let u = URL(string: target) { NSWorkspace.shared.open(u) }
     }
 
     @objc func revealOutput() {
