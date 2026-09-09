@@ -15,5 +15,5 @@
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "recommended",
-  "summary": "If a build fails you can now leave an email address with the report, and get told when it is fixed. Optional, and used for nothing else."
+  "summary": "When ClickGraft doesn't recognise your HP Click, it now tells you a newer ClickGraft may already support it, instead of only offering to file a report. The update button also downloads the file directly."
 }
