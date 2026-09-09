@@ -3,6 +3,7 @@
 | File | What it is |
 |---|---|
 | `wizard-copy.md` | Source of truth for every string the app shows, plus the reasoning behind each screen. Change wording here first, then in `packaging/ClickGraft.swift`. |
+| `hp-version-changes.md` | What HP removed in which release — the seven printer entries and Windows DWF — and how each was measured from HP's own packages. Read the gotchas before re-deriving any of it; two of them cost a day. Bounded by the four versions obtainable in September 2026. |
 
 ## Where the rest of the reasoning lives
 
