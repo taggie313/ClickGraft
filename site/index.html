@@ -369,8 +369,32 @@ Both are HP's own servers; these are the addresses HP Click itself uses.</p>
 
 <p class="disclaim">All three are around 570&nbsp;MB. The <code>.zip</code> is the
 application itself rather than an installer: unzip it and drag the result where you
-want it. ClickGraft grafts any of the three, so pick whichever you can actually get
-&mdash; there is no reason to prefer one over another for ClickGraft's sake.</p>
+want it. ClickGraft grafts all three equally well, so as far as this tool is
+concerned they are interchangeable &mdash; but HP changed what 4.10.42 supports, so
+read the next paragraph before you pick.</p>
+
+<div class="panel warn">
+<h3>4.10.42 drops five printers. Check yours first.</h3>
+<p>HP removed these models from HP&nbsp;Click's supported-printer list in 4.10.42.
+They worked in 4.8.117 and 4.8.118 and they do not work in 4.10.42:</p>
+<p><strong>DesignJet T310 &middot; T320 &middot; T350 &middot; T720 &middot;
+T750</strong> <span class="disclaim">(both the 24-inch and 36-inch variants of the
+T720 and T750)</span></p>
+<p>If you own one of these, <strong>install 4.8.117 or 4.8.118 and graft that</strong>.
+Do not update to 4.10.42, and if you already have, the older build is still on HP's
+server using the links above.</p>
+<p>ClickGraft cannot fix this one. The supported-printer list is signed and checked
+by HP's own code at startup, so adding the models back would break that check and
+stop the app printing at all &mdash; which is worse than the problem. This is a
+decision HP made about which printers it still supports, not something the graft
+can undo.</p>
+</div>
+
+<p>Going the other way, 4.10.42 is the better build if your printer is not on that
+list: it groups the page list by source file, lets you drag pages between documents,
+and its window shrinks to 960&times;550 instead of demanding 1291&times;720, which
+matters on a laptop. It also stops showing an unloaded Sheet source by default
+&mdash; there is a new checkbox in Preferences to put that back if you miss it.</p>
 
 <div class="panel">
 <h3>If you have 4.10.38, the project would like a copy</h3>
