@@ -415,6 +415,95 @@ def _macos_sdks():
     return sorted(set(found), key=version_key, reverse=True)
 
 
+def _salient_error_line(message, limit=110):
+    """The most informative line of a captured stderr, for a failure list."""
+    # 1. Ignore empty/whitespace-only lines.
+    raw_lines = [line for line in message.splitlines() if line.strip()]
+    if not raw_lines:
+        return "(no output)"
+
+    # 2. Ignore the leading `Command failed: ...` line and a bare `Stderr:` line.
+    #    A line beginning `Stderr:` that has text after the colon keeps that text.
+    cleaned_lines = []
+    for i, line in enumerate(raw_lines):
+        stripped = line.strip()
+        if i == 0 and stripped.startswith("Command failed:"):
+            continue
+        if stripped == "Stderr:":
+            continue
+        if stripped.startswith("Stderr:"):
+            after = stripped[len("Stderr:"):].strip()
+            if not after:
+                continue
+            cleaned_lines.append(after)
+        else:
+            cleaned_lines.append(stripped)
+
+    # 3. Ignore lines that are pure toolchain boilerplate, matched case-insensitively
+    #    as a SUBSTRING so a prefixed line still matches:
+    #        - `linker command failed with exit code`
+    #        - `use -v to see invocation`
+    #        - `error generated.`  and  `errors generated.`
+    boilerplate = (
+        "linker command failed with exit code",
+        "use -v to see invocation",
+        "error generated.",
+        "errors generated.",
+    )
+    remaining_lines = [
+        line for line in cleaned_lines
+        if not any(bp in line.lower() for bp in boilerplate)
+    ]
+
+    # 4. From what remains, prefer the FIRST line containing any of, case-insensitive:
+    #    `error:`, `ld:`, `tapi`, `fatal`, `cannot`, `no such`, `not found`.
+    salient_keywords = (
+        "error:",
+        "ld:",
+        "tapi",
+        "fatal",
+        "cannot",
+        "no such",
+        "not found",
+    )
+    selected = None
+    for line in remaining_lines:
+        lower = line.lower()
+        if any(kw in lower for kw in salient_keywords):
+            selected = line
+            break
+
+    # 5. If none match, take the first remaining line.
+    if selected is None and remaining_lines:
+        selected = remaining_lines[0]
+
+    # 6. If nothing remains at all, return the last non-empty line of the original
+    #    message; if the message has no non-empty line, return `"(no output)"`.
+    if selected is None:
+        if cleaned_lines:
+            selected = cleaned_lines[-1]
+        elif raw_lines:
+            for line in reversed(raw_lines):
+                s = line.strip()
+                if s != "Stderr:":
+                    selected = s
+                    break
+            if selected is None:
+                selected = raw_lines[-1]
+        else:
+            return "(no output)"
+
+    # 7. Collapse internal whitespace runs to a single space, strip, then truncate to
+    #    `limit` characters. If truncated, the result must end with `…` (U+2026) and
+    #    the total length must be exactly `limit`.
+    collapsed = " ".join(selected.split())
+    if limit <= 0:
+        return ""
+    if len(collapsed) > limit:
+        return collapsed[:limit - 1] + "…"
+    return collapsed
+
+
 def _compile_pngshim(src, dst, name, log=None):
     """Build the shim, surviving a toolchain whose SDK its own linker can't read.
 
@@ -453,7 +542,7 @@ def _compile_pngshim(src, dst, name, log=None):
             # toolchain too or the list looks like it repeated itself.
             where = "Xcode" if "/Xcode" in (sdk or "") else "CLT"
             label = f"{where} {os.path.basename(sdk)}" if sdk else "default SDK"
-            failures.append(f"  {label}: {str(e).splitlines()[-1][:110]}")
+            failures.append(f"  {label}: {_salient_error_line(str(e))}")
 
     raise RuntimeError(
         "Could not compile the PNG shim with any SDK on this Mac.\n\n"
