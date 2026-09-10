@@ -18,8 +18,34 @@ def run_cmd(cmd, check=True):
         return ""
 
 
+_MACHO_MAGICS = frozenset({
+    b"\xce\xfa\xed\xfe",  # MH_MAGIC     32-bit, little-endian
+    b"\xfe\xed\xfa\xce",  # MH_CIGAM     32-bit, big-endian
+    b"\xcf\xfa\xed\xfe",  # MH_MAGIC_64  64-bit, little-endian
+    b"\xfe\xed\xfa\xcf",  # MH_CIGAM_64  64-bit, big-endian
+    b"\xca\xfe\xba\xbe",  # FAT_MAGIC    also Java .class - ambiguous
+    b"\xbe\xba\xfe\xca",  # FAT_CIGAM
+    b"\xca\xfe\xba\xbf",  # FAT_MAGIC_64
+    b"\xbf\xba\xfe\xca",  # FAT_CIGAM_64
+})
+
+
+def _could_be_macho(path):
+    """False only when the first four bytes rule Mach-O out entirely."""
+    try:
+        with open(path, "rb") as f:
+            header = f.read(4)
+        if len(header) < 4:
+            return False
+        return header in _MACHO_MAGICS
+    except OSError:
+        return True
+
+
 def is_macho(path):
     if not os.path.isfile(path) or os.path.islink(path):
+        return False
+    if not _could_be_macho(path):
         return False
     res = run_cmd(["file", path], check=False)
     return "Mach-O" in res and "CodeResources" not in path
