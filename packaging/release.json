@@ -14,6 +14,6 @@
     "",
     "summary: one plain sentence, shown under the version number."
   ],
-  "importance": "important",
-  "summary": "Fixes the build failing part-way through on Macs whose Xcode and Command Line Tools are at different versions. If ClickGraft stopped at “Bundling required dylibs” with a linker error mentioning an SDK, this is the fix."
+  "importance": "recommended",
+  "summary": "If a supported HP Click version is ever misreported as unknown because a manifest file is damaged, ClickGraft now says so instead of pretending the version is unsupported. Builds and verification are also faster."
 }
