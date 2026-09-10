@@ -15,21 +15,42 @@ class ManifestManager:
 
         self.manifests_dir = manifests_dir
         self.manifests = {}
+        self.load_errors = {}
         self.load_all_manifests()
 
     def load_all_manifests(self):
         self.manifests = {}
-        if os.path.exists(self.manifests_dir):
+        self.load_errors = {}
+        if os.path.exists(self.manifests_dir) and os.path.isdir(self.manifests_dir):
             for f in os.listdir(self.manifests_dir):
                 if f.endswith(".json"):
                     fp = os.path.join(self.manifests_dir, f)
                     try:
                         with open(fp, "r", encoding="utf-8") as file_obj:
                             data = json.load(file_obj)
-                            if "app_version" in data:
+                            if isinstance(data, dict) and "app_version" in data:
                                 self.manifests[data["app_version"]] = data
-                    except Exception:
-                        pass
+                            else:
+                                self.load_errors[f] = "missing app_version key"
+                    except json.JSONDecodeError as e:
+                        self.load_errors[f] = f"invalid JSON on line {e.lineno}: {e.msg}"
+                    except (OSError, UnicodeDecodeError) as e:
+                        self.load_errors[f] = f"unreadable: {e}"
+
+    def describe_version(self, app_version):
+        """Why this version is unavailable, or None if it is available."""
+        if self.find_manifest(app_version=app_version) is not None:
+            return None
+
+        if app_version:
+            app_ver_str = str(app_version)
+            prefix = f"{app_ver_str}."
+            for fname, err in self.load_errors.items():
+                if fname.startswith(prefix) or app_ver_str in err:
+                    return f"broken manifest: {fname}: {err}"
+
+        return f"no manifest: {app_version}"
+
 
     def find_manifest(self, app_version=None, asar_sha256=None):
         # Match by asar_sha256 first
