@@ -14,6 +14,6 @@
     "",
     "summary: one plain sentence, shown under the version number."
   ],
-  "importance": "recommended",
-  "summary": "When ClickGraft doesn't recognise your HP Click, it now tells you a newer ClickGraft may already support it, instead of only offering to file a report. The update button also downloads the file directly."
+  "importance": "important",
+  "summary": "Fixes the build failing part-way through on Macs whose Xcode and Command Line Tools are at different versions. If ClickGraft stopped at “Bundling required dylibs” with a linker error mentioning an SDK, this is the fix."
 }
