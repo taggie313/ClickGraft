@@ -39,3 +39,11 @@ scratch/
 
 # Deploy target — host/CT id are private network details.
 site/deploy/deploy.env
+
+# --- Code-review notes -----------------------------------------------------
+# Output from review tools run against this tree. Working notes about the
+# code's weaknesses, written for one person, in a repository anyone can read:
+# a half-finished list of suspected flaws reads very differently to a stranger
+# than to the person triaging it. Keep them local.
+ag-review*.md
+*-review.md
