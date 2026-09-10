@@ -67,8 +67,15 @@ though that part is inference from the size, not a test.
 The engine was licensed third-party code, read from the DLL version resources:
 Autodesk DWF Viewer 7.0.0.928 (`EPlotCore.dll`), Autodesk Heidi 9.2.56.0
 (`heidilw.dll`, originally `HEIDI9.DLL`), Tech Soft 3D HOOPS 16.10.01
-(`hoops1610.dll`), Autodesk PDK 2.3.0.11.mt, plus Qt5 and `dwfApp.exe`. Newest
-copyright anywhere in it: 2009.
+(`hoops1610.dll`), Autodesk PDK 2.3.0.11.mt, plus Qt5 and `dwfApp.exe`.
+
+The licensed Autodesk and Tech Soft 3D components date from 2002-2008. Do not
+repeat "newest copyright anywhere is 2009" -- an earlier version of this file
+said that and it is wrong. `dwfApp.exe` is HP's own wrapper and carries
+`Copyright (c) Hewlett-Packard 2016`, plus a bundled libjpeg from 2018. The
+version resources alone do not show this: `dwfApp.exe` has no VS_VERSIONINFO at
+all, so a parser that reads only structured resources reports nothing for it and
+the ASCII strings in the file body have to be scanned too.
 
 **macOS never had DWF.** No `appData/macx/DWF`, and not one path matching /dwf/i
 in any obtainable macOS package. In the distributed `.nupkg` the entries carry a
