@@ -223,9 +223,7 @@ def build_apple_silicon_bundle(
         shim_name = "libclickgraft-pngshim.dylib"
         shim_dst = os.path.join(dst_lib_dir, shim_name)
         if os.path.exists(shim_src):
-            run_cmd(["clang", "-arch", "arm64", "-dynamiclib", "-O2",
-                     "-install_name", f"@rpath/{shim_name}",
-                     "-o", shim_dst, shim_src])
+            _compile_pngshim(shim_src, shim_dst, shim_name, _log)
             os.chmod(shim_dst, 0o755)
             _log("Built libpng NEON shim (HP references a symbol nothing exports)", 0.55)
         else:
@@ -389,3 +387,80 @@ exec "$DIR/HPClickExe" "$@"
     finally:
         if os.path.exists(staging_dir):
             shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def _macos_sdks():
+    """Every macOS SDK on the machine, newest first.
+
+    Both toolchain locations, because a machine can have Command Line Tools,
+    Xcode, or both, and the broken one is not always the one `xcode-select`
+    points at.
+    """
+    import glob
+    roots = [
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk",
+        "/Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform"
+        "/Developer/SDKs/MacOSX*.sdk",
+    ]
+    found = []
+    for pattern in roots:
+        found.extend(glob.glob(pattern))
+
+    def version_key(path):
+        digits = "".join(c if c.isdigit() or c == "." else " "
+                         for c in os.path.basename(path))
+        parts = [int(n) for n in digits.split(".")[0].split() if n.isdigit()]
+        return parts[0] if parts else -1
+
+    return sorted(set(found), key=version_key, reverse=True)
+
+
+def _compile_pngshim(src, dst, name, log=None):
+    """Build the shim, surviving a toolchain whose SDK its own linker can't read.
+
+    The default SDK is tried first because it is right on almost every machine.
+    When it is not, the failure is ugly and looks like ClickGraft's fault:
+
+        ld: tapi error: malformed file
+        .../MacOSX27.0.sdk/usr/lib/libSystem.B.tbd: error: unknown architecture
+                           arm64e.x1-macos, arm64e.x1-maccatalyst ]
+
+    That is an SDK newer than the linker being asked to parse it -- a
+    half-updated Xcode or Command Line Tools. Reported from the field on
+    10 Sep 2026, macOS 26.6 with a macOS 27 SDK.
+
+    `-nostdlib` looks like the obvious escape, since this shim is a no-op that
+    references nothing, but the linker refuses: "dynamic executables or dylibs
+    must link with libSystem.dylib". So instead pick a different SDK. Machines
+    carry several -- this one has five -- and an older one parses fine.
+    """
+    base = ["clang", "-arch", "arm64", "-dynamiclib", "-O2",
+            "-install_name", f"@rpath/{name}"]
+    attempts = [(None, base + ["-o", dst, src])]
+    for sdk in _macos_sdks():
+        attempts.append((sdk, base + ["-isysroot", sdk, "-o", dst, src]))
+
+    failures = []
+    for sdk, cmd in attempts:
+        try:
+            run_cmd(cmd)
+            if sdk is not None and log is not None:
+                log(f"Default SDK unusable; built the shim against "
+                    f"{os.path.basename(sdk)} instead", 0.55)
+            return
+        except RuntimeError as e:
+            # CLT and Xcode ship SDKs with identical basenames, so name the
+            # toolchain too or the list looks like it repeated itself.
+            where = "Xcode" if "/Xcode" in (sdk or "") else "CLT"
+            label = f"{where} {os.path.basename(sdk)}" if sdk else "default SDK"
+            failures.append(f"  {label}: {str(e).splitlines()[-1][:110]}")
+
+    raise RuntimeError(
+        "Could not compile the PNG shim with any SDK on this Mac.\n\n"
+        "This is a broken developer toolchain rather than a problem with your "
+        "HP Click. It usually means Xcode and the Command Line Tools are at "
+        "different versions, so the linker cannot read its own SDK.\n\n"
+        "Try:  sudo rm -rf /Library/Developer/CommandLineTools\n"
+        "      sudo xcode-select --install\n\n"
+        "and if you have Xcode installed, open it once so it finishes setting "
+        "up. Tried " + str(len(attempts)) + " SDK(s):\n" + "\n".join(failures))
