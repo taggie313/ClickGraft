@@ -81,7 +81,12 @@ awk -F'"' -v ours="$OURS" '
     seen[c]++
     if (c == "browser") {
       all[day] = 1
-      if (path == "/" || path == "/index.html") { if (status ~ /^(200|304)$/) { v[day]++; u[day "|" pfx] = 1 } }
+      # /es/ is a page view like any other, so it counts in VIEWS -- leaving it
+      # out would undercount exactly when the Spanish page starts working. It is
+      # also tallied on its own below, because "did the Spanish page earn its
+      # keep" is the question it was added to answer.
+      if (path ~ /^\/(es\/)?(index\.html)?$/) { if (status ~ /^(200|304)$/) { v[day]++; u[day "|" pfx] = 1 } }
+      if (path ~ /^\/es\/(index\.html)?$/ && status ~ /^(200|304)$/) es++
       # Both names. The download is published as /ClickGraft-<version>.zip with
       # /ClickGraft.zip left as a symlink to it, so old links keep working and
       # every historical log line still counts. A symlink and not a redirect
@@ -136,6 +141,7 @@ awk -F'"' -v ours="$OURS" '
     if (mine+0 > 0)
       printf "  %-34s %d   (EXCLUDE_PREFIX)\n", "ours, not counted above:", mine
     print ""
+    if (es > 0) { print ""; printf "SPANISH PAGE (/es/)\n  %6d view(s)\n", es }
     print "WHERE THEY CAME FROM"
     for (h in refs) printf "%8d  %s\n", refs[h], h
     # length(array) is a gawk extension; the CT runs mawk.

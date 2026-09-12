@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClickGraft — que HP Click funcione bien en tu Mac</title>
+<meta name="description" content="HP publica HP Click para Mac como aplicación Intel, así que va lentísimo bajo Rosetta. ClickGraft hace una copia de tu instalación y le pone dentro el motor para Apple Silicon. Software libre y gratuito.">
+
+<link rel="canonical" href="https://clickgraft.elusive.net/es/">
+<link rel="alternate" hreflang="en" href="https://clickgraft.elusive.net/">
+<link rel="alternate" hreflang="es" href="https://clickgraft.elusive.net/es/">
+<link rel="alternate" hreflang="x-default" href="https://clickgraft.elusive.net/">
+
+<meta property="og:title" content="ClickGraft">
+<meta property="og:description" content="Que HP Click funcione bien en tu Mac. Software libre y gratuito.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://clickgraft.elusive.net/es/">
+<meta property="og:image" content="https://clickgraft.elusive.net/clickgraft-og.jpg">
+<meta property="og:locale" content="es_ES">
+
+<link rel="icon" href="../clickgraft-icon.svg" type="image/svg+xml">
+<link rel="icon" href="../clickgraft-favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="../clickgraft-apple-touch-icon.png">
+
+<style>
+/* A trimmed copy of the English page's styles. Duplicated on purpose: the site
+   is deliberately a self-contained file with no external requests, so there is
+   no shared stylesheet to link. If index.html is restyled, this needs the same
+   treatment. */
+:root {
+  --bg: #fbfbfa; --panel: #ffffff; --ink: #16181c; --muted: #5c646e;
+  --faint: #8a929c; --rule: #e3e5e8; --accent: #0f6e62; --accent-ink: #ffffff;
+  --warm: #fff8e8; --warm-rule: #e8d9b0; --warm-ink: #6b4e12;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181b; --panel: #1d2024; --ink: #e9ebee; --muted: #a2abb5;
+    --faint: #79828c; --rule: #2c3036; --accent: #3fb8a4; --accent-ink: #10241f;
+    --warm: #2a2418; --warm-rule: #4d411f; --warm-ink: #e3c37a;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif; text-rendering: optimizeLegibility; }
+.wrap { max-width: 680px; margin: 0 auto; padding: 0 24px; }
+h1, h2, h3 { line-height: 1.25; letter-spacing: -0.015em; }
+h1 { font-size: clamp(2.1rem, 6vw, 2.9rem); margin: 0 0 .35em; font-weight: 680; }
+h2 { font-size: 1.35rem; margin: 3.2rem 0 .9rem; font-weight: 650; }
+h3 { font-size: 1rem; margin: 1.9rem 0 .4rem; font-weight: 650; }
+p { margin: 0 0 1.05em; }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+strong { font-weight: 640; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: .875em; }
+header.wrap { padding-top: clamp(3.5rem, 9vw, 6rem); }
+.langbar { font-size: .86rem; color: var(--faint); margin: 0 0 1.6rem; }
+.langbar a { color: var(--muted); }
+.brand { display: flex; align-items: center; gap: 18px; margin: 0 0 .35em; }
+.brand h1 { margin: 0; }
+.mark { border-radius: 22.4%; flex: 0 0 auto; width: clamp(56px, 11vw, 76px);
+        height: auto; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.lede { font-size: 1.19rem; color: var(--muted); margin: 0 0 2rem; max-width: 34em; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; }
+.btn { display: inline-block; background: var(--accent); color: var(--accent-ink);
+  font-weight: 620; font-size: 1.02rem; padding: .78em 1.5em; border-radius: 9px;
+  text-decoration: none; }
+.btn:hover { filter: brightness(1.08); }
+.btn-sub { display: block; font-weight: 400; font-size: .78rem; opacity: .82; margin-top: 2px; }
+.alt { color: var(--muted); text-decoration: none; font-weight: 550; font-size: .95rem; }
+.alt:hover { color: var(--accent); }
+.disclaim { font-size: .84rem; color: var(--faint); margin: 1.2rem 0 0; }
+.panel { background: var(--panel); border: 1px solid var(--rule);
+  border-radius: 11px; padding: 1.15rem 1.3rem; margin: 1.4rem 0; }
+.panel.warn { background: var(--warm); border-color: var(--warm-rule); }
+.panel.warn h3 { color: var(--warm-ink); margin-top: 0; }
+.panel > :last-child { margin-bottom: 0; }
+.panel p { font-size: .95rem; }
+.facts { list-style: none; padding: 0; margin: 1.2rem 0; }
+.facts li { padding: .55rem 0 .55rem 1.5rem; position: relative; font-size: .97rem; }
+.facts li::before { content: ""; position: absolute; left: 0; top: 1.02em;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.facts b { font-weight: 640; }
+.facts span { color: var(--muted); }
+ol.steps { padding-left: 1.3em; }
+ol.steps li { margin: .5em 0; }
+footer { margin: 5rem 0 0; border-top: 1px solid var(--rule);
+  padding: 2rem 0 4rem; font-size: .875rem; color: var(--faint); }
+footer a { color: var(--muted); }
+footer p { margin: 0 0 .7em; }
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <p class="langbar"><a href="../">English</a> &middot; <strong>Español</strong></p>
+  <div class="brand">
+    <img class="mark" src="../clickgraft-icon.svg" width="72" height="72"
+         alt="ClickGraft: una tirita sobre una costura">
+    <h1>ClickGraft</h1>
+  </div>
+  <p class="lede">HP Click para Mac es una aplicación Intel. En un Mac moderno se
+     ejecuta a través de un traductor, y va lentísimo. ClickGraft hace una copia
+     de tu HP Click y le coloca dentro el motor para Apple&nbsp;Silicon (los
+     chips de la serie M).</p>
+
+  <div class="cta">
+    <a class="btn" href="../ClickGraft.zip" download>
+      Descargar ClickGraft
+      <span class="btn-sub">para macOS con Apple Silicon &middot; gratis</span>
+    </a>
+    <a class="alt" href="https://github.com/taggie313/ClickGraft">Código en GitHub &rarr;</a>
+  </div>
+
+  <p class="disclaim">Firmado y notarizado por Apple, así que se abre con
+     normalidad. Software libre con licencia MIT. Sin relación con
+     HP&nbsp;Inc.: ni respaldado ni soportado por HP.</p>
+</header>
+
+<main class="wrap">
+
+<h2>Qué hace</h2>
+
+<p>HP ya compila casi todo HP&nbsp;Click para Apple&nbsp;Silicon &mdash; la
+maquetación, el color, el motor de impresión &mdash; y luego lo empaqueta con un
+motor Intel (Electron, el entorno sobre el que está construido HP&nbsp;Click).
+ClickGraft cambia ese motor por la versión para Apple&nbsp;Silicon del mismo
+Electron, que HP descarga en lugar de escribir. El resto de la aplicación se
+queda tal y como HP la publicó.</p>
+
+<ul class="facts">
+  <li><b>Tu HP Click no se modifica.</b> <span>Se abre solo para leerlo y se deja
+      intacto.</span></li>
+  <li><b>Acabas con dos aplicaciones.</b> <span>La tuya original y
+      <span class="mono">HP Click (Apple Silicon)</span> al lado. Tus impresoras y
+      ajustes se conservan.</span></li>
+  <li><b>Para deshacerlo, arrastra la nueva a la Papelera.</b> <span>No hay
+      desinstalador porque no queda nada más que quitar.</span></li>
+  <li><b>No se distribuye software de HP.</b> <span>ClickGraft no contiene código
+      de HP. Funciona sobre la copia de HP&nbsp;Click que instalaste tú.</span></li>
+</ul>
+
+<p>Antes de escribir nada, la aplicación te enseña el plan: qué lee, qué crea,
+cada cambio que hace y por qué, y cada archivo que descarga junto con la huella
+con la que lo verifica. No ocurre nada hasta que pulsas el botón.</p>
+
+<h2>Qué necesitas</h2>
+
+<ul class="facts">
+  <li><b>Un Mac con Apple Silicon.</b> <span>Cualquier chip de la serie M. En un
+      Mac Intel no hay nada que arreglar.</span></li>
+  <li><b>HP Click 4.10.42, 4.8.118 o 4.8.117, ya instalado.</b> <span>ClickGraft
+      no incluye software de HP y no puede conseguirlo por ti.</span></li>
+  <li><b>Las Herramientas de Línea de Comandos de Apple.</b> <span>Gratuitas, de
+      Apple. La mayoría de los Macs que se usan para diseño o impresión ya las
+      tienen. Si el tuyo no, macOS se ofrece a instalarlas la primera vez que
+      abres ClickGraft: acepta, espera a que termine la descarga y vuelve a abrir
+      ClickGraft.</span></li>
+</ul>
+
+<h2>Instalación</h2>
+
+<ol class="steps">
+  <li>Descarga el archivo y descomprímelo.</li>
+  <li>Arrastra <strong>ClickGraft.app</strong> donde quieras. Aplicaciones está
+      bien.</li>
+  <li>Haz doble clic y sigue las seis pantallas.</li>
+</ol>
+
+<div class="panel warn">
+  <h3>La 4.8.118 elimina cinco impresoras. Comprueba la tuya primero.</h3>
+  <p>HP retiró estos modelos de la lista de impresoras compatibles de
+  HP&nbsp;Click. Funcionan en <strong>4.8.117</strong> y en ninguna versión
+  posterior:</p>
+  <p><strong>DesignJet T310 &middot; T320 &middot; T350 &middot; T720 &middot;
+  T750</strong> <span class="disclaim">(tanto las variantes de 24 como las de 36
+  pulgadas de la T720 y la T750)</span></p>
+  <p>Si tienes una de ellas, <strong>instala la 4.8.117 y aplica el injerto sobre
+  esa</strong>. ClickGraft no puede arreglarlo: HP&nbsp;Click comprueba esa lista
+  contra su propia firma al arrancar y se niega a ejecutarse si no coincide.</p>
+</div>
+
+<div class="panel warn">
+  <h3>No abras las dos aplicaciones a la vez</h3>
+  <p>Las dos comparten impresoras y ajustes. Si abres una mientras la otra está
+  en marcha, la segunda se cierra al instante, sin ventana y sin mensaje de
+  error. Parece que no ha arrancado. Cierra una antes de abrir la otra.</p>
+</div>
+
+<h2>Más detalle, en inglés</h2>
+
+<p>Esta página es un resumen. La <a href="../">página completa en inglés</a>
+incluye las mediciones de antes y después, cómo verificar la descarga con
+<span class="mono">spctl</span> y con la huella SHA-256, la tabla de versiones de
+HP con enlaces de descarga directos, y cómo ponerse en contacto.</p>
+
+<h2>Contacto</h2>
+
+<p>Lo más rápido es desde dentro de ClickGraft: al terminar ofrece
+<em>Share how it went</em> y <em>Report a problem</em>, y los dos llevan lo que
+de otro modo habría que pedirte &mdash; las versiones, qué comprobaciones
+pasaron y el registro. Puedes leer cada palabra antes de enviarlo, y no sale de tu Mac
+hasta que pulsas el botón.</p>
+
+<p>Si no, escribe a
+<a href="mailto:clickgraft@elusive.net">clickgraft@elusive.net</a> o
+<a href="https://github.com/taggie313/ClickGraft/issues">abre una incidencia en
+GitHub</a>. Puedes escribir en español; <strong>la respuesta será en
+inglés</strong>. Esto lo lleva una sola persona, así que puede tardar unos
+días.</p>
+
+</main>
+
+<footer class="wrap">
+  <p><strong>Qué registra este sitio.</strong> Sin cookies, sin scripts, sin
+  servicio de analítica, nada se comparte con nadie. Tu dirección se recorta
+  antes de anotarla. Los informes que envías desde la aplicación se borran a los
+  90 días. El detalle completo está
+  <a href="../#privacidad">en la página en inglés</a>.</p>
+
+  <p><a href="https://github.com/taggie313/ClickGraft">GitHub</a> &middot;
+     <a href="mailto:clickgraft@elusive.net">clickgraft@elusive.net</a> &middot;
+     <a href="https://github.com/taggie313/ClickGraft/blob/main/LICENSE">Licencia MIT</a></p>
+
+  <p>ClickGraft es un proyecto independiente de código abierto. No está asociado
+  a HP&nbsp;Inc., ni respaldado ni soportado por HP. HP, HP&nbsp;Click y
+  DesignJet son marcas de HP&nbsp;Inc., usadas aquí únicamente para indicar con
+  qué software funciona.</p>
+</footer>
+
+</body>
+</html>

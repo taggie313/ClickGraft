@@ -87,7 +87,9 @@ events() {
 
       kind = ""
       if (c == "browser" && path ~ /^\/ClickGraft(-[0-9]+\.[0-9]+\.[0-9]+)?\.zip$/ && status == "200") kind = "download"
-      else if (c == "browser" && (path == "/" || path == "/index.html") &&
+      # Same predicate as summary.sh. If these two disagree the daily digest and
+      # fetch-stats.sh report different numbers for the same day.
+      else if (c == "browser" && path ~ /^\/(es\/)?(index\.html)?$/ &&
                (status == "200" || status == "304"))                               kind = "view"
       # A page asset is what separates a browser that RENDERED the page from a
       # scanner that only grabbed the HTML. See the note on "view" in notify().

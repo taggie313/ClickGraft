@@ -97,11 +97,15 @@ cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple
 # own and merges this into it; without an origin file there is nothing telling
 # anyone to leave the half-megabyte binary alone.
 cp "$SITE/robots.txt" /tmp/cg-build/html/
+# The Spanish page carries no {{...}} placeholders (see site/es/index.html for
+# why) so it is copied rather than substituted.
+cp -R "$SITE/es" /tmp/cg-build/html/
 # Crawlers ask for /sitemap.xml by name and were getting a 404.
 sed -e "s|{{UPDATED_ISO}}|$UPDATED_ISO|g" "$SITE/sitemap.xml" > /tmp/cg-build/html/sitemap.xml
 
 # Any surviving placeholder means the page would ship with {{...}} visible.
-if grep -ho '{{[A-Z_]*}}' /tmp/cg-build/html/index.html /tmp/cg-build/html/sitemap.xml | sort -u | grep .; then
+if grep -ho '{{[A-Z_]*}}' /tmp/cg-build/html/index.html /tmp/cg-build/html/sitemap.xml \
+     /tmp/cg-build/html/es/index.html | sort -u | grep .; then
   echo "✗ the placeholders above were not substituted" >&2; exit 1
 fi
 echo "    version $VERSION, updated $UPDATED"
@@ -134,7 +138,9 @@ pct exec $CT_ID -- mkdir -p '$REMOTE_DIR/html' '$REMOTE_DIR/collector'
 # deleted on the server: two oversized icons kept being served for a day after
 # they were replaced. Contents, not the directory — sites/ is bind-mounted into
 # nginx and replacing the directory would leave it on the old inode.
-pct exec $CT_ID -- sh -lc 'rm -f $REMOTE_DIR/html/* 2>/dev/null || true'
+# -rf, not -f: html/es/ is a directory and plain rm would step over it, leaving
+# a stale Spanish page in place while everything around it was replaced.
+pct exec $CT_ID -- sh -lc 'rm -rf $REMOTE_DIR/html/* 2>/dev/null || true'
 tar -C '$STAGE' -cf - . | pct exec $CT_ID -- tar -C '$REMOTE_DIR' -xf -
 pct exec $CT_ID -- sh -lc 'chmod +x $REMOTE_DIR/summary.sh'
 # The collector is a long-running python process: replacing the file on disk
