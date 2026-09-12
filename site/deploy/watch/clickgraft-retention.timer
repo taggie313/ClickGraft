@@ -1,0 +1,19 @@
+[Unit]
+Description=Run the ClickGraft report retention sweep daily
+Documentation=https://github.com/taggie313/ClickGraft
+
+[Timer]
+# 03:30 UTC. The digest was NOT the reason -- it never reads this directory.
+# The reader that matters is clickgraft-watch.sh, which polls for new reports
+# continuously with `find -mmin -5`. It cannot collide with this sweep by
+# construction: it only ever looks at files touched in the last five minutes,
+# and this only ever removes files older than 90 days. 03:30 is simply a quiet
+# hour, chosen so a human reading the journal sees the sweep on its own.
+OnCalendar=*-*-* 03:30:00 UTC
+# Sweep late rather than skip if the box was down. The promise on the page is
+# "deleted after 90 days", not "deleted if the machine happened to be up".
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
