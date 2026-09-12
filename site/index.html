@@ -16,6 +16,9 @@
 <meta property="og:image:alt" content="The ClickGraft mark: a sticking plaster across a seam">
 <meta name="twitter:card" content="summary">
 <link rel="canonical" href="https://clickgraft.elusive.net/">
+<link rel="alternate" hreflang="en" href="https://clickgraft.elusive.net/">
+<link rel="alternate" hreflang="es" href="https://clickgraft.elusive.net/es/">
+<link rel="alternate" hreflang="x-default" href="https://clickgraft.elusive.net/">
 
 <link rel="icon" href="clickgraft-icon.svg" type="image/svg+xml">
 <!-- Named rather than left at /favicon.ico. Browsers only fall back to that
@@ -100,6 +103,8 @@ header.wrap { padding-top: clamp(3.5rem, 9vw, 6rem); }
    file cannot carry its own rounded corners. The web copy gets them here. */
 .mark { border-radius: 22.4%; flex: 0 0 auto; width: clamp(56px, 11vw, 76px);
         height: auto; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.langbar { font-size: .86rem; color: var(--faint); margin: 0 0 1.6rem; }
+.langbar a { color: var(--muted); }
 .lede { font-size: 1.19rem; color: var(--muted); margin: 0 0 2rem; max-width: 34em; }
 
 .cta { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; }
@@ -167,6 +172,7 @@ footer p { margin: 0 0 .7em; }
 <body>
 
 <header class="wrap">
+  <p class="langbar"><strong>English</strong> &middot; <a href="es/">Espa&ntilde;ol</a></p>
   <div class="brand">
     <img class="mark" src="clickgraft-icon.svg" width="72" height="72"
          alt="ClickGraft: a sticking plaster across a seam">
@@ -481,7 +487,7 @@ I've never touched is if someone says so.</p>
 
 </main>
 
-<footer class="wrap">
+<footer class="wrap" id="privacidad">
   <p><strong>What this site records.</strong> No cookies, no scripts, no
   analytics service, nothing shared with anyone. The server keeps an ordinary
   access log for one reason: to see whether this is worth maintaining. Your
@@ -489,6 +495,30 @@ I've never touched is if someone says so.</p>
   away &mdash; so it counts visitors without identifying them. What's left is
   kept, because it's a few lines a day and there's nothing in it that points at
   a person.</p>
+
+  <p><strong>What a report contains.</strong> No report is sent unless you press
+  the button, and the exact text is on screen before you do.
+  What arrives here is that text, plus a two-letter country code Cloudflare adds
+  &mdash; never your address. Paths through your home folder are stripped on your
+  Mac and stripped again when the report lands, so your account name doesn't
+  travel with it. The email blank is optional, starts empty, and is used only to
+  reply about that one report.</p>
+
+  <p><strong>How long it's kept.</strong> Reports are deleted 90 days after they
+  arrive. What survives is a count &mdash; how many, of which kind, from which
+  country &mdash; because that is the number that says whether the tool works,
+  and it points at nobody. If you'd like yours removed sooner, or want to know
+  what was in it, write to
+  <a href="mailto:clickgraft@elusive.net">clickgraft@elusive.net</a> and say
+  roughly when you sent it.</p>
+
+  <p><strong>The one thing the app does on its own.</strong> When ClickGraft
+  opens, it asks this server whether a newer version exists &mdash; that's how it
+  can tell you about a fix. That request lands in the same access log as any
+  other visit: the version you're running and your shortened address, nothing
+  else. There's no account, no identifier, and nothing that ties one launch to
+  another. It is the only thing ClickGraft sends without you pressing
+  something.</p>
 
   <p><a href="https://github.com/taggie313/ClickGraft">GitHub</a> &middot;
      <a href="https://github.com/taggie313/ClickGraft/issues">Report a problem</a> &middot;

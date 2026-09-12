@@ -1100,10 +1100,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
         let ask = NSAlert()
         ask.messageText = "Share how this went?"
         ask.informativeText = "Knowing that it worked is genuinely useful, and nobody "
-            + "sends that in unprompted. This is what would be sent — you can read all "
+            + "sends that in unprompted. This is what would be sent \u{2014} you can read all "
             + "of it first, and it goes nowhere unless you press Send.\n\nNo account, "
-            + "no identifier, nothing that says who or where you are, and no way to link "
-            + "this to anything else you send."
+            + "no identifier, and no way to link this to anything else you send. The only "
+            + "thing recorded about where you are is the two-letter country code "
+            + "Cloudflare puts on the request."
         let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 104))
         let note = NSTextField(frame: NSRect(x: 0, y: 36, width: 460, height: 68))
         note.placeholderString = "Anything worth knowing? (optional)"
