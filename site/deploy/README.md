@@ -111,6 +111,13 @@ in edge's `nginx/conf.d/clickgraft.conf`, and the collector runs there as
 collector. A site deploy must never be able to take the other projects sharing
 that nginx offline.
 
+It is also the **only** deploy of the collector's code. Edge owns the
+`clickgraft-report` service, its mount and the `/report` route, but keeps no
+copy of `collector.py`, and its `redeploy.sh` names clickgraft in `PROJECT_OWNED`
+so it will not ship one. It used to: that copy sat three weeks behind this one,
+and an edge deploy would have put the old collector back. A change to the
+collector ships from here and nowhere else.
+
 It also re-runs `watch/install-watch.sh` at the end. The watcher is a systemd
 unit on the CT rather than a container, so nothing else would ever update it: it
 spent four days announcing downloads while silently dropping every visitor,
