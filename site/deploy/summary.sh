@@ -155,7 +155,17 @@ awk -F'"' -v ours="$OURS" '
 
 echo "  (blank means typed in directly or the referrer was withheld)"
 echo
-echo "COUNTRIES (browsers only)"
-awk -F'"' '$6 ~ /Mozilla|AppleWebKit|Gecko/ && $6 !~ /bot|crawler|spider/ {
+echo "COUNTRIES (browsers only, ours excluded)"
+# EXCLUDE_PREFIX applies here too. It did not, and while travelling in Spain our
+# own browsing counted as Spanish visitors: 7 real ES hits read as 14, in the one
+# number the Spanish landing page is meant to move.
+awk -F'"' -v ours="$OURS" '
+  function is_ours(pfx,   n, a, i) {
+    n = split(ours, a, " ")
+    for (i = 1; i <= n; i++) if (a[i] != "" && pfx == a[i]) return 1
+    return 0
+  }
+  $6 ~ /Mozilla|AppleWebKit|Gecko/ && $6 !~ /bot|crawler|spider/ {
+    split($1, f, " "); if (is_ours(f[1])) next
     gsub(/^ +| +$/, "", $8); if ($8 != "" && $8 != "-") c[$8]++ }
   END { for (k in c) printf "%8d  %s\n", c[k], k }' "$LOG" | sort -rn | head -12
