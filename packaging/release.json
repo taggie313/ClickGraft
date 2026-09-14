@@ -15,5 +15,5 @@
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "recommended",
-  "summary": "If a supported HP Click version is ever misreported as unknown because a manifest file is damaged, ClickGraft now says so instead of pretending the version is unsupported. Builds and verification are also faster."
+  "summary": "If your HP Click is too old to ever be made native, ClickGraft now says so and points you to 4.8.117, checking it supports all your printers, instead of asking for a report; reports about unknown versions can also include where to reach you."
 }
