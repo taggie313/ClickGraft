@@ -126,8 +126,25 @@ rm -f "$ZIP"
 # --- final check -----------------------------------------------------------
 echo
 echo "==> Gatekeeper assessment (what a downloader's Mac will do):"
-spctl --assess --type execute --verbose=4 "$APP" 2>&1 | sed 's/^/    /'
-xcrun stapler validate "$APP" 2>&1 | sed 's/^/    /'
+# Full path: spctl lives in /usr/sbin, which a restricted PATH leaves out. On
+# 14 Sep 2026 a bare `spctl` was "command not found", and under set -e the
+# script stopped at the one line that says whether the release is safe to ship
+# -- indistinguishable, at a glance, from Gatekeeper rejecting it.
+#
+# The app INSIDE the zip, not dist/ClickGraft.app: the zip is what people
+# download, and it is re-created after stapling, so it is the thing to prove.
+CHECK_DIR="$(mktemp -d)"
+/usr/bin/ditto -x -k "$ZIP" "$CHECK_DIR"
+SHIPPED="$CHECK_DIR/$(basename "$APP")"
+if ! verdict=$(/usr/sbin/spctl --assess --type execute --verbose=4 "$SHIPPED" 2>&1) \
+   || ! staple=$(xcrun stapler validate "$SHIPPED" 2>&1); then
+  printf '%s\n%s\n' "${verdict:-}" "${staple:-}" | sed 's/^/    /'
+  rm -rf "$CHECK_DIR"
+  echo "✗ Gatekeeper would not accept the app in $ZIP. Do not distribute it." >&2
+  exit 1
+fi
+printf '%s\n%s\n' "$verdict" "$staple" | sed 's/^/    /'
+rm -rf "$CHECK_DIR"
 
 echo
 echo "Ready to distribute: $ZIP"
