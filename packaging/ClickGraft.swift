@@ -544,6 +544,40 @@ final class Wizard: NSObject, NSApplicationDelegate {
             rows.append(UI.vstack(sub, spacing: 2))
         }
 
+        // An HP Click whose own printing code has no arm64 in it. Not "unknown
+        // yet": no ClickGraft release can graft it, so neither an update nor a
+        // report is the answer, and offering either sends someone to wait for
+        // support that cannot arrive. The first report from such a version --
+        // 4.7.28, Electron 8 -- came in through exactly that panel.
+        //
+        // The printer sentence is computed from their app against 4.8.117's list,
+        // not asserted, because "you lose nothing by moving" is the one thing a
+        // person who deliberately kept an old HP Click needs to be true.
+        if let old = candidates.first(where: { ($0["reason"] as? String ?? "") == "cannot_graft" }) {
+            let ver = old["version"] as? String ?? ""
+            let theirs = ver.isEmpty ? "this HP Click" : "HP Click \(ver)"
+            let ref = old["reference_version"] as? String ?? "4.8.117"
+            var printers = ""
+            if let lost = old["printers_lost"] as? [String] {
+                printers = lost.isEmpty
+                    ? " It accepts every printer \(theirs) does."
+                    : " Check one thing first: \(ref) no longer lists "
+                      + lost.joined(separator: ", ") + ", which \(theirs) does."
+            }
+            var parts: [NSView] = [
+                UI.point("\(theirs) can't be made native, by any version of ClickGraft.",
+                         "ClickGraft works by switching on the Apple Silicon code HP already "
+                         + "builds into its app, and this version has none. A report or an "
+                         + "update won't change that. A newer HP Click will: \(ref) is still "
+                         + "free on HP's servers, and ClickGraft works with it." + printers),
+            ]
+            if let found = old["blockers"] as? [String], !found.isEmpty {
+                parts.append(UI.small("What ClickGraft found: " + found.joined(separator: " ")))
+            }
+            parts.append(UI.button("Where to get \(ref)", self, #selector(openVersionsPage)))
+            rows.append(UI.panel(parts, tint: NSColor.systemOrange.withAlphaComponent(0.12)))
+        }
+
         // Only an unrecognised *version* is worth explaining and reporting. An
         // already-made copy is greyed out with its own one-line reason; showing
         // this panel for it reads as "your app is unsupported", which it isn't.
@@ -1020,6 +1054,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     static let reportURL = "https://clickgraft.elusive.net/report"
     static let appcastURL = "https://clickgraft.elusive.net/appcast.json"
+    static let versionsURL = "https://clickgraft.elusive.net/#versions"
 
     /// Everything the report will contain, assembled so it can be SHOWN to the
     /// user before it goes anywhere. Nothing is sent that they have not read.
@@ -1411,6 +1446,14 @@ final class Wizard: NSObject, NSApplicationDelegate {
     /// not a page to read and then find a button on. Falls back to the page when
     /// the appcast carries no download, and to the site when there is no appcast
     /// at all -- a broken update button is worse than a slow one.
+    /// The site's version table: both of HP's download locations for each
+    /// supported build, and which printers each one drops. Not HP's DMG
+    /// directly -- a 571 MB download that starts on a click, with no word about
+    /// the choice between versions, is the wrong first thing to hand someone.
+    @objc func openVersionsPage() {
+        if let u = URL(string: Wizard.versionsURL) { NSWorkspace.shared.open(u) }
+    }
+
     @objc func openDownloadPage() {
         let target = !updateDownloadURL.isEmpty ? updateDownloadURL
                    : !updateURL.isEmpty         ? updateURL

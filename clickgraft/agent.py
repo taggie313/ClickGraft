@@ -23,6 +23,7 @@ import shutil
 import sys
 import time
 
+from clickgraft import graftable
 from clickgraft.build import build_apple_silicon_bundle
 from clickgraft.deps import check_clt
 from clickgraft.hostarch import host_info
@@ -141,8 +142,13 @@ def candidates(mm):
         # only an unsupported *version* is worth filing a report about.
         already = "arm64" in archs and "x86_64" not in archs
         reason = "" if m else ("already_copy" if already else "unsupported")
+        # Unknown, or unknowable? Only an unknown version is worth a report; one
+        # whose own code has no arm64 in it needs a different HP Click instead.
+        blocked = graftable.blockers(path) if reason == "unsupported" else []
+        if blocked:
+            reason = "cannot_graft"
         version = (m or {}).get("app_version", "") or _bundle_version(path)
-        out.append({
+        entry = {
             "path": path,
             "name": name,
             "archs": archs,
@@ -150,10 +156,19 @@ def candidates(mm):
             "version": version,
             "usable": bool(m),
             "reason": reason,
-            "why": "" if m else (
-                "This one was already made by ClickGraft. Choose your original instead."
-                if already else "ClickGraft doesn't know this version yet"),
-        })
+            "why": {
+                "": "",
+                "already_copy": "This one was already made by ClickGraft. "
+                                "Choose your original instead.",
+                "unsupported": "ClickGraft doesn't know this version yet",
+                "cannot_graft": "Too old for any version of ClickGraft",
+            }[reason],
+        }
+        if blocked:
+            entry["blockers"] = blocked
+            entry["reference_version"] = graftable.REFERENCE_VERSION
+            entry["printers_lost"] = graftable.printers_lost_by_moving(path)
+        out.append(entry)
     return out
 
 
