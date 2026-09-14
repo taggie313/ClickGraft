@@ -177,7 +177,9 @@ if [ -n "$LIVE" ] && [ "${LIVE#*ClickGraft}" != "$LIVE" ]; then
   # A deploy once reported success while /report returned 404, and the first we
   # knew of it was a user whose bug report vanished.
   echo
-  BASE="${HEALTH_URL%/}" sh "$HERE/healthcheck.sh"
+  # RELEASE_PENDING: on a release, the GitHub release is created after this
+  # deploy (CLAUDE.md step 7), so its absence here is the next step, not a fault.
+  BASE="${HEALTH_URL%/}" RELEASE_PENDING=1 sh "$HERE/healthcheck.sh"
 else
   echo "! ${HEALTH_URL} did not answer."
   echo "  edge is serving correctly, so this is DNS or the tunnel. Check that"

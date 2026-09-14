@@ -58,12 +58,37 @@ check "ClickGraft.zip alias == same" "$real" "$alias_real"
 # already publishes rather than downloading the asset: `gh release download`
 # increments download_count, so verifying the release was itself faking two of
 # the only non-zero numbers GitHub had.
+#
+# The release for the version the appcast ADVERTISES, not "latest". Comparing
+# against latest failed on every release: the checklist deploys (step 6) before
+# creating the release (step 7), so redeploy's own healthcheck always compared
+# the new zip with the previous release and printed FAILURES ABOVE. A failure
+# that is expected every time teaches people to skim past this output, which is
+# how the real one CLAUDE.md warns about gets missed.
+#
+# So a release that does not exist yet is named for what it is. redeploy.sh sets
+# RELEASE_PENDING=1, because in that one run the missing release is the next
+# step rather than a fault; run on its own, this still fails, so a skipped
+# step 7 cannot go unnoticed. A release that exists with different bytes fails
+# either way.
 if command -v gh >/dev/null 2>&1; then
-  gh_digest=$(gh api "repos/${REPO:-taggie313/ClickGraft}/releases/latest" \
-                --jq ".assets[] | select(.name | endswith(\".zip\")) | .digest" 2>/dev/null \
-              | sed 's/^sha256://')
+  ver=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/appcast.json" \
+        | sed -n 's/.*"version": "\([^"]*\)".*/\1/p' | head -1)
+  # stdout and stderr together, and only a real SHA-256 counts as a digest: on a
+  # 404, gh prints GitHub's error JSON to STDOUT, which an emptiness test takes
+  # for a digest and then reports as a mismatch.
+  gh_out=$(gh api "repos/${REPO:-taggie313/ClickGraft}/releases/tags/v$ver" \
+             --jq ".assets[] | select(.name | endswith(\".zip\")) | .digest" 2>&1)
+  gh_digest=$(printf '%s\n' "$gh_out" | sed -n 's/^sha256:\([0-9a-f]\{64\}\)$/\1/p' | head -1)
   if [ -n "$gh_digest" ]; then
-    check "github release == site bytes" "$real" "$gh_digest"
+    check "github release v$ver == site" "$real" "$gh_digest"
+  elif printf '%s' "$gh_out" | grep -q '"status":"404"\|HTTP 404'; then
+    if [ "${RELEASE_PENDING:-0}" = 1 ]; then
+      printf '  - %-34s %s\n' "github release v$ver" \
+        "not created yet; next: gh release create v$ver dist/ClickGraft.zip"
+    else
+      check "github release v$ver exists" "yes" "no"
+    fi
   else
     printf '  - %-34s %s\n' "github release digest" "unavailable, skipped"
   fi

@@ -32,7 +32,8 @@ matched the source.
 4. `./packaging/sign_and_notarize.sh`
 5. `git tag -a vX.Y.Z` and push the tag **before** deploying: the appcast's
    release history is built from tags, reading each tag's `release.json`.
-6. `./site/deploy/redeploy.sh`
+6. `./site/deploy/redeploy.sh` — its healthcheck lists the GitHub release as
+   "not created yet"; that is step 7, not a failure. A `✗` there is real.
 7. `gh release create vX.Y.Z dist/ClickGraft.zip` with a title of the form
    `ClickGraft X.Y.Z — short tag line`.
 
