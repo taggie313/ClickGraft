@@ -666,14 +666,32 @@ final class Wizard: NSObject, NSApplicationDelegate {
     @objc func makeReport() {
         let bad = candidates.first { ($0["reason"] as? String ?? "") == "unsupported" }
         guard let path = bad?["path"] as? String else { return }
+        // The address is asked for here, before the description is written, so
+        // that the preview below is the whole report including it. Asking on the
+        // preview itself would send a line the person never saw.
         let a = NSAlert()
         a.messageText = "Creating the report…"
         a.informativeText = "This looks at the app and writes a description of it. "
                           + "It takes a minute."
-        a.addButton(withTitle: "OK")
-        a.runModal()
+        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 52))
+        let (contactLabel, contact) = contactField(
+            label: "Optional \u{2014} where to reach you, to hear when this version is supported:",
+            y: 4)
+        wrap.addSubview(contactLabel)
+        wrap.addSubview(contact)
+        a.accessoryView = wrap
+        a.addButton(withTitle: "Continue")
+        a.addButton(withTitle: "Cancel")
+        a.window.initialFirstResponder = contact
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        let contactValue = contact.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
         if let r = agent.once(["probe", "--source", path]),
-           let report = r["report"] as? String {
+           let probe = r["report"] as? String {
+            let report = reportHeader(kind: "unsupported-version")
+                + contactLines(contactValue, wants: "to hear when this version is supported")
+                + (contactValue.isEmpty ? "\n" : "")
+                + scrub(probe)
             let dir = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
             let file = dir.appendingPathComponent("ClickGraft report.txt")
             try? report.write(to: file, atomically: true, encoding: .utf8)
@@ -692,10 +710,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 + "and it is what makes supporting that version possible. HP does not "
                 + "publish every build it ships, so for some versions a description "
                 + "from someone who has one is the only way it can ever be added.\n\n"
-                + "No file names from your work, no printer details, no personal "
-                + "information. Your home folder name has been removed. It is on your "
-                + "Desktop either way — read it first, and don't send it if anything "
-                + "in it bothers you."
+                + "No file names from your work, no printer details, and nothing "
+                + "identifying that you did not type yourself. Your home folder name has "
+                + "been removed. It is on your Desktop either way — read it first, and "
+                + "don't send it if anything in it bothers you."
+                + (contactValue.isEmpty ? ""
+                   : "\n\nYour address is in there because you entered it. It will be used "
+                   + "to reply about this version and for nothing else.")
             let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 220))
             tv.string = report
             tv.isEditable = false
@@ -707,7 +728,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
             offer.addButton(withTitle: "Send it")
             offer.addButton(withTitle: "Not now")
             if offer.runModal() == .alertFirstButtonReturn {
-                postReport("kind: unsupported-version\n" + report)
+                postReport(report)
             }
         }
     }
@@ -1060,34 +1081,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
     /// user before it goes anywhere. Nothing is sent that they have not read.
     private func reportBody(note: String = "", printer: String = "",
                             contact: String = "", kind: String = "problem") -> String {
-        let pi = ProcessInfo.processInfo
-        var out = "kind: \(kind)\n"
-        out += "ClickGraft \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")\n"
-        out += "macOS \(pi.operatingSystemVersionString)\n"
-        out += "arch: \(machineArch())"
-        if let h = env["host"] as? [String: Any] {
-            let silicon = h["apple_silicon"] as? Bool ?? true
-            let translated = h["translated"] as? Bool ?? false
-            out += "  (hardware: \(silicon ? "Apple Silicon" : "Intel")"
-                 + (translated ? ", running under Rosetta" : "") + ")"
-        }
-        out += "\n"
+        var out = reportHeader(kind: kind)
         out += "outcome: \(outcome)\n"
         out += "source: \((picked?["path"] as? String).map(scrub) ?? "none")\n"
         out += "version: \(picked?["version"] as? String ?? "?")\n\n"
-
-        // Only if they typed one. Everything else in this report is scrubbed of
-        // anything identifying; this is the one field that is personal by
-        // definition, so it exists only when someone has deliberately filled it
-        // in, and it is visible in the preview they approve before sending.
-        //
-        // NOT scrubbed: scrub() strips /Users/<name>, and an address like
-        // name@users.example would be mangled by a careless pattern. It is
-        // checked for a newline instead, so it cannot forge extra report fields.
-        if !contact.isEmpty {
-            out += "contact: \(contact.replacingOccurrences(of: "\n", with: " "))\n"
-            out += "  (they asked to be told when this is fixed)\n\n"
-        }
+        out += contactLines(contact, wants: "to be told when this is fixed")
 
         // What the person says beats anything we can infer. A copy that builds
         // cleanly and then won't print looks identical to a perfect run from
@@ -1110,6 +1108,57 @@ final class Wizard: NSObject, NSApplicationDelegate {
         }
         out += "log:\n\(scrub(logBuffer))"
         return out
+    }
+
+    /// The lines every report starts with, whatever kind it is. "kind:" must stay
+    /// first: the collector files a report by the start of its body.
+    ///
+    /// Shared because the unsupported-version report used to be the bare probe
+    /// output, with no ClickGraft or macOS version at all. The first one ever
+    /// received (4.7.28, 14 Sep 2026) could only be placed by reading the access
+    /// log for the user agent that sent it.
+    private func reportHeader(kind: String) -> String {
+        let pi = ProcessInfo.processInfo
+        var out = "kind: \(kind)\n"
+        out += "ClickGraft \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")\n"
+        out += "macOS \(pi.operatingSystemVersionString)\n"
+        out += "arch: \(machineArch())"
+        if let h = env["host"] as? [String: Any] {
+            let silicon = h["apple_silicon"] as? Bool ?? true
+            let translated = h["translated"] as? Bool ?? false
+            out += "  (hardware: \(silicon ? "Apple Silicon" : "Intel")"
+                 + (translated ? ", running under Rosetta" : "") + ")"
+        }
+        return out + "\n"
+    }
+
+    /// Only if they typed one. Everything else in a report is scrubbed of
+    /// anything identifying; this is the one field that is personal by
+    /// definition, so it exists only when someone has deliberately filled it
+    /// in, and it is visible in the preview they approve before sending.
+    ///
+    /// NOT scrubbed: scrub() strips /Users/<name>, and an address like
+    /// name@users.example would be mangled by a careless pattern. It is
+    /// checked for a newline instead, so it cannot forge extra report fields.
+    private func contactLines(_ contact: String, wants: String) -> String {
+        guard !contact.isEmpty else { return "" }
+        return "contact: \(contact.replacingOccurrences(of: "\n", with: " "))\n"
+             + "  (they asked \(wants))\n\n"
+    }
+
+    /// The optional address field, identical wherever a report is written, so
+    /// the promise attached to it cannot drift between two copies.
+    private func contactField(label: String, y: CGFloat) -> (NSTextField, NSTextField) {
+        let l = NSTextField(labelWithString: label)
+        l.frame = NSRect(x: 0, y: y + 26, width: 460, height: 18)
+        l.font = .systemFont(ofSize: 11)
+        l.textColor = .secondaryLabelColor
+        let f = NSTextField(frame: NSRect(x: 0, y: y, width: 460, height: 22))
+        f.placeholderString = "you@example.com \u{2014} or leave it blank"
+        f.toolTip = "Used only to reply about this report: to ask a question, "
+            + "or to tell you when it is fixed. Never added to a mailing list, "
+            + "never used for anything else, never given to anyone."
+        return (l, f)
     }
 
     /// The home directory carries a real name often enough to matter. Nothing
@@ -1215,16 +1264,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
         // Indonesian failure told us exactly what was wrong, it was fixed the
         // same day, and there was no way to tell them. Blank is a perfectly
         // good answer and the label says so before it says anything else.
-        let contactLabel = NSTextField(labelWithString:
-            "Optional \u{2014} where to reach you, if you would like an answer:")
-        contactLabel.frame = NSRect(x: 0, y: 30, width: 460, height: 18)
-        contactLabel.font = .systemFont(ofSize: 11)
-        contactLabel.textColor = .secondaryLabelColor
-        let contact = NSTextField(frame: NSRect(x: 0, y: 4, width: 460, height: 22))
-        contact.placeholderString = "you@example.com \u{2014} or leave it blank"
-        contact.toolTip = "Used only to reply about this report: to ask a question, "
-            + "or to tell you when it is fixed. Never added to a mailing list, "
-            + "never used for anything else, never given to anyone."
+        let (contactLabel, contact) = contactField(
+            label: "Optional \u{2014} where to reach you, if you would like an answer:", y: 4)
         wrap.addSubview(note)
         wrap.addSubview(inclPrinter)
         wrap.addSubview(contactLabel)
@@ -1299,8 +1340,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
                 if ok {
                     d.messageText = "Report sent"
-                    d.informativeText = "Thank you. There's nothing to follow up on — if "
-                        + "you want a reply, open an issue on GitHub as well."
+                    // Since 1.5.0 a report can carry an address, and telling the
+                    // person who just typed one that there is nothing to follow up
+                    // on contradicts the field they filled in.
+                    d.informativeText = body.contains("\ncontact: ")
+                        ? "Thank you. You'll hear back at the address you gave."
+                        : "Thank you. There's nothing to follow up on — if you want a "
+                          + "reply, open an issue on GitHub as well."
                     d.runModal()
                     return
                 }
