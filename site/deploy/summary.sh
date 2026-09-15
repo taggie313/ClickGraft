@@ -34,12 +34,69 @@ echo "ClickGraft — clickgraft.elusive.net"
 echo "log: $LOG   (addresses are truncated at source; no full IPs are kept)"
 echo
 
-awk -F'"' -v ours="$OURS" '
+# The newest browser major version this log has seen from real browsers, so
+# "years out of date" is measured against the log instead of a number typed in
+# today that is wrong by next spring. Chrome and Firefox are pooled: both ship a
+# major every four weeks and sit within a version or two of each other (153 and
+# 154 in Sep 2026), and Firefox alone has too few visitors to establish a
+# newest. Only requests for a page IMAGE count, from at least 3 prefixes, so a
+# scanner that fetches HTML and fakes a future version cannot move it. Nothing
+# qualifying means 0, which switches the staleness rule off rather than on.
+NEWEST="$(awk -F'"' '
+  { split($1, f, " "); split($2, r, " "); ua = $6
+    if (r[2] !~ /\.(svg|ico|png|jpg|jpeg|webp)$/) next
+    i = index(ua, "Chrome/"); if (i) { v = int(substr(ua, i + 7) + 0) }
+    else { i = index(ua, "Firefox/"); v = i ? int(substr(ua, i + 8) + 0) : 0 }
+    if (v > 0) seen[v "|" f[1]] = 1 }
+  END { for (k in seen) { split(k, a, "|"); n[a[1]]++ }
+        for (k in n) if (n[k] >= 3 && k + 0 > best) best = k + 0
+        print best + 0 }' "$LOG")"
+
+# Shared by every tally in this file, so no two sections can disagree about who
+# is a person. clickgraft-watch.sh carries a copy; change both.
+CLASSIFY='
   function is_ours(pfx,   n, a, i) {
     n = split(ours, a, " ")
     for (i = 1; i <= n; i++) if (a[i] != "" && pfx == a[i]) return 1
     return 0
   }
+  function major(ua, name,   i) {
+    i = index(ua, name "/")
+    return i ? int(substr(ua, i + length(name) + 1) + 0) : 0
+  }
+  function class(ua, method,   v) {
+    # tolower(): the AI crawlers (ClaudeBot, Claude-SearchBot) matched /bot/ only
+    # via their lowercase contact address, not their name. One of them downloads
+    # the zip, so a miss here inflates the only number anyone acts on.
+    if (tolower(ua) ~ /bot|crawler|spider|slurp|facebookexternalhit|recordedfuture|trendiction/) return "bot"
+    if (ua ~ /^ClickGraft\//)                                    return "app"
+    if (ua ~ /^(curl|Wget|Python-urllib|Go-http|libwww|ClickGraft-healthcheck)/) return "tool"
+    # Everything below claims to be a browser and is not one. Measured against
+    # the whole log on 15 Sep 2026, these took views from 162 to 121 and moved
+    # no download, and not one reclassified prefix ever downloaded the zip or
+    # ran the app.
+    #
+    # HEAD: a browser never sends it for a page. All of it here was a Cloudflare
+    # link checker posing as Chrome 92, in pairs, which had been read as a
+    # visitor on WARP. It also keeps a link checker HEADing the zip out of
+    # DOWNLOADS.
+    if (method == "HEAD")                                        return "bot"
+    # A contact URL in the user-agent is a crawler naming itself. A bare
+    # "(compatible...)" with nothing after it is the same idea without the name.
+    if (index(ua, "+http") || ua ~ /^Mozilla\/[0-9.]+ \(compatible[^)]*\)$/) return "bot"
+    # More than 30 majors behind the newest seen (about two and a half years).
+    # The largest group this catches: "Firefox/120.0" on 32-bit Linux, loading
+    # the page at 05:0x and 07:2x UTC nearly every day from rotating proxies in
+    # five countries, never fetching an image. 30 and not 26 so that one Firefox
+    # 126 on a Mac in Spain, which did fetch the icon, still counts.
+    v = major(ua, "Chrome"); if (v == 0) v = major(ua, "Firefox")
+    if (newest > 0 && v > 0 && v < newest - 30)                  return "bot"
+    if (ua ~ /Mozilla|AppleWebKit|Gecko|Safari|Chrome|Firefox/)  return "browser"
+    return "other"
+  }
+'
+
+awk -F'"' -v ours="$OURS" -v newest="$NEWEST" "$CLASSIFY"'
   # "27/Aug/2026" -> "20260827", so days sort by date instead of by text.
   # A plain string compare orders the day-of-month first, which was invisible
   # while the log held one month and put 01/Sep above 02/Aug the moment it held
@@ -53,19 +110,9 @@ awk -F'"' -v ours="$OURS" '
     if (pos == 0) return d
     return parts[3] sprintf("%02d%02d", int((pos + 2) / 3), parts[1])
   }
-  function class(ua) {
-    # tolower(): the AI crawlers (ClaudeBot, Claude-SearchBot) matched /bot/ only
-    # via their lowercase contact address, not their name. One of them downloads
-    # the zip, so a miss here inflates the only number anyone acts on.
-    if (tolower(ua) ~ /bot|crawler|spider|slurp|facebookexternalhit|recordedfuture|trendiction/) return "bot"
-    if (ua ~ /^ClickGraft\//)                                    return "app"
-    if (ua ~ /^(curl|Wget|Python-urllib|Go-http|libwww|ClickGraft-healthcheck)/) return "tool"
-    if (ua ~ /Mozilla|AppleWebKit|Gecko|Safari|Chrome|Firefox/)  return "browser"
-    return "other"
-  }
   {
     split($1, f, " "); pfx = f[1]
-    split($2, r, " "); path = r[2]
+    split($2, r, " "); method = r[1]; path = r[2]
     # s[1], not s[2]: awk given " " as the separator splits on runs of
     # whitespace and discards leading blanks, so field 3 " 200 6529 " yields
     # s[1]=status, s[2]=bytes. Reading s[2] silently compared byte counts to
@@ -73,7 +120,7 @@ awk -F'"' -v ours="$OURS" '
     split($3, s, " "); status = s[1]
     ua = $6; ref = $4; camp = $10
     d = f[4]; gsub(/^\[/, "", d); split(d, dd, ":"); day = dd[1]
-    c = class(ua)
+    c = class(ua, method)
     # Checked BEFORE the user-agent buckets, so a page load from one of our own
     # machines cannot land in the visitor column whatever it claims to be.
     # Counted and shown, never silently dropped.
@@ -159,13 +206,9 @@ echo "COUNTRIES (browsers only, ours excluded)"
 # EXCLUDE_PREFIX applies here too. It did not, and while travelling in Spain our
 # own browsing counted as Spanish visitors: 7 real ES hits read as 14, in the one
 # number the Spanish landing page is meant to move.
-awk -F'"' -v ours="$OURS" '
-  function is_ours(pfx,   n, a, i) {
-    n = split(ours, a, " ")
-    for (i = 1; i <= n; i++) if (a[i] != "" && pfx == a[i]) return 1
-    return 0
-  }
-  $6 ~ /Mozilla|AppleWebKit|Gecko/ && $6 !~ /bot|crawler|spider/ {
-    split($1, f, " "); if (is_ours(f[1])) next
+awk -F'"' -v ours="$OURS" -v newest="$NEWEST" "$CLASSIFY"'
+  {
+    split($1, f, " "); split($2, r, " ")
+    if (is_ours(f[1]) || class($6, r[1]) != "browser") next
     gsub(/^ +| +$/, "", $8); if ($8 != "" && $8 != "-") c[$8]++ }
   END { for (k in c) printf "%8d  %s\n", c[k], k }' "$LOG" | sort -rn | head -12

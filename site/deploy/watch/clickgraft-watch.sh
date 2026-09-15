@@ -61,10 +61,28 @@ publish() {  # publish <title> <priority> <tags> <body>
   fi
 }
 
+# The newest browser major version seen from real browsers in a log file. Same
+# computation as summary.sh -- see the note there. 0 switches the rule off.
+newest_version() {
+  awk -F'"' '
+    { split($1, f, " "); split($2, r, " "); ua = $6
+      if (r[2] !~ /\.(svg|ico|png|jpg|jpeg|webp)$/) next
+      i = index(ua, "Chrome/"); if (i) { v = int(substr(ua, i + 7) + 0) }
+      else { i = index(ua, "Firefox/"); v = i ? int(substr(ua, i + 8) + 0) : 0 }
+      if (v > 0) seen[v "|" f[1]] = 1 }
+    END { for (k in seen) { split(k, a, "|"); n[a[1]]++ }
+          for (k in n) if (n[k] >= 3 && k + 0 > best) best = k + 0
+          print best + 0 }' "$1" 2>/dev/null || echo 0
+}
+
 # access-log lines on stdin -> "kind|prefix|referrer|user-agent" on stdout
 events() {
-  awk -F'"' '
-    function class(ua) {
+  awk -F'"' -v newest="${NEWEST:-0}" '
+    function major(ua, name,   i) {
+      i = index(ua, name "/")
+      return i ? int(substr(ua, i + length(name) + 1) + 0) : 0
+    }
+    function class(ua, method,   v) {
       # tolower(): "Claude-SearchBot" and "ClaudeBot" only matched /bot/ because
       # they happen to carry a lowercase contact address (+searchbot@...). A
       # crawler that names itself Bot with no email would have been announced as
@@ -72,17 +90,25 @@ events() {
       if (tolower(ua) ~ /bot|crawler|spider|slurp|facebookexternalhit|recordedfuture|trendiction/) return "bot"
       if (ua ~ /^ClickGraft\//)                                    return "app"
       if (ua ~ /^(curl|Wget|Python-urllib|Go-http|libwww|ClickGraft-healthcheck)/) return "tool"
+      # The three rules below come from summary.sh, where the evidence for each is
+      # written down. A HEAD is never a page load, a contact URL or a bare
+      # "(compatible)" is a crawler naming itself, and a browser more than 30
+      # majors behind the newest seen is a scanner, not a person.
+      if (method == "HEAD")                                        return "bot"
+      if (index(ua, "+http") || ua ~ /^Mozilla\/[0-9.]+ \(compatible[^)]*\)$/) return "bot"
+      v = major(ua, "Chrome"); if (v == 0) v = major(ua, "Firefox")
+      if (newest > 0 && v > 0 && v < newest - 30)                  return "bot"
       if (ua ~ /Mozilla|AppleWebKit|Gecko|Safari|Chrome|Firefox/)  return "browser"
       return "other"
     }
     {
       split($1, f, " "); pfx = f[1]
-      split($2, r, " "); path = r[2]
+      split($2, r, " "); method = r[1]; path = r[2]
       # s[1], not s[2] — awk splitting on " " collapses whitespace runs and
       # drops the leading blank, so field 3 " 200 6529 " gives s[1]=status.
       split($3, s, " "); status = s[1]
       ref = $4; ua = $6; camp = $10
-      c = class(ua)
+      c = class(ua, method)
       if (c != "browser" && c != "app") next
 
       kind = ""
@@ -269,6 +295,7 @@ process_new() {
     off=0
   fi
   if [ "$size" -gt "$off" ]; then
+    NEWEST=$(newest_version "$LOG")
     tail -c "+$((off + 1))" "$LOG" | events | notify
     printf '%s\n' "$size" > "$STATE/offset"
   fi
@@ -288,6 +315,7 @@ case "${1:-}" in
     [ -n "$src" ] && [ -f "$src" ] || { echo "usage: $0 --dry-run <logfile>" >&2; exit 2; }
     DRY_RUN=1
     echo "dry run over $src (no notifications will be sent)"
+    NEWEST=$(newest_version "$src")
     events < "$src" | notify
     exit 0
     ;;
