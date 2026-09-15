@@ -17,17 +17,111 @@ import Foundation
 
 // MARK: - Backend bridge
 
+/// Which of Apple's developer tools the backend runs with.
+///
+/// /usr/bin/python3, clang, lipo and the rest are stubs that forward to whatever
+/// `xcode-select` points at. When that is Xcode and Xcode has been updated,
+/// every one of them refuses to run -- exit 69, "You have not agreed to the Xcode
+/// license agreements" -- until the new licence is accepted. Xcode 27.0 did
+/// exactly that to a Mac on 15 Sep 2026, the week it shipped, and ClickGraft
+/// then said only that it "couldn't start" and that reopening usually helps,
+/// which it cannot.
+///
+/// The stubs honour DEVELOPER_DIR, and the Command Line Tools carry no licence
+/// gate: with the licence still unaccepted, DEVELOPER_DIR pointed at them ran
+/// Python and git normally. So when the Command Line Tools are also installed,
+/// ClickGraft uses them and carries on. When they are not, it says what is
+/// actually wrong and how to clear it.
+enum Toolchain {
+    enum State { case normal, commandLineTools, xcodeLicenceNeeded }
+
+    /// Overridable so both outcomes can be exercised on a Mac whose licence is
+    /// already accepted: point CLICKGRAFT_PYTHON at a stand-in that prints the
+    /// licence message and exits 69, and CLICKGRAFT_CLT_DIR somewhere empty.
+    static var python: String {
+        ProcessInfo.processInfo.environment["CLICKGRAFT_PYTHON"] ?? "/usr/bin/python3"
+    }
+    static var cltDir: String {
+        ProcessInfo.processInfo.environment["CLICKGRAFT_CLT_DIR"]
+            ?? "/Library/Developer/CommandLineTools"
+    }
+
+    private static var cached: State?
+    static func refresh() { cached = nil }
+    static var state: State {
+        if let c = cached { return c }
+        let s = probe()
+        cached = s
+        return s
+    }
+    /// DEVELOPER_DIR for the backend, or nil to leave the Mac's own choice alone.
+    static var developerDir: String? { state == .commandLineTools ? cltDir : nil }
+
+    private static func run(_ extra: [String: String]) -> (status: Int32, stderr: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: python)
+        p.arguments = ["-c", ""]
+        var env = ProcessInfo.processInfo.environment
+        for (k, v) in extra { env[k] = v }
+        p.environment = env
+        let err = Pipe()
+        p.standardError = err
+        p.standardOutput = Pipe()
+        do { try p.run() } catch { return (-1, "") }
+        let data = err.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (p.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+
+    private static func probe() -> State {
+        let first = run([:])
+        // Only the licence is handled here. Missing tools altogether make the
+        // stub offer to install them, which the requirements screen already
+        // explains; that path is deliberately left as it was.
+        guard first.status != 0, first.stderr.lowercased().contains("license") else {
+            return .normal
+        }
+        if FileManager.default.isExecutableFile(atPath: cltDir + "/usr/bin/python3"),
+           run(["DEVELOPER_DIR": cltDir]).status == 0 {
+            return .commandLineTools
+        }
+        return .xcodeLicenceNeeded
+    }
+
+    /// The Xcode whose licence is outstanding: the one `xcode-select` points at,
+    /// not whichever Xcode Launch Services finds first. Acceptance is per Xcode
+    /// version, so opening a different copy would not clear it.
+    static func selectedXcode() -> URL? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        p.arguments = ["-p"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let path = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let r = path.range(of: ".app/Contents/Developer") else { return nil }
+        return URL(fileURLWithPath: String(path[..<r.lowerBound]) + ".app")
+    }
+}
+
 final class Agent {
     let resources: URL
     init(resources: URL) { self.resources = resources }
 
     private func process(_ args: [String]) -> Process {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        p.executableURL = URL(fileURLWithPath: Toolchain.python)
         p.arguments = ["-m", "clickgraft.cli", "agent"] + args
         var env = ProcessInfo.processInfo.environment
         env["PYTHONPATH"] = resources.path
         env["PYTHONDONTWRITEBYTECODE"] = "1"      // never dirty a signed bundle
+        // Inherited by everything the backend runs -- clang, lipo, otool,
+        // install_name_tool -- which sit behind the same licence gate.
+        if let dev = Toolchain.developerDir { env["DEVELOPER_DIR"] = dev }
         p.environment = env
         p.currentDirectoryURL = resources
         return p
@@ -437,6 +531,12 @@ final class Wizard: NSObject, NSApplicationDelegate {
     // MARK: 2 — Requirements
 
     @objc func showRequirements() {
+        // Probed afresh each time, so Check again notices an accepted licence.
+        Toolchain.refresh()
+        if Toolchain.state == .xcodeLicenceNeeded {
+            showXcodeLicence()
+            return
+        }
         guard let d = agent.once(["env"]), let e = d["env"] as? [String: Any] else {
             present([UI.title("ClickGraft couldn't start"),
                      UI.body("The part of ClickGraft that does the work didn't respond. "
@@ -462,6 +562,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
             rows.append(UI.panel([UI.point("Apple's Command Line Tools are installed.",
                                            "Nothing to do.")],
                                  tint: NSColor.systemGreen.withAlphaComponent(0.10)))
+            // Said, not hidden: the tools list below will show the Command Line
+            // Tools rather than Xcode, and a report should be able to explain why.
+            if Toolchain.state == .commandLineTools {
+                rows.append(UI.small("Xcode on this Mac is waiting for its licence to be "
+                                     + "accepted, so ClickGraft is using the Command Line "
+                                     + "Tools instead. Nothing for you to do."))
+            }
         } else {
             rows.append(UI.panel([
                 UI.point("Apple's Command Line Tools aren't installed yet.", ""),
@@ -506,6 +613,40 @@ final class Wizard: NSObject, NSApplicationDelegate {
         if !ok { buttons.append(UI.button("Check again", self, #selector(showRequirements))) }
         buttons += [UI.spacer(), next]
         present(rows, buttons: buttons)
+    }
+
+    /// Xcode was updated and its licence is unaccepted, and there are no Command
+    /// Line Tools to fall back on. Not "couldn't start": that told people to
+    /// reopen the app, which changes nothing.
+    ///
+    /// Opening Xcode is the instruction, not Terminal. A command in a wizard is
+    /// a failure of the wizard; it is offered second, for people who prefer it.
+    func showXcodeLicence() {
+        var steps: [NSView] = [
+            UI.point("Open Xcode once.",
+                     "It shows Apple's licence. Agree to it (macOS may ask for your "
+                     + "Mac's password), then come back here and press Check again. "
+                     + "You don't need to do anything else in Xcode."),
+        ]
+        if Toolchain.selectedXcode() != nil {
+            steps.append(UI.button("Open Xcode", self, #selector(openSelectedXcode)))
+        }
+        steps.append(UI.small("If you'd rather use Terminal, sudo xcodebuild -license "
+                              + "accept does the same thing."))
+        present([
+            UI.title("Xcode needs its licence accepted first"),
+            UI.body("ClickGraft uses Apple's developer tools, and on this Mac they come "
+                    + "from Xcode. Xcode has been updated, and until its new licence is "
+                    + "accepted, macOS won't let anything use those tools, ClickGraft "
+                    + "included. Nothing is wrong with ClickGraft or with HP Click, and "
+                    + "nothing has been changed."),
+            UI.panel(steps, tint: NSColor.systemOrange.withAlphaComponent(0.12)),
+        ], buttons: [UI.button("Quit", self, #selector(quit)), UI.spacer(),
+                     UI.button("Check again", self, #selector(showRequirements), primary: true)])
+    }
+
+    @objc func openSelectedXcode() {
+        if let u = Toolchain.selectedXcode() { NSWorkspace.shared.open(u) }
     }
 
     // MARK: 3 — Choose
@@ -1129,7 +1270,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
             out += "  (hardware: \(silicon ? "Apple Silicon" : "Intel")"
                  + (translated ? ", running under Rosetta" : "") + ")"
         }
-        return out + "\n"
+        out += "\n"
+        if Toolchain.state == .commandLineTools {
+            out += "developer tools: Command Line Tools (Xcode licence not accepted)\n"
+        }
+        return out
     }
 
     /// Only if they typed one. Everything else in a report is scrubbed of

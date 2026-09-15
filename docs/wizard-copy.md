@@ -124,6 +124,39 @@ They belong on the Done screen, where they're a result rather than a claim.
 > time it needs them — accept, wait for it to finish, then come back here. It's a
 > large download and can take several minutes.
 
+**State — present, but only because Xcode is waiting for its licence** *(1.5.6)*.
+Shown as a small line under the ✓ panel:
+
+> Xcode on this Mac is waiting for its licence to be accepted, so ClickGraft is
+> using the Command Line Tools instead. Nothing for you to do.
+
+**Blocked — Xcode needs its licence, and there are no Command Line Tools to use
+instead** *(1.5.6)*. Replaces this screen:
+
+> **Xcode needs its licence accepted first**
+>
+> ClickGraft uses Apple's developer tools, and on this Mac they come from Xcode.
+> Xcode has been updated, and until its new licence is accepted, macOS won't let
+> anything use those tools, ClickGraft included. Nothing is wrong with ClickGraft
+> or with HP Click, and nothing has been changed.
+>
+> **Open Xcode once.** It shows Apple's licence. Agree to it (macOS may ask for
+> your Mac's password), then come back here and press Check again. You don't
+> need to do anything else in Xcode.
+>
+> `Open Xcode`
+>
+> If you'd rather use Terminal, sudo xcodebuild -license accept does the same thing.
+
+**Controls:** `Quit` · `Check again`
+
+Why it exists: Xcode 27.0 updated itself on 15 Sep 2026 with its licence
+unaccepted, every developer tool then refused to run, and ClickGraft said only
+that it "couldn't start" and that reopening usually helps, which it cannot. Opening
+Xcode is the instruction; the Terminal command is second, per the note below.
+`Open Xcode` opens the Xcode that `xcode-select` points at, because acceptance is
+per Xcode version.
+
 **Controls:** `Back` · `Continue` (disabled until present) · `Check again`
 
 **Disclosure — "What ClickGraft uses them for":**
@@ -180,6 +213,33 @@ terminal command in a wizard is a failure of the wizard.
 > You can send a report describing this version, and support can be added.
 >
 > `Create a report`
+
+When the report is made, the first dialog also asks for an optional address
+*(1.5.5)*, before the description is written, so the preview is the whole report:
+
+> Optional — where to reach you, to hear when this version is supported:
+> *(you@example.com — or leave it blank)*
+
+**Not selectable — too old for any version of ClickGraft** *(1.5.5)*:
+
+> HP Click V4.7 — version 4.7.28 · Too old for any version of ClickGraft
+
+**Too-old block** — shown instead of the report offer, because no report or update
+can help:
+
+> **HP Click 4.7.28 can't be made native, by any version of ClickGraft.**
+> ClickGraft works by switching on the Apple Silicon code HP already builds into
+> its app, and this version has none. A report or an update won't change that. A
+> newer HP Click will: 4.8.117 is still free on HP's servers, and ClickGraft works
+> with it. It accepts every printer HP Click 4.7.28 does.
+>
+> What ClickGraft found: *(the evidence, e.g. "It is built on Electron 8.2.3 …")*
+>
+> `Where to get 4.8.117`
+
+The printer sentence is computed from their app against 4.8.117's list; if a
+printer would be lost it is named instead, and if the list can't be read the
+sentence is left out.
 
 **Note:** show unsupported apps rather than hiding them. Someone who sees only
 one of their three HP Clicks assumes the tool is broken. Showing them greyed with
