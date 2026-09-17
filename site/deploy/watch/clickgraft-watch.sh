@@ -82,7 +82,13 @@ events() {
       i = index(ua, name "/")
       return i ? int(substr(ua, i + length(name) + 1) + 0) : 0
     }
-    function class(ua, method,   v) {
+    # Microsoft link handling: Skype/Teams previews and Defender safe-links
+    # detonation. Narrow ranges, all whois Microsoft (52.73 here is Amazon), and
+    # only for Windows user-agents. See summary.sh for the evidence.
+    function ms_link_scanner(pfx) {
+      return pfx ~ /^(52\.112\.|52\.123\.|72\.145\.|72\.153\.|2a01:111:)/
+    }
+    function class(ua, method, pfx,   v) {
       # tolower(): "Claude-SearchBot" and "ClaudeBot" only matched /bot/ because
       # they happen to carry a lowercase contact address (+searchbot@...). A
       # crawler that names itself Bot with no email would have been announced as
@@ -90,12 +96,14 @@ events() {
       if (tolower(ua) ~ /bot|crawler|spider|slurp|facebookexternalhit|recordedfuture|trendiction/) return "bot"
       if (ua ~ /^ClickGraft\//)                                    return "app"
       if (ua ~ /^(curl|Wget|Python-urllib|Go-http|libwww|ClickGraft-healthcheck)/) return "tool"
-      # The three rules below come from summary.sh, where the evidence for each is
+      # The rules below come from summary.sh, where the evidence for each is
       # written down. A HEAD is never a page load, a contact URL or a bare
       # "(compatible)" is a crawler naming itself, and a browser more than 30
       # majors behind the newest seen is a scanner, not a person.
       if (method == "HEAD")                                        return "bot"
       if (index(ua, "+http") || ua ~ /^Mozilla\/[0-9.]+ \(compatible[^)]*\)$/) return "bot"
+      if (ua ~ /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z][A-Za-z]/)  return "bot"
+      if (ms_link_scanner(pfx) && index(ua, "Windows"))             return "bot"
       v = major(ua, "Chrome"); if (v == 0) v = major(ua, "Firefox")
       if (newest > 0 && v > 0 && v < newest - 30)                  return "bot"
       if (ua ~ /Mozilla|AppleWebKit|Gecko|Safari|Chrome|Firefox/)  return "browser"
@@ -108,7 +116,7 @@ events() {
       # drops the leading blank, so field 3 " 200 6529 " gives s[1]=status.
       split($3, s, " "); status = s[1]
       ref = $4; ua = $6; camp = $10
-      c = class(ua, method)
+      c = class(ua, method, pfx)
       if (c != "browser" && c != "app") next
 
       kind = ""
