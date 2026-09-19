@@ -10,8 +10,8 @@
   },
   "patches": [
     {
-      "path": "package.json",
-      "why": "hp_configs.crashAutoSubmit stays true otherwise, and crash dumps auto-upload to http://15.23.17.24:9100 in plaintext. A previous attempt set a TOP-LEVEL key of the same name, which the code never reads -- crash-reporter.js reads packagejson.hp_configs.crashAutoSubmit.",
+      "path": "app/package.json",
+      "why": "HP's crash reporter reads app/package.json: app/main.js does const packagejson=require(\"./package.json\") and passes packagejson.hp_configs.crashAutoSubmit to crashReporter.start as uploadToServer. Left true, crash dumps upload in plaintext to http://15.23.17.24:9100/upload_crash, which accepts connections (nc -z, 19 Sep 2026). Every ClickGraft release before 1.5.8 set this key on the ROOT package.json, which nothing reads, so every copy they built still had auto-submit on -- found 19 Sep 2026: copies had root false and app/package.json true, and a 4.8.117 copy logged 'auto-submit: true'. verify.py now checks the built value.",
       "ops": [
         {
           "type": "json_set",
@@ -22,7 +22,7 @@
     },
     {
       "path": "app/node/main/app-updater.js",
-      "why": "Squirrel otherwise downloads HP's x86_64 build and offers to replace ours. This early return is the real gate: Squirrel.Mac does NOT version-compare client-side, so bumping package.json version does not stop it. Reached via main.js -> app-starter.js -> require('./app-updater').",
+      "why": "Squirrel would otherwise fetch HP's feed and download whatever it names. Squirrel.Mac's JSON-file mode does version-compare (it skips an equal or older release -- stock 4.10.42 and 4.11.31 log updates-not-available against a feed naming 4.8.118), but a 4.8.117 copy is still offered 4.8.118, and a later feed would offer anything newer: a ~570 MB download on launch and a 'restart to update' bar. The install itself would probably be refused, because the copy's ad-hoc signature is not HP's (inferred), and stock HP's ShipIt dies on a missing Mantle.framework anyway -- but this early return stops the download and the bar. Reached via main.js -> app-starter.js -> require('./app-updater').",
       "ops": [
         {
           "type": "replace",
@@ -58,6 +58,17 @@
         {
           "type": "append",
           "text": "\nif (typeof exports !== 'undefined') { exports.Industries = Industries; }\n"
+        }
+      ]
+    },
+    {
+      "path": "app/bundle.js",
+      "why": "HP Click 4.8 and 4.10 write the SNMPv3 user name and both passwords to its log in plain text when the user presses Return in one of the SNMPv3 fields of the printer dialog (credentialsKeyEnter), and that log goes into HP's support and crash zips. HP removed it in 4.11.31; the replacement is HP's 4.11.31 line, verbatim. machan.js carries the same line but is dead code (see $do_not_patch).",
+      "ops": [
+        {
+          "type": "replace",
+          "anchor": "this.log(\"credentials key enter with - authenticationPassword: \"+this.authenticationPassword+\" policyPassword: \"+this.policyPassword+\" userName: \"+this.userName)",
+          "replacement": "this.log(\"credentials key enter event received\")"
         }
       ]
     }
@@ -110,5 +121,6 @@
     "MPCurrentTaskID",
     "MPGetTaskStorageValue"
   ],
-  "$accepted_unprovided_symbols_note": "Carbon Multiprocessing Services, removed from macOS long ago. Referenced by AdobePDFL, libACR, libACRstd, JDFPrintProcessor and DjCoreServicesNative -- Adobe's RIP stack. ACCEPTED, not shimmed: unlike png_init_filter_functions_neon, where a no-op is the correct behaviour because libpng installs C fallbacks first, these return values a caller acts on (a task id, per-task storage). A plausible-looking lie could cause subtly wrong rendering instead of an honest crash. They are equally unresolvable in HP's own x86_64 build, so Adobe's code has evidently guarded these paths for years. Revisit if a crash ever lands with PC=0 and LR inside the Adobe stack."
+  "$accepted_unprovided_symbols_note": "Carbon Multiprocessing Services, removed from macOS long ago. Referenced by AdobePDFL, libACR, libACRstd, JDFPrintProcessor and DjCoreServicesNative -- Adobe's RIP stack. ACCEPTED, not shimmed: unlike png_init_filter_functions_neon, where a no-op is the correct behaviour because libpng installs C fallbacks first, these return values a caller acts on (a task id, per-task storage). A plausible-looking lie could cause subtly wrong rendering instead of an honest crash. They are equally unresolvable in HP's own x86_64 build, so Adobe's code has evidently guarded these paths for years. Revisit if a crash ever lands with PC=0 and LR inside the Adobe stack.",
+  "$patches_verified": "Re-measured 19 Sep 2026 on the stock archive: every replace anchor occurs exactly once (the SNMPv3 one included), app/package.json has hp_configs.crashAutoSubmit true, and index.html loads shared/constants.js as a classic script."
 }

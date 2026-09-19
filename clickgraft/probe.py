@@ -67,22 +67,41 @@ def probe_app_bundle(source_app_path):
         raise ValueError("Could not determine Electron version from Electron Framework.framework/Resources/Info.plist")
 
     # 3. Check standard patch anchors
+    # The SNMPv3 line is the one HP itself replaced in 4.11.31; a version that
+    # has the old line gets HP's new one, and a version without it gets nothing.
+    snmp_anchor = ('this.log("credentials key enter with - authenticationPassword: "'
+                   '+this.authenticationPassword+" policyPassword: "+this.policyPassword'
+                   '+" userName: "+this.userName)')
     patch_anchors = [
-        ("package.json", "hp_configs.crashAutoSubmit", None),
+        ("app/package.json", "hp_configs.crashAutoSubmit", None),
         ("app/node/main/app-updater.js", "function startup(e){", "function startup(e){return;"),
         ("app/shared/constants.js", "export var SharedConstants;", "var SharedConstants;"),
-        ("app/shared/industries.js", "export const Industries = [", "const Industries = [")
+        ("app/shared/industries.js", "export const Industries = [", "const Industries = ["),
+        ("app/bundle.js", snmp_anchor, 'this.log("credentials key enter event received")'),
     ]
 
     patches = []
+    # app/package.json, not the root one: app/main.js require()s its own
+    # package.json for the crash reporter. Until 1.5.8 this drafted the root
+    # file, which nothing reads, and every copy kept auto-submitting.
     patches.append({
-        "path": "package.json",
-        "why": "hp_configs.crashAutoSubmit stays true otherwise",
+        "path": "app/package.json",
+        "why": "hp_configs.crashAutoSubmit stays true otherwise; app/main.js reads it from app/package.json",
         "ops": [{ "type": "json_set", "path": "hp_configs.crashAutoSubmit", "value": False }]
     })
 
+    # constants.js/industries.js only throw where index.html loads them as
+    # classic scripts (4.8.x). 4.10.42 stopped doing that, and patching them
+    # there fixed nothing, so draft those ops only when the page loads them.
+    index_node = all_nodes.get("app/index.html")
+    index_html = archive.read_file_content(index_node).decode("utf-8") if index_node else ""
+
     anchor_report = []
     for rel_path, anchor, replacement in patch_anchors[1:]:
+        # industries.js travels with constants.js, as in the 4.8.x manifests.
+        if rel_path.startswith("app/shared/") and "shared/constants.js" not in index_html:
+            anchor_report.append(f"  - {rel_path}: index.html loads no shared/ script, not patched")
+            continue
         node = all_nodes.get(rel_path)
         if node:
             content = archive.read_file_content(node).decode("utf-8")
