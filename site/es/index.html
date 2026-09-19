@@ -76,6 +76,15 @@ header.wrap { padding-top: clamp(3.5rem, 9vw, 6rem); }
 .panel.good { background: var(--good); border-color: transparent; }
 .panel.warn { background: var(--warm); border-color: var(--warm-rule); }
 .panel.warn h3 { color: var(--warm-ink); margin-top: 0; }
+.headline { background: var(--good); border-radius: 13px; padding: 1.35rem 1.4rem 1.1rem;
+            margin: .4rem 0 2rem; }
+.headline h2 { font-size: clamp(1.45rem, 4.6vw, 1.95rem); margin: 0 0 .6rem;
+               font-weight: 680; }
+.headline p { font-size: .98rem; }
+.headline h3 { margin: 1.3rem 0 .1rem; font-size: .8rem; text-transform: uppercase;
+               letter-spacing: .06em; color: var(--muted); }
+.headline .facts { margin: .2rem 0 0; }
+.headline .facts li:last-child { padding-bottom: 0; }
 .panel > :last-child { margin-bottom: 0; }
 .panel p { font-size: .95rem; }
 .facts { list-style: none; padding: 0; margin: 1.2rem 0; }
@@ -101,20 +110,33 @@ footer p { margin: 0 0 .7em; }
          alt="ClickGraft: una tirita sobre una costura">
     <h1>ClickGraft</h1>
   </div>
+
+  <section class="headline">
+    <h2>Desde la versión 4.11.31, HP&nbsp;Click no necesita ClickGraft.</h2>
+    <p>HP publicó la 4.11.31 el 17 de septiembre de 2026, hecha para
+    Apple&nbsp;Silicon. Funciona a toda velocidad sin Rosetta, así que no le afecta
+    que Apple retire Rosetta. Si es compatible con tu impresora, instálala y listo.</p>
+    <p><strong>Tienes que descargarla tú.</strong> HP Click no se actualiza solo a
+    la 4.11.31, porque el actualizador de HP para Mac sigue ofreciendo la 4.8.118.
+    <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.31.dmg">Descarga
+    el instalador de HP</a> (unos 710&nbsp;MB). En la página de descargas de HP
+    aparece para macOS&nbsp;12 a 26; con macOS&nbsp;27, elige 26.</p>
+    <h3>ClickGraft sigue sirviendo para</h3>
+    <ul class="facts">
+      <li><b>Las DesignJet T310, T320, T350, T720 y T750.</b> <span>HP las retiró
+          después de la 4.8.117, y la 4.11.31 tampoco las tiene. La 4.8.117 es una
+          aplicación Intel; la copia que hace ClickGraft funciona de forma nativa,
+          también en Macs sin Rosetta.</span></li>
+      <li><b>Seguir con la 4.10.42 o la 4.8.118 por ahora.</b> <span>ClickGraft
+          sigue haciendo que funcionen a toda velocidad.</span></li>
+    </ul>
+  </section>
+
   <p class="lede">Hasta septiembre de 2026, HP Click para Mac era una aplicación
      Intel. En un Mac moderno se ejecuta a través de un traductor, y va
      lentísimo. ClickGraft hace una copia
      de tu HP Click y le coloca dentro el motor para Apple&nbsp;Silicon (los
      chips de la serie M).</p>
-
-  <div class="panel good">
-    <p><strong>HP Click 4.11.31 ya es nativo.</strong> HP lo publicó el 17 de
-    septiembre de 2026 hecho para Apple&nbsp;Silicon, así que funciona sin Rosetta
-    y no necesita ClickGraft. Si es compatible con tu impresora, actualizar HP Click
-    es la mejor solución. ClickGraft sigue siendo para la 4.10.42 y anteriores, y la
-    4.8.117 sigue siendo la única versión con las DesignJet T310, T320, T350, T720 y
-    T750.</p>
-  </div>
 
   <div class="cta">
     <a class="btn" href="../ClickGraft.zip" download>

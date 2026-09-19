@@ -146,6 +146,17 @@ td.was { color: var(--muted); font-variant-numeric: tabular-nums; }
 .panel.good { background: var(--good); border-color: transparent; }
 .panel.warn { background: var(--warm); border-color: var(--warm-rule); }
 .panel.warn h3 { color: var(--warm-ink); margin-top: 0; }
+/* The first thing on the page since HP shipped a native build: most visitors no
+   longer need the tool, and should find that out before the download button. */
+.headline { background: var(--good); border-radius: 13px; padding: 1.35rem 1.4rem 1.1rem;
+            margin: .4rem 0 2rem; }
+.headline h2 { font-size: clamp(1.45rem, 4.6vw, 1.95rem); margin: 0 0 .6rem;
+               font-weight: 680; }
+.headline p { font-size: .98rem; }
+.headline h3 { margin: 1.3rem 0 .1rem; font-size: .8rem; text-transform: uppercase;
+               letter-spacing: .06em; color: var(--muted); }
+.headline .facts { margin: .2rem 0 0; }
+.headline .facts li:last-child { padding-bottom: 0; }
 .panel > :last-child { margin-bottom: 0; }
 .panel p { font-size: .95rem; }
 
@@ -178,19 +189,33 @@ footer p { margin: 0 0 .7em; }
          alt="ClickGraft: a sticking plaster across a seam">
     <h1>ClickGraft</h1>
   </div>
+
+  <section class="headline">
+    <h2>From version 4.11.31, HP&nbsp;Click doesn't need ClickGraft.</h2>
+    <p>HP released 4.11.31 on 17&nbsp;September 2026, built for Apple&nbsp;Silicon.
+    It runs at full speed without Rosetta, so it isn't affected when Apple withdraws
+    Rosetta. If it supports your printer, install it and you're done.</p>
+    <p><strong>You have to download it yourself.</strong> HP Click won't update
+    itself to 4.11.31, because HP's Mac updater still offers 4.8.118.
+    <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.31.dmg">Download
+    the installer from HP</a> (about 710&nbsp;MB). On HP's download page it's listed for
+    macOS&nbsp;12 to 26; on macOS&nbsp;27, choose 26.</p>
+    <h3>ClickGraft is still for</h3>
+    <ul class="facts">
+      <li><b>The DesignJet T310, T320, T350, T720 and T750.</b> <span>HP dropped
+          them after 4.8.117, and 4.11.31 doesn't have them either. 4.8.117 is an
+          Intel app; ClickGraft's copy of it runs natively, including on Macs
+          without Rosetta.</span></li>
+      <li><b>Staying on 4.10.42 or 4.8.118 for now.</b> <span>ClickGraft still
+          makes those run at full speed. <a href="#versions">Versions and
+          downloads</a>.</span></li>
+    </ul>
+  </section>
+
   <p class="lede">Until September 2026, HP Click for Mac was an Intel app. On a
      modern Mac it runs through a translator, and it crawls. ClickGraft makes a
      copy of your HP Click and puts the Apple&nbsp;Silicon (M-series) engine into
      the copy.</p>
-
-  <div class="panel good">
-    <p><strong>HP Click 4.11.31 is native.</strong> HP published it on
-    17&nbsp;September 2026, built for Apple&nbsp;Silicon, so it runs without
-    Rosetta and doesn't need ClickGraft. If it supports your printer, updating HP
-    Click is the better fix. ClickGraft is still for 4.10.42 and earlier, and
-    4.8.117 is still the only version with the DesignJet T310, T320, T350, T720
-    and T750. <a href="#versions">Versions and downloads</a>.</p>
-  </div>
 
   <div class="cta">
     <a class="btn" id="dl" href="{{ZIP_NAME}}" download>
@@ -354,19 +379,27 @@ which is a genuinely independent place to compare it against.</p>
 
 <p><strong>HP Click 4.11.31 doesn't need ClickGraft.</strong> HP published it on
 17 September 2026, and it is built for Apple&nbsp;Silicon: every part of it runs
-natively, with no Rosetta. If it supports your printer, updating HP Click is the
-better fix, and ClickGraft recognises it and says so. It has the same printer list
-as 4.10.42, so the five printers below are still missing.</p>
+natively, with no Rosetta. If it supports your printer, moving to it is the better
+fix, and ClickGraft recognises it and says so. It has the same printer list as
+4.10.42, so the five printers below are still missing.</p>
+
+<p><strong>You have to download 4.11.31 yourself.</strong> HP Click won't update
+itself to it: on 19 September 2026, HP's Mac update feed still named 4.8.118. Use
+the installer link in the table below, or HP's download page, which lists 4.11.31
+for macOS&nbsp;12 to 26. macOS&nbsp;27 isn't in HP's list yet; choose 26, because
+4.11.31 runs on 27.</p>
 
 <p><strong>HP Click 4.10.42, 4.8.118 and 4.8.117.</strong> ClickGraft won't touch
 a version it hasn't been tested against. It needs to know exactly where its changes
 go, and a wrong guess damages your app rather than the tool. All three have been
 built and printed from, not merely inspected.</p>
 
-<p><strong>If HP's download page offers you 4.8.117, that isn't your mistake.</strong>
-HP published 4.10.42 for macOS on 26 August 2026 without listing it: the page still
-advertises the June build, and the newer one is reachable only if you already know
-its address. ClickGraft handles either.</p>
+<p><strong>4.10.42 was never on HP's download page, and its installer is
+gone.</strong> HP published it for macOS on 26 August 2026 without listing it, and
+has since removed the <code>.dmg</code> from its server. The app itself is still
+there as a <code>.zip</code>, in the table below. HP's page now offers 4.11.31 for
+macOS&nbsp;12 to 26, and 4.8.117 if you choose macOS&nbsp;11 or earlier, although
+4.8.117 needs macOS&nbsp;12 as well.</p>
 
 <p><strong>4.8.118 was never published as a download.</strong> It only ever arrived
 as a background auto-update, which is why people who have it can't reinstall it from
@@ -390,9 +423,9 @@ Both are HP's own servers; these are the addresses HP Click itself uses.</p>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.11.31.zip">download</a></td>
     <td>Native on Apple&nbsp;Silicon. No ClickGraft needed.</td></tr>
 <tr><td>4.10.42</td>
-    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.10.42.dmg">download</a></td>
+    <td><span class="none">removed by HP</span></td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.10.42.zip">download</a></td>
-    <td>Newest Intel build. Not listed on HP's page.</td></tr>
+    <td>Newest Intel build. Never listed on HP's page.</td></tr>
 <tr><td>4.8.118</td>
     <td><span class="none">never published</span></td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.8.118.zip">download</a></td>
@@ -400,7 +433,7 @@ Both are HP's own servers; these are the addresses HP Click itself uses.</p>
 <tr><td>4.8.117</td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.8.117.dmg">download</a></td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.8.117.zip">download</a></td>
-    <td>What HP's download page still offers.</td></tr>
+    <td>The last with the five printers below. HP's page offers it only for macOS&nbsp;11 and earlier.</td></tr>
 </tbody>
 </table>
 </div>
