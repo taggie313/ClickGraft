@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ClickGraft — make HP Click run properly on your Mac</title>
-<meta name="description" content="HP ships HP Click for Mac as an Intel app, so it crawls under Rosetta. ClickGraft makes a copy of your installation and puts the Apple Silicon engine into the copy. Free and open source.">
+<meta name="description" content="Until 4.11.31, HP shipped HP Click for Mac as an Intel app, so it crawls under Rosetta. ClickGraft makes a copy of your installation and puts the Apple Silicon engine into the copy. Free and open source.">
 
 <meta property="og:title" content="ClickGraft">
 <meta property="og:description" content="Make HP Click run properly on your Mac. Free and open source.">
@@ -178,9 +178,19 @@ footer p { margin: 0 0 .7em; }
          alt="ClickGraft: a sticking plaster across a seam">
     <h1>ClickGraft</h1>
   </div>
-  <p class="lede">HP Click for Mac is an Intel app. On a modern Mac it runs
-     through a translator, and it crawls. ClickGraft makes a copy of your HP
-     Click and puts the Apple&nbsp;Silicon (M-series) engine into the copy.</p>
+  <p class="lede">Until September 2026, HP Click for Mac was an Intel app. On a
+     modern Mac it runs through a translator, and it crawls. ClickGraft makes a
+     copy of your HP Click and puts the Apple&nbsp;Silicon (M-series) engine into
+     the copy.</p>
+
+  <div class="panel good">
+    <p><strong>HP Click 4.11.31 is native.</strong> HP published it on
+    17&nbsp;September 2026, built for Apple&nbsp;Silicon, so it runs without
+    Rosetta and doesn't need ClickGraft. If it supports your printer, updating HP
+    Click is the better fix. ClickGraft is still for 4.10.42 and earlier, and
+    4.8.117 is still the only version with the DesignJet T310, T320, T350, T720
+    and T750. <a href="#versions">Versions and downloads</a>.</p>
+  </div>
 
   <div class="cta">
     <a class="btn" id="dl" href="{{ZIP_NAME}}" download>
@@ -213,9 +223,11 @@ land a beat late.</p>
 macOS&nbsp;27 Golden Gate removes Rosetta, so HP&nbsp;Click as HP ships it won't
 open until Rosetta is installed again. macOS asks the first time you open it, and
 the install is quick. The bigger change is next year: Apple has said macOS&nbsp;27
-is the last version where Rosetta runs apps like HP&nbsp;Click, so unless HP
-releases an Apple&nbsp;Silicon build, the app you have now won't open on
-macOS&nbsp;28. A ClickGraft copy doesn't use Rosetta at all. On 14 September 2026,
+is the last version where Rosetta runs apps like HP&nbsp;Click, so the Intel
+versions of HP&nbsp;Click won't open on macOS&nbsp;28. HP has since released one
+that will: <a href="#versions">4.11.31 is native</a>. The Intel versions matter
+because 4.8.117 is still the only one that supports five older DesignJets, and a
+ClickGraft copy of it doesn't use Rosetta at all. On 14 September 2026,
 the day macOS&nbsp;27 shipped, ClickGraft was run on a Mac with Rosetta removed:
 it made its copy, and that copy opened normally.</p>
 
@@ -340,6 +352,12 @@ which is a genuinely independent place to compare it against.</p>
 
 <h2 id="versions">Which versions work</h2>
 
+<p><strong>HP Click 4.11.31 doesn't need ClickGraft.</strong> HP published it on
+17 September 2026, and it is built for Apple&nbsp;Silicon: every part of it runs
+natively, with no Rosetta. If it supports your printer, updating HP Click is the
+better fix, and ClickGraft recognises it and says so. It has the same printer list
+as 4.10.42, so the five printers below are still missing.</p>
+
 <p><strong>HP Click 4.10.42, 4.8.118 and 4.8.117.</strong> ClickGraft won't touch
 a version it hasn't been tested against. It needs to know exactly where its changes
 go, and a wrong guess damages your app rather than the tool. All three have been
@@ -367,10 +385,14 @@ Both are HP's own servers; these are the addresses HP Click itself uses.</p>
 <table class="versions">
 <thead><tr><th>Version</th><th>Installer (.dmg)</th><th>App (.zip)</th><th></th></tr></thead>
 <tbody>
+<tr><td>4.11.31</td>
+    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.31.dmg">download</a></td>
+    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.11.31.zip">download</a></td>
+    <td>Native on Apple&nbsp;Silicon. No ClickGraft needed.</td></tr>
 <tr><td>4.10.42</td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.10.42.dmg">download</a></td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.10.42.zip">download</a></td>
-    <td>Newest. Not listed on HP's page.</td></tr>
+    <td>Newest Intel build. Not listed on HP's page.</td></tr>
 <tr><td>4.8.118</td>
     <td><span class="none">never published</span></td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.8.118.zip">download</a></td>
@@ -383,9 +405,10 @@ Both are HP's own servers; these are the addresses HP Click itself uses.</p>
 </table>
 </div>
 
-<p class="disclaim">All three are around 570&nbsp;MB. The <code>.zip</code> is the
+<p class="disclaim">The Intel builds are around 570&nbsp;MB and 4.11.31 about
+710&nbsp;MB, since it carries both kinds of code. The <code>.zip</code> is the
 application itself rather than an installer: unzip it and drag the result where you
-want it. ClickGraft grafts all three equally well, so as far as this tool is
+want it. ClickGraft grafts the three Intel builds equally well, so as far as this tool is
 concerned they are interchangeable &mdash; but HP changed which printers it supports
 in 4.8.118, so read the next paragraph before you pick.</p>
 
@@ -396,8 +419,8 @@ in 4.8.118, so read the next paragraph before you pick.</p>
 <p><strong>DesignJet T310 &middot; T320 &middot; T350 &middot; T720 &middot;
 T750</strong> <span class="disclaim">(both the 24-inch and 36-inch variants of the
 T720 and T750)</span></p>
-<p>The list went from 117 models to 110 in <strong>4.8.118</strong>, and 4.10.38 and
-4.10.42 carry the same shortened list. So the version to stay on is 4.8.117, not
+<p>The list went from 117 models to 110 in <strong>4.8.118</strong>, and 4.10.38,
+4.10.42 and 4.11.31 carry the same shortened list. So the version to stay on is 4.8.117, not
 4.8.118 &mdash; an earlier version of this page said either would do, which was
 wrong.</p>
 <p>If you own one of these, <strong>install 4.8.117 and graft that</strong>. Do not

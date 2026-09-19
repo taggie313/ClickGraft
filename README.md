@@ -2,10 +2,15 @@
 
 **Make HP Click run natively on Apple Silicon.**
 
-HP ships HP Click for macOS as an Intel-only build, so on an M-series Mac it
-runs under Rosetta — and it is *painfully* slow. ClickGraft grafts the official
-Apple Silicon Electron runtime onto a **copy** of your installation. Your
-original app is never touched.
+Up to 4.10.42, HP shipped HP Click for macOS as an Intel-only build, so on an
+M-series Mac it runs under Rosetta — and it is *painfully* slow. ClickGraft
+grafts the official Apple Silicon Electron runtime onto a **copy** of your
+installation. Your original app is never touched.
+
+**HP Click 4.11.31 (17 Sep 2026) is native** — universal throughout, and it runs
+untranslated — so it needs no graft, and ClickGraft recognises it and says so.
+ClickGraft remains for 4.10.42 and earlier, and 4.8.117 is still the only version
+that supports the DesignJet T310, T320, T350, T720 and T750.
 
 > Not affiliated with, endorsed by, or supported by HP Inc. See [NOTICE](NOTICE).
 
@@ -57,8 +62,8 @@ If you decline that installer, ClickGraft cannot start and will appear to do
 nothing when opened. Reopen it to get the prompt back, or install the tools
 yourself with `xcode-select --install`.
 
-You also need your own **legally installed HP Click 4.8.117**. ClickGraft ships
-no HP software and cannot obtain it for you.
+You also need your own **legally installed HP Click 4.10.42, 4.8.118 or
+4.8.117**. ClickGraft ships no HP software and cannot obtain it for you.
 
 ---
 
@@ -121,7 +126,10 @@ python3 -m clickgraft.cli gui                            # launch the wizard
 
 | HP Click | Electron | Status |
 |---|---|---|
-| 4.8.117 | 39.8.4 | Supported |
+| 4.11.31 | 39.8.4 | Native from HP — no graft needed; recognised and reported as such |
+| 4.10.42 | 39.8.4 | Supported |
+| 4.8.118 | 39.8.4 | Supported |
+| 4.8.117 | 39.8.4 | Supported — the last version listing the T310/T320/T350/T720/T750 |
 
 **New releases are meant to be picked up quickly.** When HP ships an update the
 work is mostly mechanical — `probe` reads the new bundle, checks every anchor,

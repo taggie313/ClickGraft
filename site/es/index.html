@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ClickGraft — que HP Click funcione bien en tu Mac</title>
-<meta name="description" content="HP publica HP Click para Mac como aplicación Intel, así que va lentísimo bajo Rosetta. ClickGraft hace una copia de tu instalación y le pone dentro el motor para Apple Silicon. Software libre y gratuito.">
+<meta name="description" content="Hasta la 4.11.31, HP publicaba HP Click para Mac como aplicación Intel, así que va lentísimo bajo Rosetta. ClickGraft hace una copia de tu instalación y le pone dentro el motor para Apple Silicon. Software libre y gratuito.">
 
 <link rel="canonical" href="https://clickgraft.elusive.net/es/">
 <link rel="alternate" hreflang="en" href="https://clickgraft.elusive.net/">
@@ -30,13 +30,13 @@
 :root {
   --bg: #fbfbfa; --panel: #ffffff; --ink: #16181c; --muted: #5c646e;
   --faint: #8a929c; --rule: #e3e5e8; --accent: #0f6e62; --accent-ink: #ffffff;
-  --warm: #fff8e8; --warm-rule: #e8d9b0; --warm-ink: #6b4e12;
+  --warm: #fff8e8; --warm-rule: #e8d9b0; --warm-ink: #6b4e12; --good: #eef5f3;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #16181b; --panel: #1d2024; --ink: #e9ebee; --muted: #a2abb5;
     --faint: #79828c; --rule: #2c3036; --accent: #3fb8a4; --accent-ink: #10241f;
-    --warm: #2a2418; --warm-rule: #4d411f; --warm-ink: #e3c37a;
+    --warm: #2a2418; --warm-rule: #4d411f; --warm-ink: #e3c37a; --good: #1a2624;
   }
 }
 * { box-sizing: border-box; }
@@ -73,6 +73,7 @@ header.wrap { padding-top: clamp(3.5rem, 9vw, 6rem); }
 .disclaim { font-size: .84rem; color: var(--faint); margin: 1.2rem 0 0; }
 .panel { background: var(--panel); border: 1px solid var(--rule);
   border-radius: 11px; padding: 1.15rem 1.3rem; margin: 1.4rem 0; }
+.panel.good { background: var(--good); border-color: transparent; }
 .panel.warn { background: var(--warm); border-color: var(--warm-rule); }
 .panel.warn h3 { color: var(--warm-ink); margin-top: 0; }
 .panel > :last-child { margin-bottom: 0; }
@@ -100,10 +101,20 @@ footer p { margin: 0 0 .7em; }
          alt="ClickGraft: una tirita sobre una costura">
     <h1>ClickGraft</h1>
   </div>
-  <p class="lede">HP Click para Mac es una aplicación Intel. En un Mac moderno se
-     ejecuta a través de un traductor, y va lentísimo. ClickGraft hace una copia
+  <p class="lede">Hasta septiembre de 2026, HP Click para Mac era una aplicación
+     Intel. En un Mac moderno se ejecuta a través de un traductor, y va
+     lentísimo. ClickGraft hace una copia
      de tu HP Click y le coloca dentro el motor para Apple&nbsp;Silicon (los
      chips de la serie M).</p>
+
+  <div class="panel good">
+    <p><strong>HP Click 4.11.31 ya es nativo.</strong> HP lo publicó el 17 de
+    septiembre de 2026 hecho para Apple&nbsp;Silicon, así que funciona sin Rosetta
+    y no necesita ClickGraft. Si es compatible con tu impresora, actualizar HP Click
+    es la mejor solución. ClickGraft sigue siendo para la 4.10.42 y anteriores, y la
+    4.8.117 sigue siendo la única versión con las DesignJet T310, T320, T350, T720 y
+    T750.</p>
+  </div>
 
   <div class="cta">
     <a class="btn" href="../ClickGraft.zip" download>
@@ -134,9 +145,11 @@ actualizar a macOS&nbsp;27 Golden Gate se elimina Rosetta, así que HP&nbsp;Clic
 tal como lo publica HP, no se abre hasta que vuelves a instalarlo. macOS te lo
 pide la primera vez que lo abres, y la instalación es rápida. Lo importante llega
 el año que viene: Apple ha dicho que macOS&nbsp;27 es la última versión en la que
-Rosetta ejecuta aplicaciones como HP&nbsp;Click, así que, si HP no publica una
-versión para Apple&nbsp;Silicon, la que tienes ahora no se abrirá en
-macOS&nbsp;28. La copia que hace ClickGraft no usa Rosetta. El 14 de septiembre
+Rosetta ejecuta aplicaciones como HP&nbsp;Click, así que las versiones Intel de
+HP&nbsp;Click no se abrirán en macOS&nbsp;28. HP ya ha publicado una que sí: la
+4.11.31 es nativa. Las versiones Intel siguen importando porque la 4.8.117 es la
+única compatible con cinco DesignJet antiguas, y la copia que hace ClickGraft de
+ella no usa Rosetta. El 14 de septiembre
 de 2026, el día que salió macOS&nbsp;27, se probó ClickGraft en un Mac sin
 Rosetta: hizo su copia, y esa copia se abrió con normalidad.</p>
 
