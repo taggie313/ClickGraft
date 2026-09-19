@@ -73,8 +73,10 @@ for anything.
 > called Apple Silicon. Your Mac still runs apps built for the older Intel chips
 > by translating them as they go — that's Rosetta.
 >
-> HP Click for Mac is one of those. That translation is why it's slow to start
-> and why clicks take a moment to register.
+> HP Click for Mac was one of those until version 4.11.31. That translation is
+> why it's slow to start and why clicks take a moment to register. HP released
+> 4.11.31 in September 2026 built for Apple Silicon; if that's the one you have,
+> ClickGraft will say there's nothing to do. *(1.5.7)*
 >
 > HP already builds the important parts of HP Click for Apple Silicon — page
 > layout, colour, the print engine. They're inside the app you have installed
@@ -223,6 +225,25 @@ When the report is made, the first dialog also asks for an optional address
 **Not selectable — too old for any version of ClickGraft** *(1.5.5)*:
 
 > HP Click V4.7 — version 4.7.28 · Too old for any version of ClickGraft
+
+**Not selectable — HP's own Apple Silicon build** *(1.5.7)*:
+
+> HP Click — version 4.11.31 · Already runs natively on Apple Silicon. No copy needed
+
+**Native block** — green, and with no report offer, because nothing is wrong:
+
+> **HP Click 4.11.31 already runs natively on Apple Silicon.** HP released it
+> built for your Mac's processor, so there is nothing for ClickGraft to do. Use it
+> as it is. It doesn't need Rosetta, so it will keep working on future versions of
+> macOS.
+>
+> One exception: HP Click 4.11.31 doesn't support *(the printers 4.8.117 accepts
+> and it does not)*. If you print to one of those, keep HP Click 4.8.117, which
+> does, and make a ClickGraft copy of it.
+
+Recognised by the main executable and the Electron framework both carrying arm64
+alongside x86_64; a ClickGraft copy has arm64 alone. The printer sentence is
+computed from the app's own list against 4.8.117's and left out when it is empty.
 
 **Too-old block** — shown instead of the report offer, because no report or update
 can help:

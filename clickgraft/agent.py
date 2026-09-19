@@ -142,6 +142,10 @@ def candidates(mm):
         # only an unsupported *version* is worth filing a report about.
         already = "arm64" in archs and "x86_64" not in archs
         reason = "" if m else ("already_copy" if already else "unsupported")
+        # HP's own Apple Silicon build (4.11.31 on). Nothing to graft, and
+        # calling it "unknown" would invite a report about an app that is fine.
+        if reason == "unsupported" and graftable.hp_native(path):
+            reason = "hp_native"
         # Unknown, or unknowable? Only an unknown version is worth a report; one
         # whose own code has no arm64 in it needs a different HP Click instead.
         blocked = graftable.blockers(path) if reason == "unsupported" else []
@@ -162,8 +166,12 @@ def candidates(mm):
                                 "Choose your original instead.",
                 "unsupported": "ClickGraft doesn't know this version yet",
                 "cannot_graft": "Too old for any version of ClickGraft",
+                "hp_native": "Already runs natively on Apple Silicon. No copy needed",
             }[reason],
         }
+        if reason == "hp_native":
+            entry["reference_version"] = graftable.REFERENCE_VERSION
+            entry["printers_dropped"] = graftable.printers_dropped_since_reference(path)
         if blocked:
             entry["blockers"] = blocked
             entry["reference_version"] = graftable.REFERENCE_VERSION

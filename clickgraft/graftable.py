@@ -72,6 +72,56 @@ def blockers(app):
     return found
 
 
+def hp_native(app):
+    """True when HP itself shipped this HP Click for Apple Silicon.
+
+    4.11.31 (published 17 Sep 2026) was the first: every Mach-O in it carries
+    arm64, and it runs untranslated. Recognised by the two pieces ClickGraft
+    exists to replace -- the main executable and the Electron framework -- each
+    carrying BOTH architectures. A ClickGraft copy has arm64 alone, so the two
+    cannot be confused; an unreadable binary is "not native", which leaves the
+    older paths to handle it.
+    """
+    exe = os.path.join(app, "Contents", "MacOS", "HPClickExe")
+    fw = os.path.join(app, "Contents", "Frameworks", "Electron Framework.framework",
+                      "Electron Framework")
+    for path in (exe, fw):
+        # realpath: the framework's top-level binary is a symlink into
+        # Versions/A, and is_macho() deliberately refuses symlinks -- so without
+        # this, 4.11.31 read as not native.
+        path = os.path.realpath(path)
+        archs = get_archs(path) if os.path.exists(path) else []
+        if not ("arm64" in archs and "x86_64" in archs):
+            return False
+    return True
+
+
+def printers_dropped_since_reference(app):
+    """Printers 4.8.117 accepts that this bundle does not, sorted.
+
+    The other direction from printers_lost_by_moving(): for someone on a newer
+    HP Click, which printers they would need 4.8.117 for. None if unreadable.
+    """
+    reference = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data",
+                             f"printers-{REFERENCE_VERSION}.json")
+    for path in _printer_lists(app):
+        try:
+            return sorted(_names(reference) - _names(path))
+        except (OSError, ValueError, KeyError, TypeError, StopIteration):
+            return None
+    return None
+
+
+def _printer_lists(app):
+    candidates = [
+        os.path.join(app, "Contents", "Resources", "printersValidate.json"),
+        os.path.join(app, "Contents", "Resources", "app.asar.unpacked", "app",
+                     "node_modules", "DjConnServices", "resources", "printersValidate.json"),
+    ]
+    # An unpacked asar entry can be a zero-byte placeholder; skip those.
+    return [p for p in candidates if os.path.isfile(p) and os.path.getsize(p) > 0]
+
+
 def _names(path):
     with open(path, encoding="utf-8-sig") as f:
         data = json.load(f)
@@ -92,15 +142,7 @@ def printers_lost_by_moving(app):
     """
     reference = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data",
                              f"printers-{REFERENCE_VERSION}.json")
-    candidates = [
-        os.path.join(app, "Contents", "Resources", "printersValidate.json"),
-        os.path.join(app, "Contents", "Resources", "app.asar.unpacked", "app",
-                     "node_modules", "DjConnServices", "resources", "printersValidate.json"),
-    ]
-    for path in candidates:
-        # An unpacked asar entry can be a zero-byte placeholder; skip those.
-        if not os.path.isfile(path) or os.path.getsize(path) == 0:
-            continue
+    for path in _printer_lists(app):
         try:
             return sorted(_names(path) - _names(reference))
         except (OSError, ValueError, KeyError, TypeError, StopIteration):

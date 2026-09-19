@@ -459,8 +459,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
             UI.body("In 2020 Apple started replacing the Intel processors in Macs with its "
                     + "own, called Apple Silicon. Your Mac still runs apps built for the older "
                     + "Intel chips by translating them as they go — that's Rosetta."),
-            UI.body("HP Click for Mac is one of those. That translation is why it's slow to "
-                    + "start and why clicks take a moment to register."),
+            UI.body("HP Click for Mac was one of those until version 4.11.31. That "
+                    + "translation is why it's slow to start and why clicks take a moment "
+                    + "to register. HP released 4.11.31 in September 2026 built for Apple "
+                    + "Silicon; if that's the one you have, ClickGraft will say there's "
+                    + "nothing to do."),
             UI.body("HP already builds the important parts of HP Click for Apple Silicon — "
                     + "page layout, colour, the print engine. They're inside the app you have "
                     + "installed right now. They're just packaged with an Intel engine."),
@@ -683,6 +686,36 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 sub.append(UI.small("      " + why))
             }
             rows.append(UI.vstack(sub, spacing: 2))
+        }
+
+        // HP's own Apple Silicon build. 4.11.31 (17 Sep 2026) was the first:
+        // every binary carries arm64 and it runs untranslated, so there is
+        // nothing to graft. Said plainly and in green, because it is good news,
+        // and without the report offer an unknown version gets -- there is
+        // nothing wrong with it to report.
+        //
+        // The printer line is the one reason to still want ClickGraft: HP took
+        // the T310/T320/T350/T720/T750 out in 4.8.118 and has not put them back.
+        // Computed from the app's own list against 4.8.117's, not asserted.
+        if let native = candidates.first(where: { ($0["reason"] as? String ?? "") == "hp_native" }) {
+            let ver = native["version"] as? String ?? ""
+            let theirs = ver.isEmpty ? "This HP Click" : "HP Click \(ver)"
+            let ref = native["reference_version"] as? String ?? "4.8.117"
+            var parts: [NSView] = [
+                UI.point("\(theirs) already runs natively on Apple Silicon.",
+                         "HP released it built for your Mac's processor, so there is "
+                         + "nothing for ClickGraft to do. Use it as it is. It doesn't need "
+                         + "Rosetta, so it will keep working on future versions of macOS."),
+            ]
+            if let dropped = native["printers_dropped"] as? [String], !dropped.isEmpty {
+                // "DesignJet T310 24-in, T320 24-in, ..." -- the brand once, not
+                // seven times in a row.
+                let models = dropped.map { $0.replacingOccurrences(of: "HP DesignJet ", with: "") }
+                parts.append(UI.small("One exception: \(theirs) doesn't support the DesignJet "
+                    + models.joined(separator: ", ") + ". If you print to one of those, "
+                    + "keep HP Click \(ref), which does, and make a ClickGraft copy of it."))
+            }
+            rows.append(UI.panel(parts, tint: NSColor.systemGreen.withAlphaComponent(0.10)))
         }
 
         // An HP Click whose own printing code has no arm64 in it. Not "unknown
