@@ -184,6 +184,23 @@ i=118; while [ $i -le 130 ]; do cands="$cands 4.8.$i"; i=$((i+1)); done
 i=110; while [ $i -le 125 ]; do cands="$cands 4.9.$i";  i=$((i+1)); done
 i=30;  while [ $i -le 45  ]; do cands="$cands 4.10.$i"; i=$((i+1)); done
 
+# ...and whatever the Windows feed names, with the builds around it and the
+# next minor. The fixed list above never contained a 4.11.x, so on 18 Sep 2026
+# this reported "no new macOS build" while HPClick-4.11.31.dmg had been on HP's
+# server since the afternoon before. The Windows feed is the one place that
+# states the current version outright, it has led every Mac release so far,
+# and HP uses one version number for both (4.10.42, 4.11.31). Guessing is
+# still needed for a Mac build that Windows never gets, hence the ranges stay.
+win_ver=$(cat "$STATE/win-x64" 2>/dev/null | sed -n 's/.*hpclick-\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)-full\.nupkg.*/\1/p' | tail -1)
+if [ -n "$win_ver" ]; then
+  maj=${win_ver%%.*}; rest=${win_ver#*.}; min=${rest%%.*}; pat=${rest#*.}
+  cands="$cands $win_ver"
+  i=$((pat > 10 ? pat - 10 : 0)); while [ $i -le $((pat + 20)) ]; do cands="$cands $maj.$min.$i"; i=$((i+1)); done
+  i=0; while [ $i -le 40 ]; do cands="$cands $maj.$((min + 1)).$i"; i=$((i+1)); done
+  cands=$(printf '%s\n' $cands | awk '!seen[$0]++' | tr '\n' ' ')
+  echo "windows names $win_ver; probing around it"
+fi
+
 found=""
 found_zip=""
 truncated=""
@@ -223,7 +240,10 @@ if [ -n "$found" ] || [ -n "$found_zip" ] || [ -n "$truncated" ]; then
 "HPClick-$v.dmg is now on HP's server.
 $BASE/HPClick-$v.dmg
 
-ClickGraft supports $KNOWN. A new manifest is needed before it can graft this one."
+First check whether HP made it native: 4.11.31 was the first build that is
+universal throughout (lipo -archs on Contents/MacOS/HPClickExe and the Electron
+Framework). A universal build needs no graft; ClickGraft should recognise it and
+say so. An Intel-only one needs a manifest before ClickGraft can graft it."
   done
   for v in $found_zip; do
     # Only worth a separate alert if the DMG did NOT also appear -- otherwise
