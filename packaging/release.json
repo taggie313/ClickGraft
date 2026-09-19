@@ -14,6 +14,6 @@
     "",
     "summary: one plain sentence, shown under the version number."
   ],
-  "importance": "important",
-  "summary": "If Xcode on your Mac was just updated and is waiting for you to accept its licence, ClickGraft could not start at all; it now uses Apple's Command Line Tools instead when they are installed, and otherwise tells you exactly how to clear it."
+  "importance": "recommended",
+  "summary": "HP Click 4.11.31 runs natively on Apple Silicon, so it needs no copy: ClickGraft now recognises it and says so, instead of calling it an unknown version, and notes that the DesignJet T310, T320, T350, T720 and T750 still need 4.8.117."
 }
