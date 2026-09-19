@@ -380,6 +380,16 @@ final class Wizard: NSObject, NSApplicationDelegate {
     var latestUpdate: Update?
     var allowIntelHost = false
 
+    // The copy's name is fixed, so every build replaces the one made before it.
+    // Review asks the backend what that copy is (1.5.8), and these carry its
+    // answer to the button: nothing is replaced while the old copy is open, and
+    // a copy that supports printers the new one won't is replaced only after a
+    // deliberate tick, which is then passed on as --accept-printer-loss.
+    var createButton: NSButton?
+    var replacedIsOpen = false
+    var replaceLosesPrinters = false
+    var acceptPrinterLoss = false
+
     // MARK: lifecycle
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -920,26 +930,104 @@ final class Wizard: NSObject, NSApplicationDelegate {
         }
         plan = p
         let out = p["output"] as? String ?? ""
-        let replacing = FileManager.default.fileExists(atPath: out)
+        // What is at the output path, as the backend read it: the version the
+        // copy was made from, whether it is open, and any printers it supports
+        // that the new copy won't. FileManager stays as a fallback so an
+        // unreadable answer still says "Replacing" rather than "Creating".
+        let existing = p["replacing"] as? [String: Any]
+        let replacing = existing != nil || FileManager.default.fileExists(atPath: out)
+        let newVersion = p["app_version"] as? String ?? ""
+        let oldVersion = existing?["version"] as? String ?? ""
+        let madeByUs = existing?["made_by_clickgraft"] as? Bool ?? false
+        let lost = existing?["printers_lost"] as? [String] ?? []
+        let openPids = existing?["open_pids"] as? [Int] ?? []
+        let appName = (out as NSString).lastPathComponent
+            .replacingOccurrences(of: ".app", with: "")
+        replacedIsOpen = !openPids.isEmpty
+        replaceLosesPrinters = !lost.isEmpty
+        acceptPrinterLoss = false        // ticked afresh each time this screen is drawn
+        let theirs = madeByUs && !oldVersion.isEmpty
+            ? "your copy made from HP Click \(oldVersion)" : "the copy that is already there"
 
         var rows: [NSView] = [
             UI.title("Here's exactly what will happen"),
             UI.body("Nothing has been changed yet. Nothing will be, until you press the "
                     + "button below."),
+        ]
 
+        // First on the screen, because it is the one thing here that can cost
+        // someone their plotter. HP took the T310/T320/T350/T720/T750 out in
+        // 4.8.118 and shipped that as a background update of 4.8.117, so a
+        // T-series owner rebuilding "the HP Click I have" can be rebuilding from
+        // a version that no longer supports what they print to. Computed from
+        // both apps' own printer lists, never from version numbers, and the
+        // button stays off until the box is ticked.
+        if !lost.isEmpty {
+            let chosen = newVersion.isEmpty ? "The HP Click you chose"
+                                            : "HP Click \(newVersion), the one you chose,"
+            var parts: [NSView] = [
+                UI.point("This replaces \(theirs). The new copy won't support the "
+                         + printerList(lost) + ".",
+                         "\(chosen) doesn't list them."),
+                UI.small("If you print to one of those, keep the copy you have: press Back."),
+            ]
+            let supported = (env["versions"] as? [String] ?? []).contains(oldVersion)
+            if madeByUs && supported && oldVersion != newVersion {
+                parts.append(UI.small("Or make the new copy from HP Click \(oldVersion) "
+                                      + "instead, which still supports them."))
+                parts.append(UI.button("Where to get \(oldVersion)", self,
+                                       #selector(openVersionsPage)))
+            }
+            let tick = NSButton(checkboxWithTitle:
+                "Replace it anyway. I don't print to any of these.",
+                target: self, action: #selector(togglePrinterLoss(_:)))
+            tick.state = .off
+            parts.append(tick)
+            rows.append(UI.panel(parts, tint: NSColor.systemOrange.withAlphaComponent(0.14)))
+        }
+
+        // build.py deletes the old copy before renaming the new one into place,
+        // so it can't be open. Quitting it is left to the person, because it may
+        // be in the middle of a print; the backend refuses too, in case it is
+        // opened after this screen was drawn.
+        if !openPids.isEmpty {
+            rows.append(UI.panel([
+                UI.point("\(appName) is open.",
+                         "Quit it before you create the new copy. ClickGraft won't replace "
+                         + "an app while it's running, and it won't quit it for you, in case "
+                         + "it's in the middle of a print."),
+                UI.button("Check again", self, #selector(showReview)),
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.14)))
+        }
+
+        // The build deletes an existing output bundle outright. Promising
+        // "nothing is overwritten" while doing that is the one lie this screen
+        // cannot afford, so a second run says what it really does, and names
+        // what it is replacing.
+        let replaceLine: String
+        if !replacing {
+            replaceLine = "A new app. Nothing is overwritten."
+        } else if madeByUs && !oldVersion.isEmpty {
+            replaceLine = "This replaces your copy made from HP Click \(oldVersion) with "
+                + (oldVersion == newVersion ? "a new one made from the same version. "
+                                            : "one made from HP Click \(newVersion). ")
+                + "Your original HP Click is still untouched."
+        } else if existing != nil && !madeByUs {
+            replaceLine = "An app with this name is already here. It will be replaced. "
+                + "Your original HP Click is still untouched."
+        } else {
+            replaceLine = "A copy is already here from a previous run. It will be replaced. "
+                + "Your original HP Click is still untouched."
+        }
+
+        rows += [
             UI.section("WHERE THINGS GO"),
             UI.point("Reading from", ""),
             UI.text(p["source"] as? String ?? "", size: 11, mono: true),
             UI.small("Opened for reading only, not changed."),
             UI.point(replacing ? "Replacing" : "Creating", ""),
             UI.text(out, size: 11, mono: true),
-            // The build deletes an existing output bundle outright. Promising
-            // "nothing is overwritten" while doing that is the one lie this
-            // screen cannot afford, so a second run says what it really does.
-            UI.small(replacing
-                     ? "A copy is already here from a previous run. It will be replaced. "
-                     + "Your original HP Click is still untouched."
-                     : "A new app. Nothing is overwritten."),
+            UI.small(replaceLine),
 
             // Only when the fallback is actually in play. Saying "this is just
             // for you" on a normal /Applications build would invent a
@@ -960,19 +1048,18 @@ final class Wizard: NSObject, NSApplicationDelegate {
                      + "the copy. HP's own files — layout, colour, the print engine, your "
                      + "settings — are carried across untouched."),
 
-            // Not "\(patches.count) small fixes": the manifest's four patches
-            // collapse into three explanations, because two of them repair the
-            // same HP bug in two files. A number here would contradict the list.
+            // Not a count: the points come from the backend's "fixes", one per HP
+            // problem this version's manifest patches, not one per file. On 4.8.x
+            // five patches make four points, because constants.js and industries.js
+            // repair the same HP bug; on 4.10.42 three make three, because its
+            // index.html never loads constants.js and so has no such bug to fix.
             UI.section("SMALL FIXES TO THE COPY"),
-            UI.point("Stops HP's updater replacing your new app with the Intel version.",
-                     "Without this, HP's automatic update would quietly undo the whole thing."),
-            UI.point("Stops crash reports being sent unencrypted.",
-                     "HP's build uploads them over an unencrypted connection. This turns "
-                     + "that off."),
-            UI.point("Fixes a bug in HP's code.",
-                     "Two of HP's files have a mistake that makes the app report an error "
-                     + "every time it starts — on Intel Macs too. ClickGraft repairs it."),
-
+        ]
+        let fixes = p["fixes"] as? [String] ?? []
+        for f in Wizard.fixPoints where fixes.contains(f.id) {
+            rows.append(UI.point(f.lead, f.rest))
+        }
+        rows += [
             UI.section("SUPPORT FILES ADDED"),
             UI.body("HP's Apple Silicon components expect two small libraries that HP forgot "
                     + "to include. ClickGraft downloads them from their official source and "
@@ -985,14 +1072,75 @@ final class Wizard: NSObject, NSApplicationDelegate {
             UI.point("Your HP Click is not modified.", "It is only read."),
         ]))
 
+        let create = UI.button("Create the copy", self, #selector(startBuild), primary: true)
+        createButton = create
+        updateCreateButton()
         present(rows, buttons: [UI.button("Back", self, #selector(showChoose)), UI.spacer(),
-                                UI.button("Create the copy", self, #selector(startBuild),
-                                          primary: true)])
+                                create])
+    }
+
+    /// Review's small fixes, in the order shown. Each appears only when the
+    /// backend lists its id for this version (clickgraft/agent.py FIX_FOR_PATH),
+    /// so a point can't claim a fix the copy doesn't get.
+    static let fixPoints: [(id: String, lead: String, rest: String)] = [
+        // Not "would quietly undo the whole thing": the copy's own signature
+        // would probably make HP's installer refuse, and ClickGraft replaces
+        // that installer anyway. What the lock really stops is the download and
+        // the restart bar, and neither of those is quiet. See the manifest's
+        // "why" for app/node/main/app-updater.js.
+        ("updater",
+         "Stops HP's updater downloading its Intel version over your new app.",
+         "HP Click asks HP for an update each time it starts. Left alone it can download "
+         + "HP's Intel build — around 570 MB — and keep offering to restart and install it. "
+         + "ClickGraft stops it asking, and replaces the installer that would do the "
+         + "replacing."),
+        ("crash_reports",
+         "Stops crash reports being sent unencrypted.",
+         "HP's build uploads them over an unencrypted connection. This turns that off."),
+        ("snmp_log",
+         "Stops HP Click writing printer passwords into its log.",
+         "If you type SNMPv3 printer passwords and press Return, HP Click 4.8 and 4.10 "
+         + "write them into its log. HP stopped this in 4.11.31; the copy makes the same "
+         + "change."),
+        ("startup_error",
+         "Fixes a bug in HP's code.",
+         "Two of HP's files have a mistake that makes the app report an error every time "
+         + "it starts — on Intel Macs too. ClickGraft repairs it."),
+    ]
+
+    /// "DesignJet T310 24-in, T320 24-in and T750 36-in": the brand once rather
+    /// than seven times, but only when every name carries it.
+    private func printerList(_ names: [String]) -> String {
+        let brand = "HP DesignJet "
+        let allBrand = names.allSatisfy { $0.hasPrefix(brand) }
+        let shown = allBrand ? names.map { String($0.dropFirst(brand.count)) } : names
+        let joined = shown.count > 1
+            ? shown.dropLast().joined(separator: ", ") + " and " + (shown.last ?? "")
+            : (shown.first ?? "")
+        return allBrand ? "DesignJet " + joined : joined
+    }
+
+    @objc func togglePrinterLoss(_ b: NSButton) {
+        acceptPrinterLoss = (b.state == .on)
+        updateCreateButton()
+    }
+
+    private func updateCreateButton() {
+        createButton?.isEnabled = !replacedIsOpen && (!replaceLosesPrinters || acceptPrinterLoss)
     }
 
     private func technicalPlan() -> String {
         var out = "SOURCE   \(plan["source"] as? String ?? "")\n"
         out += "OUTPUT   \(plan["output"] as? String ?? "")\n"
+        if let r = plan["replacing"] as? [String: Any] {
+            let v = r["version"] as? String ?? ""
+            out += "REPLACES HP Click \(v.isEmpty ? "(version unreadable)" : v)"
+                + ((r["made_by_clickgraft"] as? Bool ?? false) ? ", a ClickGraft copy" : "")
+                + "\n"
+            if let lost = r["printers_lost"] as? [String], !lost.isEmpty {
+                out += "         loses: \(lost.joined(separator: ", "))\n"
+            }
+        }
         out += "VERSION  HP Click \(plan["app_version"] as? String ?? "")\n"
         out += "RUNTIME  Electron \(plan["electron"] as? String ?? "") (darwin-arm64)\n\nPATCHES\n"
         for p in plan["patches"] as? [[String: Any]] ?? [] {
@@ -1045,6 +1193,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
         var args = ["build", "--source", picked?["path"] as? String ?? "",
                     "--out", outputPath]
         if allowIntelHost { args.append("--allow-intel-host") }
+        if acceptPrinterLoss { args.append("--accept-printer-loss") }
         agent.stream(args) { [weak self] ev in self?.handle(ev) }
     }
 
@@ -1171,6 +1320,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
     /// "nothing was installed" is simply false, and sends them to support over
     /// an app they could be using.
     private func showFailed(_ ev: [String: Any]) {
+        let stage = ev["stage"] as? String ?? ""
+        if stage == "in_use" || stage == "printers_lost" {
+            showNotReplaced(ev)
+            return
+        }
         let message = ev["error"] as? String ?? ""
         let madeIt = (ev["output_exists"] as? Bool ?? false)
                      && (ev["stage"] as? String ?? "") == "verify"
@@ -1243,6 +1397,55 @@ final class Wizard: NSObject, NSApplicationDelegate {
                         UI.button("Send a report", self, #selector(sendReport), primary: true)]
         }
         present(rows, buttons: buttons)
+    }
+
+    /// The backend refused because of the copy it would replace: it is open, or
+    /// it supports printers the new copy won't and nobody ticked the box. Review
+    /// checks both first, so this is what happens when things change after that
+    /// screen was drawn. Not the red failure screen, and no report offer:
+    /// nothing went wrong, and the person can put it right themselves.
+    ///
+    /// `during_build` (1.5.8) is the copy being opened during the build rather
+    /// than before it: build.py checks again in its last step, just before it
+    /// would delete the old bundle. Then the download did happen and the new
+    /// copy was built and discarded, so this screen must not say otherwise.
+    private func showNotReplaced(_ ev: [String: Any]) {
+        let out = ev["output"] as? String ?? outputPath
+        let name = (out as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+        lastError = ev["error"] as? String ?? ""
+        let open = (ev["stage"] as? String ?? "") == "in_use"
+        let duringBuild = ev["during_build"] as? Bool ?? false
+        outcome = open ? "the build did not start: the copy it would replace is open"
+                       : "the build did not start: replacing the copy would lose printers"
+        if open && duringBuild { outcome = "the copy it would replace was open, so it was left alone" }
+        let lost = ev["printers_lost"] as? [String] ?? []
+
+        let rows: [NSView] = [
+            UI.title(open ? "Quit \(name) first" : "Check the printers first"),
+            UI.body(open
+                    ? "\(name) is open, so ClickGraft hasn't replaced it. "
+                    + (duringBuild
+                       ? "It was opened while the new copy was being made, so that new copy "
+                       + "was thrown away rather than put in its place. Nothing here changed."
+                       : "Nothing has been downloaded or changed.")
+                    : "The copy that is already here supports the " + printerList(lost)
+                    + ", and the new one won't. ClickGraft hasn't replaced it. Nothing has "
+                    + "been downloaded or changed."),
+            UI.panel([
+                open
+                    ? UI.point("Quit \(name), then press Try again.",
+                               "ClickGraft won't quit it for you, in case it's in the middle "
+                               + "of a print.")
+                    : UI.point("Go back to see what would change.",
+                               "If you don't print to any of them, you can tick the box there "
+                               + "and replace it anyway."),
+                UI.point("Your original HP Click was not changed.", ""),
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.12)),
+        ]
+        present(rows, buttons: open
+                ? [UI.button("Back", self, #selector(showReview)), UI.spacer(),
+                   UI.button("Try again", self, #selector(startBuild), primary: true)]
+                : [UI.spacer(), UI.button("Back", self, #selector(showReview), primary: true)])
     }
 
     // MARK: - Reporting a problem

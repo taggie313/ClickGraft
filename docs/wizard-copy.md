@@ -279,12 +279,69 @@ a reason answers the question before it's asked.
 > Nothing has been changed yet. Nothing will be, until you press the button
 > below.
 
+**Printer warning** *(1.5.8)* — orange, first on the screen, above everything
+below. Shown only when the copy already at the output path supports printers the
+new copy won't:
+
+> **This replaces your copy made from HP Click 4.8.117. The new copy won't support
+> the DesignJet T310 24-in, T320 24-in, T350 24-in, T720 24-in, T720 36-in, T750
+> 24-in and T750 36-in.** HP Click 4.8.118, the one you chose, doesn't list them.
+>
+> If you print to one of those, keep the copy you have: press Back.
+>
+> Or make the new copy from HP Click 4.8.117 instead, which still supports them.
+>
+> `Where to get 4.8.117`
+>
+> ☐ Replace it anyway. I don't print to any of these.
+
+`Create the copy` stays off until the box is ticked, and the tick is passed to the
+backend, which refuses to replace without it. The "Or make…" line and its button
+appear only when the old copy's version is one ClickGraft supports and differs
+from the new one.
+
+Why it exists: the copy's name is fixed, so every build replaces the one before
+it, and this screen said only "Replacing". 4.8.118 reached people as a background
+update of 4.8.117 and dropped the T310/T320/T350/T720/T750, so a T-series owner
+making a new copy of "the HP Click I have", as anyone who wants 1.5.8's fixes
+must, could swap a copy that prints to their plotter for one that can't. The
+version comes from the old copy's Info.plist, where ClickGraft changes the bundle
+identifier but never the version; the printers come from both apps' own
+printersValidate.json, not from version numbers. If either list can't be read,
+nothing is said about printers either way.
+
+**Copy is open** *(1.5.8)* — orange, and `Create the copy` stays off:
+
+> **HP Click (Apple Silicon) is open.** Quit it before you create the new copy.
+> ClickGraft won't replace an app while it's running, and it won't quit it for
+> you, in case it's in the middle of a print.
+>
+> `Check again`
+
 **Section — Where things go:**
 
 > **Reading from** /Applications/HP Click.app — opened for reading only, not changed
 >
 > **Creating** /Applications/HP Click (Apple Silicon).app — a new app; nothing is
 > overwritten
+
+When a copy is already there, **Replacing** instead of **Creating**, with one of
+*(1.5.8)*:
+
+> This replaces your copy made from HP Click 4.8.117 with one made from HP Click
+> 4.8.118. Your original HP Click is still untouched.
+>
+> This replaces your copy made from HP Click 4.8.117 with a new one made from the
+> same version. Your original HP Click is still untouched.
+
+and, when its version can't be read or it isn't a ClickGraft copy, the older
+wording:
+
+> A copy is already here from a previous run. It will be replaced. Your original
+> HP Click is still untouched.
+>
+> An app with this name is already here. It will be replaced. Your original HP
+> Click is still untouched.
 
 **Section — The main change:**
 
@@ -293,22 +350,58 @@ a reason answers the question before it's asked.
 > published fingerprint, and puts it in the copy. HP's own files — layout, colour,
 > the print engine, your settings — are carried across untouched.
 
-**Section — Four small fixes to the copy:**
+**Section — Small fixes to the copy:**
 
-Each as *plain sentence first, filename second*:
+Each as *plain sentence first, filename second*. Since 1.5.8 a point is shown only
+when the manifest for the chosen version patches its file (`fixes` in the plan,
+from `FIX_FOR_PATH` in `clickgraft/agent.py`), so the list is four points for
+4.8.117 and 4.8.118 and three for 4.10.42. No count is shown: five patches make
+four points on 4.8.x, because two files carry one repair.
 
-> **Stops HP's updater replacing your new app with the Intel version.** Without
-> this, HP's automatic update would quietly undo the whole thing.
+> **Stops HP's updater downloading its Intel version over your new app.** HP
+> Click asks HP for an update each time it starts. Left alone it can download HP's
+> Intel build — around 570 MB — and keep offering to restart and install it.
+> ClickGraft stops it asking, and replaces the installer that would do the
+> replacing. *(reworded in 1.5.8)*
 > `app/node/main/app-updater.js`
 >
 > **Stops crash reports being sent unencrypted.** HP's build uploads them over an
 > unencrypted connection. This turns that off.
-> `package.json`
+> `app/package.json` *(1.5.8; before that the root `package.json`, whose copy of
+> the setting HP's crash reporter never reads)*
+>
+> **Stops HP Click writing printer passwords into its log.** If you type SNMPv3
+> printer passwords and press Return, HP Click 4.8 and 4.10 write them into its
+> log. HP stopped this in 4.11.31; the copy makes the same change. *(1.5.8)*
+> `app/bundle.js`
 >
 > **Fixes a bug in HP's code.** Two of HP's files have a mistake that makes the
 > app report an error every time it starts — on Intel Macs too. ClickGraft
-> repairs it.
+> repairs it. *(4.8.117 and 4.8.118 only, from 1.5.8)*
 > `app/shared/constants.js`, `app/shared/industries.js`
+
+Why they changed in 1.5.8:
+
+- **Crash reports.** The sentence was not true until 1.5.8. HP's crash reporter
+  reads `app/package.json` (`app/main.js` require()s it), and every earlier
+  release turned the setting off in the root `package.json`, whose copy of the
+  setting nothing reads — Electron reads that file for `main` and the version,
+  not for this — so every copy made before 1.5.8 went on trying to send crash
+  reports. The wording stays; the fix now matches it, and the build checks the
+  value.
+- **The updater.** The old sentence said the update would "quietly undo the whole
+  thing". By the evidence it would more likely fail: Squirrel checks the update
+  against the running app's own signature, the copy's is ad-hoc, and ClickGraft
+  replaces HP's ShipIt with a stub in every copy anyway. What the lock certainly
+  stops is the download and the restart bar, and neither is quiet.
+- **Printer passwords.** HP's own 4.11.31 line, copied exactly. The sentence says
+  "press Return" because that is the only time HP Click writes it: it doesn't
+  happen just by setting up an SNMPv3 printer. It isn't a promise that the
+  passwords are private anywhere else: lines already in the log stay there.
+- **HP's bug.** 4.10.42's `index.html` never loads `shared/constants.js` as a
+  script, so the error the point describes can't happen there, and 1.5.8 stopped
+  patching those two files for 4.10.42. Up to 1.5.7 the point was shown for every
+  version.
 
 **Section — Support files added:**
 
@@ -320,7 +413,8 @@ Each as *plain sentence first, filename second*:
 download URLs and SHA-256s. Unchanged from what's there now — someone who opens
 this wants precision, not prose.
 
-**Controls:** `Back` · `Create the copy`
+**Controls:** `Back` · `Create the copy` (off while the copy being replaced is
+open, and until the printer box is ticked when there is one *(1.5.8)*)
 
 **Note:** the button says what it does. Not "Start", not "Build" — "Create the
 copy" repeats the central reassurance at the exact moment of commitment.
@@ -423,6 +517,45 @@ It gets a heading, not a footnote.
 >
 > It may have been updated, or already modified. ClickGraft won't guess — making
 > changes in the wrong place could damage the app.
+
+**The build refused to replace the copy** *(1.5.8)* — orange, not red, and no
+report offer: nothing went wrong and the person can put it right. Review checks
+both of these first, so this only appears when things changed after Review was
+drawn.
+
+> **Quit HP Click (Apple Silicon) first**
+>
+> HP Click (Apple Silicon) is open, so ClickGraft hasn't replaced it. Nothing has
+> been downloaded or changed.
+>
+> **Quit HP Click (Apple Silicon), then press Try again.** ClickGraft won't quit
+> it for you, in case it's in the middle of a print.
+>
+> **Your original HP Click was not changed.**
+>
+> `Back` · `Try again`
+
+The copy can also be opened *during* the build, which takes about a minute — the
+new copy is in the output folder only at the very end. `build.py` checks again in
+its last step, immediately before it would delete the old bundle, and stops
+instead; the copy it built is thrown away. The same screen appears, with the
+second sentence replaced, because by then the download did happen:
+
+> It was opened while the new copy was being made, so that new copy was thrown
+> away rather than put in its place. Nothing here changed.
+
+> **Check the printers first**
+>
+> The copy that is already here supports the DesignJet T310 24-in, … and T750
+> 36-in, and the new one won't. ClickGraft hasn't replaced it. Nothing has been
+> downloaded or changed.
+>
+> **Go back to see what would change.** If you don't print to any of them, you
+> can tick the box there and replace it anyway.
+>
+> **Your original HP Click was not changed.**
+>
+> `Back`
 
 **Note:** every error screen states that the original is untouched. That is the
 first thing a worried user wants to know, and it costs one line.

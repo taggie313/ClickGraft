@@ -14,6 +14,9 @@ So the evidence is read from the app itself rather than inferred from a version
 number. Nothing is flagged without positive proof: a missing or unreadable file
 means "don't know", and "don't know" keeps the old panel, because wrongly telling
 someone their version is hopeless would be worse than the dead end this replaces.
+
+The printer-list helpers also answer one question on Review: what a new copy
+would lose against the copy it replaces (printers_lost_by_replacing).
 Target: Python 3.9+ (Standard Library only)
 """
 
@@ -148,3 +151,35 @@ def printers_lost_by_moving(app):
         except (OSError, ValueError, KeyError, TypeError, StopIteration):
             return None
     return None
+
+
+def _listed(app):
+    """The printer names this bundle accepts, or None if its list can't be read."""
+    for path in _printer_lists(app):
+        try:
+            return _names(path)
+        except (OSError, ValueError, KeyError, TypeError, StopIteration):
+            return None
+    return None
+
+
+def printers_lost_by_replacing(existing, source):
+    """Printers the copy at `existing` accepts that a copy made from `source`
+    would not, sorted.
+
+    The copy's name is fixed, so every build replaces the one made before it.
+    4.8.118 reached people as a background auto-update of 4.8.117, and it
+    dropped the T310/T320/T350/T720/T750: someone whose stock app was updated
+    that way would rebuild from 4.8.118 and replace a copy that prints to their
+    plotter with one that can't, and Review only said "Replacing".
+
+    Both lists are read from the bundles themselves -- a copy keeps HP's
+    printersValidate.json byte for byte -- rather than from a version number.
+    [] means nothing is lost. None means either list could not be read, and no
+    claim is made either way.
+    """
+    have = _listed(existing)
+    new = _listed(source)
+    if have is None or new is None:
+        return None
+    return sorted(have - new)

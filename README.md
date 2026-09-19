@@ -155,12 +155,16 @@ Open an issue with that report attached and the version can be added.
 2. Download `electron-vX-darwin-arm64.zip` from the official Electron releases
    and verify it against that release's published `SHASUMS256.txt`.
 3. Replace the Electron framework, the four helper executables, and the main
-   binary. HP's `Info.plist` files, icons, localizations, and native modules are
-   left alone.
+   binary. HP's icons, localizations and native modules are left alone; its
+   `Info.plist` files keep HP's version and change only the bundle identifier
+   (step 6) and the archive's integrity hash (step 5).
 4. Add the arm64 libraries HP's own arm64 slices need but never shipped —
    see below. Fetched from Homebrew's CDN and SHA-256 verified.
-5. Apply four archive patches from the version manifest, each asserting its
-   anchor appears **exactly once**.
+5. Apply the version manifest's archive patches: the updater lock, crash-report
+   upload turned off in `app/package.json` (the file HP's crash reporter reads),
+   HP's own 4.11.31 change to a log line that recorded SNMPv3 printer passwords,
+   and, on 4.8.117 and 4.8.118, the `SyntaxError` fix below. Each text
+   replacement asserts its anchor appears **exactly once**.
 6. Give the copy its own bundle identifier so macOS keeps the two apps distinct.
 7. Ad-hoc sign inner-to-outer, then rename into place.
 
@@ -180,10 +184,12 @@ references, which is why the Intel build has never shown it. These resolve at
 path. ClickGraft bundles and preloads those libraries. Strong evidence HP's
 arm64 binaries have never actually been run.
 
-ClickGraft also fixes a genuine HP bug that exists on Intel too: three shared
-files ship as ES modules while `index.html` loads one as a classic script, so
-the stock app throws `Uncaught SyntaxError: Unexpected token 'export'` in its
-renderer on every launch. The patched build logs zero.
+In 4.8.117 and 4.8.118, ClickGraft also fixes a genuine HP bug that exists on
+Intel too: three shared files ship as ES modules while `index.html` loads one as
+a classic script, so the stock app throws `Uncaught SyntaxError: Unexpected
+token 'export'` in its renderer on every launch. The patched build logs zero.
+4.10.42's `index.html` no longer loads that file, so there is nothing to fix
+there and ClickGraft leaves it alone.
 
 ---
 
@@ -219,10 +225,11 @@ The most valuable contributions are **manifests for new versions** (run `probe`
 and attach the report) and **real-hardware print testing**, which is the biggest
 gap in what has been verified.
 
-ClickGraft's scope is deliberately narrow: making the app run natively, plus
-repairing what the repack would otherwise leave broken. Changes to what the
-application is *permitted* to do are out of scope, for reasons set out in
-CONTRIBUTING.
+ClickGraft's scope is deliberately narrow: making the app run natively,
+repairing what the repack would otherwise leave broken, and a short third list —
+keeping a claim ClickGraft makes true, or copying a fix HP itself shipped later.
+Changes to what the application is *permitted* to do are out of scope, for
+reasons set out in CONTRIBUTING.
 
 ```bash
 python3 -m pytest tests/ -q
