@@ -10,10 +10,10 @@
     "  recommended  worth having. The default, and what an unknown value falls",
     "               back to.",
     "  important    fixes something that stops the tool working. Never use this",
-    "               for anything less — it is the only word left that means it.",
+    "               for anything less \u2014 it is the only word left that means it.",
     "",
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "recommended",
-  "summary": "HP Click 4.11.31 runs natively on Apple Silicon, so it needs no copy: ClickGraft now recognises it and says so, instead of calling it an unknown version, and notes that the DesignJet T310, T320, T350, T720 and T750 still need 4.8.117."
+  "summary": "Copies now really stop HP Click sending crash reports unencrypted -- copies made by earlier versions still tried to, so make a new one -- and stop HP Click 4.8 and 4.10 writing SNMPv3 printer passwords into its log, using the change HP made in 4.11.31. Review now names the version it is replacing and warns before a new copy would lose printers."
 }
