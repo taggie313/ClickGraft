@@ -16,13 +16,55 @@ printed and whether it came out right is worth more than it sounds; the app's
 
 ClickGraft does one thing: **it makes HP Click run natively on Apple Silicon
 instead of under Rosetta.** Everything in the repo exists to serve that, and the
-patches it applies fall into exactly two categories:
+patches it applies fall into three categories, the third deliberately narrow:
 
 - **Making the arm64 build work** — swapping the Electron runtime, supplying the
   libraries HP's own arm64 slices reference but never ship.
 - **Repairing what the repack would otherwise break or leave broken** — stopping
-  the updater replacing our build with HP's Intel one, and fixing a genuine HP
-  bug that throws a `SyntaxError` in the renderer on every launch, on Intel too.
+  the updater replacing our build with HP's Intel one, and, in 4.8.117 and
+  4.8.118, fixing a genuine HP bug that throws a `SyntaxError` in the renderer on
+  every launch, on Intel too.
+- **Keeping a published claim true, or back-porting HP's own later fix** —
+  turning off crash-report upload in `app/package.json`, which ClickGraft's
+  review screen says it does, and replacing the line that writes SNMPv3 printer
+  passwords into HP Click's log with the line HP itself shipped in 4.11.31.
+
+### What a new patch has to meet
+
+A patch to HP's files is admitted only if it does one of these:
+
+- **(a)** repairs something the repack breaks, or an error that makes
+  ClickGraft's own check of the copy fail — the updater lock, and the `SyntaxError`
+  fix, which is on `verify.py`'s list of smoke-launch failure signatures, so
+  without it a 4.8.x copy cannot pass. That is the whole of (a) today: an HP bug
+  ClickGraft's check does not trip over is not admitted by it;
+- **(b)** makes true a claim ClickGraft already publishes — the crash-report fix,
+  which until 1.5.8 pointed at the root `package.json`, whose copy of the setting
+  HP's crash reporter never reads, so the claim on the review screen was false for
+  every copy made before then;
+- **(c)** back-ports, verbatim, a change HP itself shipped in a later build — the
+  SNMPv3 log line, which is HP's 4.11.31 text, copied exactly.
+
+**And** it touches nothing HP verifies. Today that means no file inside
+`app.asar` appears in any version's `ThirdPartyWhitelist.xml`: 4.8.117, 4.8.118
+and 4.10.42 list 22 paths and 4.11.31 lists 36, all of them on disk outside the
+archive (checked 19 Sep 2026). A patch to a file HP lists there is declined,
+whatever it fixes.
+
+An obvious fix to an HP bug that meets none of (a), (b) or (c) is declined too,
+however clear the right answer. Each one is another reason for HP to look at
+this project, and the argument below only holds while this list stays short.
+
+The rule is enforced, not only written down. `clickgraft/manifest_guard.py`
+holds every op the shipped manifests may contain, verbatim, as `ALLOWED_OPS`.
+ClickGraft runs it on every manifest it builds with, however the manifest was
+loaded, and `packaging/build_app.sh` runs it before `manifests/` is copied into
+the app, so an op that isn't on the list stops the release build. Adding a patch
+therefore means adding it to `ALLOWED_OPS`, in a change someone can check against
+this rule. (The guard can also load a list of signatures to refuse outright, from
+a file named by `$CLICKGRAFT_NEVER_DISTRIBUTE`. That list is kept outside the
+repository: writing it down here would publish the very thing it exists to keep
+unpublished, and the allowlist already refuses anything not on it.)
 
 **Out of scope: anything that changes what the application is permitted to do.**
 Consumables checks, licensing, trial periods, feature gates, enterprise

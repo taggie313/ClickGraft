@@ -1,6 +1,8 @@
 """
 clickgraft.patches — Uniform patch engine supporting replace, append, and json_set.
-Enforces the anchor contract (exactly-once) and strict json_set path validation.
+Enforces the anchor contract (exactly-once), strict json_set path validation,
+and one manifest entry per file. That every path is actually reached is
+patch_and_repack_asar's job; which ops may exist at all is manifest_guard's.
 """
 
 import json
@@ -12,7 +14,7 @@ class PatchEngine:
         manifest_patches is a list of patch dicts from the manifest:
         [
           {
-            "path": "package.json",
+            "path": "app/package.json",
             "why": "...",
             "ops": [ { "type": "json_set", "path": "hp_configs.crashAutoSubmit", "value": false } ]
           }, ...
@@ -20,6 +22,15 @@ class PatchEngine:
         """
         self.patches_by_path = {}
         for p in manifest_patches:
+            # One entry per file. A second entry for the same path used to
+            # replace the first one's ops without a word, so whichever came
+            # first in the manifest simply never ran.
+            if p["path"] in self.patches_by_path:
+                raise ValueError(
+                    f"Manifest error: '{p['path']}' is listed in patches more than once. "
+                    f"Only one entry per file can apply, so the others would be silently "
+                    f"dropped; put every op for that file in a single entry."
+                )
             self.patches_by_path[p["path"]] = p.get("ops", [])
 
     def get_patched_paths(self):

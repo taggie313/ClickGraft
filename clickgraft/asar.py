@@ -77,6 +77,7 @@ def patch_and_repack_asar(source_asar_path, target_asar_path, patch_engine, mani
     Rebuilds ASAR without extracting files to disk.
     Applies manifest patch operations via patch_engine.
     Enforces all post-conditions:
+    - every manifest patch path is a packed entry and was patched
     - packed & unpacked entry counts match manifest
     - path-set equality and per-path unpacked-flag stability
     - unpatched entries are byte-identical to source
@@ -102,6 +103,7 @@ def patch_and_repack_asar(source_asar_path, target_asar_path, patch_engine, mani
     current_offset = 0
 
     patched_paths = set(patch_engine.get_patched_paths())
+    applied_paths = set()
     unpatched_byte_checks = []
 
     def _process_node(rel_path, node):
@@ -112,7 +114,8 @@ def patch_and_repack_asar(source_asar_path, target_asar_path, patch_engine, mani
                 _process_node(child_path, child)
         elif isinstance(node, dict):
             if node.get("unpacked") is True:
-                # Unpacked entry: no offset, contributes no bytes to content blob
+                # Unpacked entry: no offset, contributes no bytes to content blob.
+                # A patch listed for one is caught below, not applied here.
                 return
 
             orig_content = archive.read_file_content(node)
@@ -120,6 +123,7 @@ def patch_and_repack_asar(source_asar_path, target_asar_path, patch_engine, mani
 
             if rel_path in patched_paths:
                 final_content = patch_engine.apply_patches_for_path(rel_path, orig_content)
+                applied_paths.add(rel_path)
             else:
                 unpatched_byte_checks.append((rel_path, orig_content, current_offset, len(orig_content)))
 
@@ -149,6 +153,30 @@ def patch_and_repack_asar(source_asar_path, target_asar_path, patch_engine, mani
             current_offset += len(final_content)
 
     _process_node("", new_header)
+
+    # Every manifest path must have been patched, before anything is written.
+    # A path that is not in the archive, or is stored unpacked (outside
+    # app.asar, where _process_node returns before patching), used to be a
+    # silent no-op: the build succeeded and the copy simply lacked the fix.
+    # This would not have caught the root package.json crash op, which pointed
+    # at a real file whose copy of the key nothing reads; verify.py checks
+    # outcomes.
+    unapplied = patched_paths - applied_paths
+    if unapplied:
+        source_file_nodes = archive.get_all_file_nodes()
+        reasons = []
+        for rel_path in sorted(unapplied):
+            src_node = source_file_nodes.get(rel_path)
+            if src_node is None:
+                reasons.append(f"'{rel_path}' is not a file in this app.asar")
+            elif src_node.get("unpacked") is True:
+                reasons.append(f"'{rel_path}' is stored unpacked, under app.asar.unpacked/, "
+                               f"which the build copies from the source unchanged")
+            else:
+                reasons.append(f"'{rel_path}' was never reached")
+        raise ValueError("Patch error: the manifest patches files this build cannot patch, "
+                         "so their fixes would be missing from the copy:\n  - "
+                         + "\n  - ".join(reasons))
 
     # Compact header JSON
     header_json_bytes = json.dumps(new_header, separators=(",", ":")).encode("utf-8")

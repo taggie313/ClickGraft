@@ -12,6 +12,26 @@ BUNDLE_ID="${CLICKGRAFT_BUNDLE_ID:-io.github.taggie313.clickgraft}"
 
 echo "==> Building ClickGraft.app  (version $VERSION)"
 
+# --- patch guard -----------------------------------------------------------
+# Nothing else on the release path runs a test, so this is where a manifest op
+# that is not on clickgraft/manifest_guard.py's allowlist stops the build:
+# before anything is compiled, and before manifests/ is copied into the app
+# (CLAUDE.md "Never distribute"). Export CLICKGRAFT_NEVER_DISTRIBUTE, naming a
+# signature file kept outside this repository, and ops matching it are refused
+# as well; the step says how many signatures it loaded.
+#
+# /usr/bin/python3 is Apple's stub, which refuses to run while an updated Xcode
+# waits for its licence (Xcode 27.0, 15 Sep 2026). The Command Line Tools have
+# no licence gate, so fall back to them, as ClickGraft.swift's Toolchain does.
+echo "--> checking manifests against the patch guard"
+GUARD_PY=(/usr/bin/python3)
+if ! /usr/bin/python3 -c '' >/dev/null 2>&1 \
+   && [ -x /Library/Developer/CommandLineTools/usr/bin/python3 ]; then
+  GUARD_PY=(env DEVELOPER_DIR=/Library/Developer/CommandLineTools /usr/bin/python3)
+fi
+( cd "$ROOT" && PYTHONDONTWRITEBYTECODE=1 \
+    "${GUARD_PY[@]}" -m clickgraft.manifest_guard manifests )
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
