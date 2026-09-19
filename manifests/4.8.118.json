@@ -11,7 +11,7 @@
   "patches": [
     {
       "path": "app/package.json",
-      "why": "HP's crash reporter reads app/package.json: app/main.js does const packagejson=require(\"./package.json\") and passes packagejson.hp_configs.crashAutoSubmit to crashReporter.start as uploadToServer. Left true, crash dumps upload in plaintext to http://15.23.17.24:9100/upload_crash, which accepts connections (nc -z, 19 Sep 2026). Every ClickGraft release before 1.5.8 set this key on the ROOT package.json, which nothing reads, so every copy they built still had auto-submit on -- found 19 Sep 2026: copies had root false and app/package.json true, and a 4.8.117 copy logged 'auto-submit: true'. verify.py now checks the built value.",
+      "why": "HP's crash reporter reads app/package.json: app/main.js does const packagejson=require(\"./package.json\") and passes packagejson.hp_configs.crashAutoSubmit to crashReporter.start as uploadToServer. Left true, every crash dump is sent in plaintext to http://15.23.17.24:9100/upload_crash, or to whatever on the network answers for that address; whether HP's own server accepts connections is unconfirmed -- it did not answer from here on 20 Sep 2026, and on this network neither did addresses that route nowhere, so a connect test from here proves nothing either way. Every ClickGraft release before 1.5.8 set this key on the ROOT package.json, whose copy of it HP's crash reporter never reads (Electron reads that file for its 'main' entry and the version it reports, and nothing else does), so every copy they built went on trying to upload -- found 19 Sep 2026: copies had root false and app/package.json true, a 4.8.117 copy logged 'auto-submit: true', and both its Crashpad dumps were marked upload_count: 1, uploaded: 0, which is an attempt each and not a confirmed upload. verify.py now checks the built value.",
       "ops": [
         {
           "type": "json_set",
@@ -22,7 +22,7 @@
     },
     {
       "path": "app/node/main/app-updater.js",
-      "why": "Squirrel would otherwise fetch HP's feed and download whatever it names. Squirrel.Mac's JSON-file mode does version-compare (it skips an equal or older release -- stock 4.10.42 and 4.11.31 log updates-not-available against a feed naming 4.8.118), but a 4.8.117 copy is still offered 4.8.118, and a later feed would offer anything newer: a ~570 MB download on launch and a 'restart to update' bar. The install itself would probably be refused, because the copy's ad-hoc signature is not HP's (inferred), and stock HP's ShipIt dies on a missing Mantle.framework anyway -- but this early return stops the download and the bar. Reached via main.js -> app-starter.js -> require('./app-updater').",
+      "why": "Squirrel would otherwise download any newer release HP's feed names (its JSON-file mode version-compares, so it skips an equal or older one). Stock 4.10.42 and 4.11.31 log updates-not-available against today's feed, which names 4.8.118, but a 4.8.117 copy is offered that, and a later feed would offer anything newer: a ~570 MB download and a 'restart to update' bar. The install itself would probably be refused, because the copy's ad-hoc signature is not HP's (inferred), and stock HP's ShipIt dies on a missing Mantle.framework anyway -- but this early return stops the download and the bar. Reached via main.js -> app-starter.js -> require('./app-updater').",
       "ops": [
         {
           "type": "replace",

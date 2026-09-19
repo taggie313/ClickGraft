@@ -83,7 +83,8 @@ def probe_app_bundle(source_app_path):
     patches = []
     # app/package.json, not the root one: app/main.js require()s its own
     # package.json for the crash reporter. Until 1.5.8 this drafted the root
-    # file, which nothing reads, and every copy kept auto-submitting.
+    # file, whose copy of the key nothing reads (Electron reads that file for
+    # "main" and the version), and every copy kept auto-submitting.
     patches.append({
         "path": "app/package.json",
         "why": "hp_configs.crashAutoSubmit stays true otherwise; app/main.js reads it from app/package.json",
