@@ -14,6 +14,46 @@ from clickgraft.deps import fetch_electron, fetch_or_find_dylib
 from clickgraft.macho import run_cmd
 from clickgraft.patches import PatchEngine
 from clickgraft.signing import sign_bundle
+from clickgraft.verify import processes_inside
+
+
+class OutputInUseError(RuntimeError):
+    """The bundle at the output path is running, so it must not be deleted.
+
+    Carries .pids and .output so a caller can say which process to quit.
+    """
+
+    def __init__(self, message, output, pids):
+        super().__init__(message)
+        self.output = output
+        self.pids = list(pids)
+
+
+def _open_from(app_path):
+    """Pids running from inside app_path; [] for a path that cannot have any.
+
+    build.py's --out is any path the caller likes, and processes_inside refuses
+    anything that is not an .app rather than guess at a prefix that could match
+    half the Mac.
+    """
+    try:
+        return [pid for pid, _command in processes_inside(app_path)]
+    except ValueError:
+        return []
+
+
+def refuse_if_open(output_app_path):
+    """Raise OutputInUseError when anything is running from output_app_path.
+
+    Called immediately before the old bundle at that path is deleted, which is
+    the one moment a running copy matters.
+    """
+    open_pids = _open_from(output_app_path)
+    if open_pids:
+        raise OutputInUseError(
+            f"HP Click is open from {output_app_path} (process "
+            f"{', '.join(str(p) for p in open_pids)}). Quit it and build again; "
+            f"nothing has been replaced.", output_app_path, open_pids)
 
 
 def build_apple_silicon_bundle(
@@ -106,6 +146,11 @@ def build_apple_silicon_bundle(
         from clickgraft.manifest import ManifestManager
         mm = ManifestManager()
         mm.validate_manifest(manifest)
+
+    # Only allowlisted ops, however the manifest arrived, plus any local
+    # never-distribute signatures (clickgraft/manifest_guard.py).
+    from clickgraft.manifest_guard import check_manifest
+    check_manifest(manifest)
 
     # The source MUST be stock: patches are anchored to exact strings in
     # specific minified files. Validate here regardless of how the manifest
@@ -334,8 +379,11 @@ exec "$DIR/HPClickExe" "$@"
         #
         # HP ships Squirrel, whose ShipIt helper replaces the whole .app in
         # place. Pointed at a ClickGraft copy it would swap the arm64 build for
-        # HP's Intel one -- silently undoing the patch, and any local patches on
-        # top of it, without asking.
+        # HP's Intel one, and any local patches on top of it, once the person
+        # agreed to the restart HP's bar asks for. (It would probably fail
+        # first: the copy's ad-hoc signature is not HP's, which Squirrel checks
+        # before installing, and HP's own ShipIt dies on a missing
+        # Mantle.framework. Probably is not a lock.)
         #
         # The manifest already stubs app-updater.js so startup() returns before
         # the updater is configured, which means nothing should ever reach this
@@ -378,6 +426,14 @@ exec "$DIR/HPClickExe" "$@"
         # 11. Rename staging directory to final target output_app_path
         _log("Finalizing application bundle...", 0.98)
         if os.path.exists(output_app_path):
+            # Checked here, and not only in agent.py before the build: that
+            # check runs about a minute earlier, the wizard tells the owner to
+            # quit the copy on the screen before it, and nothing stops them
+            # opening it again while the build runs -- perhaps to print
+            # something. rmtree on a running bundle pulls its files out from
+            # under it. `clickgraft build` had no check at all. The staging copy
+            # goes in the finally block below, so nothing is left behind either.
+            refuse_if_open(output_app_path)
             shutil.rmtree(output_app_path)
         os.rename(staging_dir, output_app_path)
         _log(f"BUILD COMPLETED SUCCESSFULLY! Native arm64 app written to: {output_app_path}", 1.0)

@@ -118,7 +118,14 @@ class TestClickGraftAcceptanceSuite(unittest.TestCase):
             print("Test 2 PASSED: Two independent builds produced byte-identical ASAR files.")
 
     def test_3_corrupt_patch_anchor_hard_error(self):
-        """Test 3: Corrupt any patch anchor -> hard error naming the file, nothing written."""
+        """Test 3: Corrupt any patch anchor -> hard error naming the file, nothing written.
+
+        Since 1.5.8 the manifest guard refuses this manifest before the build
+        reads anything, so what this proves is the outer gate: an op nobody
+        allowlisted stops the build, with the file named and no output left
+        behind. PatchEngine's own anchor-count error is covered directly in
+        tests/test_patch_guards.py.
+        """
         print("\n--- Running Test 3: Corrupt Patch Anchor Hard Error ---")
         corrupted_manifest = json.loads(json.dumps(self.manifest))
 
@@ -248,7 +255,12 @@ class TestClickGraftAcceptanceSuite(unittest.TestCase):
         print(f"Test 9 PASSED: Probe output matched manifest electron_version ({draft['electron_version']}), entry counts, and dylib requirements.")
 
     def test_10_json_set_nonexistent_parent_hard_error(self):
-        """Test 10 (D1): json_set with a non-existent parent path -> hard error, no output written."""
+        """Test 10 (D1): json_set with a non-existent parent path -> hard error, no output written.
+
+        As with test 3, the manifest guard now refuses first, so this is the
+        outer gate rather than PatchEngine's json_set validation, which
+        tests/test_patch_guards.py covers directly.
+        """
         print("\n--- Running Test 10: json_set Non-Existent Parent Hard Error ---")
         corrupted_manifest = json.loads(json.dumps(self.manifest))
         corrupted_manifest["patches"].append({
@@ -443,18 +455,22 @@ class TestClickGraftCLI(unittest.TestCase):
         expected = [d["name"] for d in manifest.get("required_dylibs", []) if d.get("preload")]
         self.assertTrue(expected, "manifest declares no preloaded dylibs")
 
-        # Clear any prior instance first: both bundles share Electron's
-        # single-instance lock, so a survivor makes this launch exit(0)
-        # silently with no window and no error.
+        # A private profile instead of clearing other instances: HP Click's
+        # single-instance lock is per user-data dir, so the launch no longer
+        # depends on nothing else being open -- and since 1.5.8
+        # kill_hpclick_processes only ever stops processes inside the copy it
+        # is given, which is the point of the change.
         kill_hpclick_processes(self.built_app)
-        time.sleep(3)
+        run_tmp = tempfile.mkdtemp(prefix="cg-t17-", dir="/private/tmp")
 
         # Launch through the generated launcher, NOT by hand-building the env.
         # Constructing DYLD_INSERT_LIBRARIES here would test the manifest while
         # leaving the thing that actually ships -- the launcher script -- unchecked.
         # The launcher execs HPClickExe, so proc.pid stays valid across the exec.
         launcher = os.path.join(self.built_app, "Contents", "MacOS", "HP Click")
-        proc = subprocess.Popen([launcher], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen([launcher, f"--user-data-dir={run_tmp}/user-data"],
+                                env=dict(os.environ, TMPDIR=run_tmp + "/"),
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             # Inspect the process we launched directly -- pgrep on a path
             # containing regex metacharacters like "(Apple Silicon)" is a trap.
@@ -476,6 +492,7 @@ class TestClickGraftCLI(unittest.TestCase):
         finally:
             proc.kill()
             kill_hpclick_processes(self.built_app)
+            shutil.rmtree(run_tmp, ignore_errors=True)
         print("Test 17 PASSED: every preload:true dylib is present in the running process.")
 
 

@@ -21,11 +21,19 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
-LOGDIR = "/tmp/HP/HP Click/logs"
-RENDER_LOG = f"{LOGDIR}/HP Click.log"
-MAIN_LOG = f"{LOGDIR}/HP Click App.main.log"
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from clickgraft import verify
+
+# Each run gets its own TMPDIR and --user-data-dir, so HP's logs land inside it
+# rather than in the shared /tmp/HP folder both runs and any HP Click the owner
+# has open would otherwise share. That also removes the reason this script used
+# to sweep every HP Click process on the Mac: with a private profile there is no
+# single-instance lock to clear. Both A and B runs get the same treatment, so
+# they still stop at the same lifecycle stage.
+LOGDIR_REL = "HP/HP Click/logs"
 TERMINAL = "isPrintable - no printer or roll selected"
 CAP = 240.0
 LOG_QUIET = 12.0   # log silent this long == startup work finished
@@ -39,8 +47,9 @@ PHASES = [
 
 
 def pids(bundle):
-    out = subprocess.run(["pgrep", "-f", bundle], capture_output=True, text=True).stdout
-    return [int(x) for x in out.split()]
+    # pgrep -f on a path holding regex metacharacters -- "(Apple Silicon)" --
+    # is a trap, and matching by process NAME would catch the owner's HP Click.
+    return [pid for pid, _cmd in verify.processes_inside(bundle)]
 
 
 def sample(bundle):
@@ -63,21 +72,14 @@ def sample(bundle):
 
 
 def kill_all(bundle):
-    # Both builds share bundle id com.hp.hpclick, so they share Electron's
-    # single-instance lock: a surviving process from EITHER build makes the
-    # next launch hit requestSingleInstanceLock() == false and exit(0)
-    # silently. Sweep every HP Click process, not just this bundle's.
-    for pat in ("HPClickExe", "HP Click Helper", "JDFPrintProcessor",
-                "chrome_crashpad_handler", bundle):
-        subprocess.run(["pkill", "-f", pat], capture_output=True)
-    for _ in range(40):
-        if not (pids(bundle) or pids("HPClickExe")):
-            break
-        time.sleep(0.25)
-    else:
-        for pat in ("HPClickExe", bundle):
-            subprocess.run(["pkill", "-9", "-f", pat], capture_output=True)
-    time.sleep(3.0)   # let the single-instance lock actually release
+    """Stop this bundle's own processes and nothing else.
+
+    It used to pkill by name -- every HP Click on the Mac, and every Electron
+    or Chrome crash handler with it -- to clear the shared single-instance
+    lock. Private profiles removed that need (19 Sep 2026).
+    """
+    verify.kill_hpclick_processes(bundle)
+    time.sleep(1.0)
 
 
 def newest_ts(blob, wall0):
@@ -135,22 +137,23 @@ def read(path):
 
 def run_once(bundle, insert_libs, label):
     kill_all(bundle)
-    for f in (RENDER_LOG, MAIN_LOG):
-        try:
-            os.remove(f)
-        except OSError:
-            pass
+    run_tmp = tempfile.mkdtemp(prefix="cg-perf-", dir="/private/tmp")
+    logdir = os.path.join(run_tmp, LOGDIR_REL)
+    render_log = os.path.join(logdir, "HP Click.log")
+    main_log = os.path.join(logdir, "HP Click App.main.log")
 
     res = f"{bundle}/Contents/Resources/app/appData/macx"
     env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": os.path.expanduser("~"),
            "DYLD_FRAMEWORK_PATH": f"{res}/Frameworks",
-           "DYLD_LIBRARY_PATH": f"{res}/lib"}
+           "DYLD_LIBRARY_PATH": f"{res}/lib",
+           "TMPDIR": run_tmp + "/"}
     if insert_libs:
         env["DYLD_INSERT_LIBRARIES"] = (
             f"{res}/lib/libunistring.5.dylib:{res}/lib/libidn2.0.dylib")
 
     t0, wall0 = time.monotonic(), time.time()
-    proc = subprocess.Popen([f"{bundle}/Contents/MacOS/HPClickExe"], env=env,
+    proc = subprocess.Popen([f"{bundle}/Contents/MacOS/HPClickExe",
+                             f"--user-data-dir={run_tmp}/user-data"], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     marks, peak_rss = {}, 0.0
@@ -158,7 +161,7 @@ def run_once(bundle, insert_libs, label):
     last_change = time.monotonic()
     prev_len = -1
     while time.monotonic() - t0 < CAP:
-        blob = read(RENDER_LOG)
+        blob = read(render_log)
         if len(blob) != prev_len:
             prev_len = len(blob)
             last_change = time.monotonic()
@@ -176,13 +179,14 @@ def run_once(bundle, insert_libs, label):
 
     total = time.monotonic() - t0
     cpu, _ = sample(bundle)
-    marks = parse_marks(read(RENDER_LOG), wall0)
-    updated = "update-downloaded" in read(MAIN_LOG)
+    marks = parse_marks(read(render_log), wall0)
+    updated = "update-downloaded" in read(main_log)
     kill_all(bundle)
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+    shutil.rmtree(run_tmp, ignore_errors=True)
 
     r = {"marks": marks, "cpu_s": cpu, "rss_mb": peak_rss, "quiet_at": last_line_at,
          "total_s": total, "reached": last_line_at is not None,
