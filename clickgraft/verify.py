@@ -362,14 +362,55 @@ def _first_line_with(text, needle, limit=240):
     return ""
 
 
+def private_profile(smoke_dir):
+    """Build a throwaway HOME for one smoke launch and return it.
+
+    --user-data-dir redirects app.getPath("userData"), NOT app.getPath("appData"),
+    and HP Click keeps its own configuration under appData:
+    ~/Library/Application Support/hpclick holds userpref.json (bundle.js
+    getUserId reads customerId from it), printers.json, presets.json, tour.json
+    and guidedTour.json. So until 20 Sep 2026 every smoke launch, and therefore
+    every `clickgraft verify`, read and wrote the owner's real HP Click
+    settings: their five files' mtimes moved on each run, the launch ran under
+    the owner's customerId, and printer-service was seen logging "printer <ip>
+    has no family, not adding it and removing settings" followed by
+    "saveChanges - saving changes to printers.json file" when the configured
+    printer was unreachable -- a verification run rewriting the owner's printer
+    configuration.
+
+    Overriding HOME fixes it, and costs nothing: everything the copy needs is
+    addressed absolutely (the bundle's own Resources, DYLD_FRAMEWORK_PATH,
+    DYLD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES), and the launch's logs already
+    live under its own TMPDIR. Measured 20 Sep 2026 on a 4.10.42 copy: the
+    launch created <smoke>/home/Library/Application Support/hpclick with a
+    customerId of its own, reached the milestone, and the owner's five files
+    were untouched to the byte.
+
+    userpref.json is seeded with cipParticipation false so that a copy whose
+    reporting has not been patched does not send a Google Analytics event just
+    because someone verified it. HP merges the rest of its defaults over this.
+    Measured the same day on an unpatched 4.8.117 copy, twice, changing only
+    this value: with true, "Google Analytics started DJCORE NATIVE, with
+    tracking id: ... and user id: ..." and its DJCONN twin; with false, neither
+    line, and the milestone still reached both times.
+    """
+    home = os.path.join(smoke_dir, "home")
+    prefs = os.path.join(home, "Library", "Application Support", "hpclick")
+    os.makedirs(prefs, exist_ok=True)
+    with open(os.path.join(prefs, "userpref.json"), "w", encoding="utf-8") as f:
+        json.dump({"cipParticipation": False}, f)
+    return home
+
+
 def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=0.5):
     """Start the built copy once, privately, and watch it initialise.
 
     Returns {"ok": bool, "message": str, "cleanup": str or None}. It does not
     raise for a failed launch, so the caller can re-seal the bundle first.
 
-    Private means three things, and each one fixes something the old launch
-    did to a Mac where HP Click was already open:
+    Private means four things. The first three fix what the old launch did to
+    a Mac where HP Click was already open; the fourth fixes what every launch
+    did to the owner's settings, open or not:
 
     - Its own --user-data-dir. app/main.js calls requestSingleInstanceLock()
       before anything else and exits if another HP Click holds it, and the
@@ -394,6 +435,11 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
       this launch's own folder name, or that descend from the process it
       started (launched_processes). Anything else inside the copy is the
       owner's, whether it was running before the launch or opened during it.
+    - Its own HOME, and so its own HP Click settings. --user-data-dir does
+      not cover them: HP Click keeps userpref.json, printers.json,
+      presets.json, tour.json and guidedTour.json under appData, which is
+      derived from HOME. See private_profile() for what that cost until
+      20 Sep 2026 and what was measured.
 
     The copy's stdout and stderr are captured too. They carry the same
     DJRIP/JAVASCRIPT_DJCS lines as "HP Click.log", plus anything dyld prints
@@ -421,6 +467,7 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
     env["DYLD_FRAMEWORK_PATH"] = fw_dir
     env["DYLD_LIBRARY_PATH"] = lib_dir
     env["TMPDIR"] = smoke_dir + "/"
+    env["HOME"] = private_profile(smoke_dir)
 
     preload_dylibs = []
     for dinfo in manifest.get("required_dylibs", []):

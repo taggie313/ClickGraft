@@ -441,7 +441,7 @@ int main(int argc, char **argv) {
     const char *rec = getenv("CG_FAKE_RECORD");
     if (rec && strcmp(mode, "child") && strcmp(mode, "sleep")) {
         FILE *f = fopen(rec, "w");
-        if (f) { fprintf(f, "%s\n%s\n", argc > 1 ? argv[1] : "", getenv("TMPDIR") ? getenv("TMPDIR") : ""); fclose(f); }
+        if (f) { fprintf(f, "%s\n%s\n%s\n", argc > 1 ? argv[1] : "", getenv("TMPDIR") ? getenv("TMPDIR") : "", getenv("HOME") ? getenv("HOME") : ""); fclose(f); }
     }
     if (!strcmp(mode, "ok")) {
         char buf[2048]; snprintf(buf, sizeof buf, "%s", argv[0]);
@@ -568,7 +568,7 @@ def test_live_smoke_launch_is_private_and_stops_only_its_own(bundles, tmp_path, 
         assert res["cleanup"] is None
 
         with open(record) as f:
-            udd_arg, tmpdir, spawned = f.read().splitlines()[:3]
+            udd_arg, tmpdir, home, spawned = f.read().splitlines()[:4]
         rc, helper_pid = map(int, spawned.split())
         assert rc == 0 and helper_pid > 0, "the stand-in did not start its JDFPrintProcessor"
         with pytest.raises(ProcessLookupError):
@@ -576,6 +576,10 @@ def test_live_smoke_launch_is_private_and_stops_only_its_own(bundles, tmp_path, 
         assert tmpdir.startswith(verify.SMOKE_TMP_BASE + "/cg-smoke-")
         assert udd_arg == f"--user-data-dir={tmpdir.rstrip('/')}/user-data"
         assert not os.path.exists(tmpdir), "the private temp folder was not removed"
+        # Its own HOME, so HP Click's own settings under appData are the
+        # launch's and not the owner's: --user-data-dir does not cover those.
+        assert home == os.path.join(tmpdir.rstrip("/"), "home")
+        assert home != os.path.expanduser("~")
 
         # Its own processes, the spawned JDFPrintProcessor included, are gone;
         # the user's and the sibling's are not.
@@ -589,6 +593,23 @@ def test_live_smoke_launch_is_private_and_stops_only_its_own(bundles, tmp_path, 
             assert name in after and after[name] >= size, f"HP log {name} was removed or shortened"
     finally:
         _stop(users_own, theirs)
+
+
+def test_private_profile_is_a_fresh_home_with_reporting_off(tmp_path):
+    """The owner's HP Click settings live under appData, which --user-data-dir
+    does not redirect. Before 20 Sep 2026 a verify run read and wrote them, and
+    an unpatched copy reported to Google under the owner's customerId."""
+    home = verify.private_profile(str(tmp_path))
+    assert home == os.path.join(str(tmp_path), "home")
+    assert home != os.path.expanduser("~")
+
+    prefs = os.path.join(home, "Library", "Application Support", "hpclick", "userpref.json")
+    with open(prefs) as f:
+        assert json.load(f) == {"cipParticipation": False}
+
+    # Idempotent: a second launch in the same folder must not fail on the
+    # directory already being there.
+    assert verify.private_profile(str(tmp_path)) == home
 
 
 def test_live_smoke_launch_spares_a_copy_opened_while_it_runs(bundles, monkeypatch):
