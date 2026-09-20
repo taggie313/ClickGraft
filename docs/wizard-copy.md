@@ -161,6 +161,42 @@ per Xcode version.
 
 **Controls:** `Back` · `Continue` (disabled until present) · `Check again`
 
+**Disclosure — "If you can't install them on this Mac"** *(1.5.8)*. Shown only
+while the tools are missing, under the orange panel:
+
+> On a work Mac, installing them is usually something only IT can do. Three ways
+> round it, in the order worth trying:
+>
+> 1. **Check HP Click 4.11.31 first.** HP's September 2026 version runs on Apple
+>    Silicon by itself: no tools, no copy, nothing for ClickGraft to do. Download
+>    it from HP's support page — but not if you print to the DesignJet T310,
+>    T320, T350, T720 and T750, which only HP Click 4.8.117 supports.
+> 2. **Ask whoever manages the Mac to run one command:** `xcode-select --install`.
+>    It installs Apple's own developer tools and nothing else. ClickGraft does not
+>    need Xcode, an Apple developer account, or anything from us.
+> 3. **Make the copy on another Mac.** Any Mac with Apple Silicon, these tools and
+>    your version of HP Click installed can make it, and the copy it produces is a
+>    complete app: bring it over and drag it into Applications. Move it on a USB
+>    drive or a file share if you can. After AirDrop or a download, macOS refuses
+>    to open it the first time, because the copy is signed by the Mac that made it
+>    rather than by Apple — open System Settings, go to Privacy & Security, and
+>    allow it there.
+
+The printer names come from the backend's own `printers_dropped`, not from a
+fixed list, so they stay right when HP's list changes. Carriage widths are dropped
+from every list the wizard shows: HP's own list names each width, so seven entries
+are five plotters, and the widths bury the model numbers somebody is scanning for.
+
+Why it exists: the missing-tools panel said only that macOS would offer to
+install them, which is a dead end for anyone on a managed Mac, where that offer
+ends at an administrator password they don't have. It is a disclosure rather than
+a panel because it is the minority case, and the terminal command sits inside it
+rather than on the screen, per the note below: it is what someone forwards to IT,
+not what they are asked to type.
+
+The same transfer caveat is now on the Intel-Mac panel, which already offered to
+build for another Mac and never said how to get the copy there.
+
 **Disclosure — "What ClickGraft uses them for":**
 
 > Two things: to read the app you already have, and to sign the copy it makes so
@@ -284,8 +320,8 @@ below. Shown only when the copy already at the output path supports printers the
 new copy won't:
 
 > **This replaces your copy made from HP Click 4.8.117. The new copy won't support
-> the DesignJet T310 24-in, T320 24-in, T350 24-in, T720 24-in, T720 36-in, T750
-> 24-in and T750 36-in.** HP Click 4.8.118, the one you chose, doesn't list them.
+> the DesignJet T310, T320, T350, T720 and T750.** HP Click 4.8.118, the one you
+> chose, doesn't list them.
 >
 > If you print to one of those, keep the copy you have: press Back.
 >
@@ -546,8 +582,8 @@ second sentence replaced, because by then the download did happen:
 
 > **Check the printers first**
 >
-> The copy that is already here supports the DesignJet T310 24-in, … and T750
-> 36-in, and the new one won't. ClickGraft hasn't replaced it. Nothing has been
+> The copy that is already here supports the DesignJet T310, T320, T350, T720 and
+> T750, and the new one won't. ClickGraft hasn't replaced it. Nothing has been
 > downloaded or changed.
 >
 > **Go back to see what would change.** If you don't print to any of them, you

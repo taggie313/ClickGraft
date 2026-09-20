@@ -328,18 +328,26 @@ final class Disclosure: NSView {
         let tv = NSTextView()
         tv.isEditable = false
         tv.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        tv.string = provider()
+        let text = provider()
+        tv.string = text
+        // Tall enough for the text, up to what the screen can spare. At a flat
+        // 170 the "can't install them" advice ended mid-sentence, which reads
+        // as the app being broken rather than as something to scroll.
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).reduce(0) {
+            $0 + max(1, Int(ceil(Double($1.count) / 96.0)))
+        }
+        let height = min(430.0, max(170.0, Double(lines) * 13.5 + 16))
         scroll.documentView = tv
         addSubview(scroll)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.widthAnchor.constraint(equalToConstant: UI.width - UI.margin * 2 - 10),
             scroll.topAnchor.constraint(equalTo: toggle.bottomAnchor, constant: 6),
-            scroll.heightAnchor.constraint(equalToConstant: 170),
+            scroll.heightAnchor.constraint(equalToConstant: height),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         shown = scroll
-        toggle.title = "▾ Hide " + label.replacingOccurrences(of: "Show ", with: "")
+        toggle.title = "▾ " + label
     }
 }
 
@@ -589,6 +597,63 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          + "the first time it needs them — accept, wait for it to finish, then "
                          + "come back here. It's a large download and can take several minutes."),
             ], tint: NSColor.systemOrange.withAlphaComponent(0.12)))
+            // Installing them asks for an administrator password, which on a
+            // managed Mac the person sitting at it does not have. Saying only
+            // "macOS will offer to install them" leaves them at a dead end, so
+            // name the ways round it -- starting with the one that needs no
+            // tools and no copy at all.
+            rows.append(Disclosure(label: "If you can't install them on this Mac") { [weak self] in
+                let dropped = (self?.candidates.first {
+                    ($0["reason"] as? String) == "hp_native"
+                }?["printers_dropped"] as? [String]) ?? []
+                let models = dropped.isEmpty
+                    ? "DesignJet T310, T320, T350, T720 and T750"
+                    : (self?.printerList(dropped) ?? "")
+                let tSeries = "the " + models
+                return """
+                Installing these tools needs an administrator password. So does putting the \
+                copy into Applications, and making one downloads Apple's Apple Silicon engine \
+                and two small libraries from the internet. On a managed Mac all three are \
+                usually someone else's to allow. Three ways round it:
+
+                1. Check HP Click 4.11.31 first. HP's September 2026 version runs on Apple \
+                Silicon by itself: no tools, no copy, nothing for ClickGraft to do. Download \
+                it from HP's support page — but not if you print to \(tSeries), which only \
+                HP Click 4.8.117 supports.
+
+                2. Ask IT to make one copy for everyone. It is usually a smaller ask than \
+                installing developer tools across the estate: they make the copy once, on a \
+                Mac they administer, and what comes out is an ordinary app they can deploy \
+                like any other. It needs nothing installed on the Macs that receive it — no \
+                developer tools, no ClickGraft, no downloads — and nothing from the Mac that \
+                made it. Forward them the notes below.
+
+                3. Or make the copy on a Mac of your own that has the tools, with your version \
+                of HP Click installed, and bring the app over. Move it on a USB drive or a \
+                file share if you can: after AirDrop or a download, macOS refuses to open it \
+                the first time, and you have to allow it in System Settings, under Privacy & \
+                Security.
+
+                ---
+                For whoever does it, measured on macOS 27 (20 Sep 2026):
+
+                • Deploy it as a package. An app installed from a package carries no \
+                quarantine flag and opens normally; the same app sent by AirDrop or \
+                downloaded is blocked until someone allows it in System Settings.
+
+                • Build that package on the Mac that made the copy. A copy that was \
+                itself downloaded carries its quarantine flag through the package and into \
+                every installed file.
+
+                • Don't re-sign it. The copy needs the entitlements ClickGraft gives it; \
+                a re-sign that drops them leaves an app that starts without its print \
+                engine. If you re-sign anyway, run ClickGraft's check on the result — it \
+                catches this.
+
+                • The copy carries the HP Click version it was made from, so make it from \
+                the version your printers need: the \(models) need HP Click 4.8.117.
+                """
+            })
         }
         if !silicon {
             let cb = NSButton(checkboxWithTitle:
@@ -607,6 +672,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          "Everything except the final test-launch works here, because this "
                          + "Mac can't run the copy in order to check it. Tick the box and "
                          + "carry on — the copy will be made, just not tried out."),
+                UI.small("Move the finished app on a USB drive or a file share if you can. "
+                         + "After AirDrop or a download, macOS refuses to open it the first "
+                         + "time, because the copy is signed by the Mac that made it rather "
+                         + "than by Apple: open System Settings, go to Privacy & Security, "
+                         + "and allow it there."),
                 cb,
             ], tint: NSColor.systemOrange.withAlphaComponent(0.13)))
         }
@@ -718,11 +788,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          + "Rosetta, so it will keep working on future versions of macOS."),
             ]
             if let dropped = native["printers_dropped"] as? [String], !dropped.isEmpty {
-                // "DesignJet T310 24-in, T320 24-in, ..." -- the brand once, not
-                // seven times in a row.
-                let models = dropped.map { $0.replacingOccurrences(of: "HP DesignJet ", with: "") }
-                parts.append(UI.small("One exception: \(theirs) doesn't support the DesignJet "
-                    + models.joined(separator: ", ") + ". If you print to one of those, "
+                parts.append(UI.small("One exception: \(theirs) doesn't support the "
+                    + printerList(dropped) + ". If you print to one of those, "
                     + "keep HP Click \(ref), which does, and make a ClickGraft copy of it."))
             }
             rows.append(UI.panel(parts, tint: NSColor.systemGreen.withAlphaComponent(0.10)))
@@ -1110,10 +1177,22 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     /// "DesignJet T310 24-in, T320 24-in and T750 36-in": the brand once rather
     /// than seven times, but only when every name carries it.
+    /// HP's list names every carriage width, so seven entries are five plotters:
+    /// "T720 24-in, T720 36-in" and so on. Nobody checking whether their printer
+    /// is in the list needs the width — they know which one is on the floor — and
+    /// the long form buries the model numbers that matter.
     private func printerList(_ names: [String]) -> String {
         let brand = "HP DesignJet "
         let allBrand = names.allSatisfy { $0.hasPrefix(brand) }
-        let shown = allBrand ? names.map { String($0.dropFirst(brand.count)) } : names
+        var shown: [String] = []
+        for name in names {
+            var model = allBrand ? String(name.dropFirst(brand.count)) : name
+            // " 24-in" / " 36-in" and the occasional "-in" spelling variants.
+            if let r = model.range(of: #" \d+ ?-?in(ch)?$"#, options: .regularExpression) {
+                model = String(model[model.startIndex..<r.lowerBound])
+            }
+            if !shown.contains(model) { shown.append(model) }
+        }
         let joined = shown.count > 1
             ? shown.dropLast().joined(separator: ", ") + " and " + (shown.last ?? "")
             : (shown.first ?? "")
