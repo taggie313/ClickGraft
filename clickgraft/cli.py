@@ -9,8 +9,6 @@ import json
 import os
 import sys
 
-from clickgraft.build import (BuildInProgressError, InstallError, build_apple_silicon_bundle,
-                              discard_previous, folder_lock)
 from clickgraft.deps import check_clt
 from clickgraft.manifest import ManifestManager
 from clickgraft.probe import probe_app_bundle
@@ -34,6 +32,69 @@ def cmd_preflight(args):
     print("[+] ALL PREFLIGHT CHECKS PASSED SUCCESSFULLY!")
 
 
+# What each of the wizard's stages means, for someone at a terminal. Until the
+# 22 Sep 2026 review this printed the stage names themselves ("[ERROR] in_use:
+# ..."), which are the wizard's vocabulary, not the reader's.
+_FAILED = {
+    "busy": "Another ClickGraft is working in that folder",
+    "in_use": "Not replaced: the copy there is open",
+    "printers_lost": "Not replaced: the new copy would lose printers",
+    "replacement_changed": "Not replaced: the copy there changed",
+    "macos_too_old": "This Mac's macOS is too old for the copy",
+    "leftover_pending": "Not replaced: a copy set aside by an earlier build is waiting",
+    "verify": "The new copy did not pass its checks",
+}
+
+# agent.py's previous_copy, as a sentence that is true of each.
+_PREVIOUS = {
+    "none": "There was no copy at the output path.",
+    "untouched": "The copy at the output path has been left as it was.",
+    "gone": "The copy that was at the output path was removed by something else "
+            "during the build, and nothing has been put in its place.",
+    "restored": "The copy that was there has been put back as it was.",
+    "aside": "The copy that was there could not be put back. It is safe, set aside at {path}.",
+}
+
+
+def _print_build_event(ev, progress):
+    """Print one of agent.run_build's events for a person."""
+    kind = ev["type"]
+    if kind == "progress":
+        progress(ev["msg"], ev["pct"])
+    elif kind == "start":
+        if ev.get("log_path"):
+            print(f"[+] Writing a log to {ev['log_path']}")
+    elif kind == "error":
+        print(f"[ERROR] {_FAILED.get(ev.get('stage'), 'Build failed')}.")
+        print(f"        {ev['error']}")
+        if ev.get("stage") == "printers_lost":
+            print("[+] Use --accept-printer-loss only if you accept losing support "
+                  "for those printers.")
+        previous = _PREVIOUS.get(ev.get("previous_copy", ""))
+        if previous:
+            print("[+] " + previous.format(path=ev.get("previous_path", "")))
+        if ev.get("new_copy") == "kept":
+            # The one case where a copy that has not passed is left in place:
+            # there was nothing before it to put back (agent._after_failed_verify).
+            # The 22 Sep 2026 review found the CLI said only "Previous copy: none".
+            print(f"[WARN] The new copy was left at {ev.get('output', '')}, but it did NOT "
+                  f"pass its checks. Don't rely on it: delete it, or build again once "
+                  f"the problem above is fixed.")
+        elif ev.get("new_copy") == "removed":
+            print("[+] The new copy has been removed.")
+        if ev.get("log_path"):
+            print(f"[+] The full log is at {ev['log_path']}")
+    elif kind == "done":
+        print(format_human_report("Verification Suite Results", ev["results"]))
+        print(f"[+] BUILD SUCCESSFUL! Result: {ev['output']}")
+        if ev.get("previous_copy") == "aside":
+            print(f"[WARN] Could not remove the copy it replaced. It is still set aside "
+                  f"at {ev['previous_path']}; open ClickGraft to remove it, or delete it "
+                  f"yourself.")
+        if ev.get("log_path"):
+            print(f"[+] The full log is at {ev['log_path']}")
+
+
 def cmd_build(args):
     source_app = args.source or "/Applications/HP Click.app"
     if not os.path.exists(source_app) and os.path.exists("/Applications/HP Click (x86_64 Backup).app"):
@@ -48,53 +109,18 @@ def cmd_build(args):
     def _progress(msg, pct):
         print(f"[{pct*100:5.1f}%] {msg}")
 
-    # The build sets the copy it replaces aside rather than deleting it, and
-    # hands back where (build.install_copy). A build that raises has already
-    # put it back, or says where it is (InstallError "aside"), so all that is
-    # left here is deleting it once the build has succeeded. The wizard waits
-    # for verify before it does that; this command does not verify, so the
-    # build finishing is all it has to go on, as it always was. Both under the
-    # output folder's lock, as in the wizard (build.folder_lock).
     out_path = os.path.abspath(out_app or os.path.join(
         os.path.dirname(os.path.abspath(source_app)), "HP Click (Apple Silicon).app"))
-    try:
-        with folder_lock(os.path.dirname(out_path)):
-            _build_and_settle(source_app, out_path, preload, _progress)
-    except BuildInProgressError as e:
-        # Another ClickGraft is building, checking or settling a copy there.
-        print(f"[ERROR] Build failed: {e}")
-        print("[+] Nothing at the output path was replaced.")
-        sys.exit(1)
+    from clickgraft.agent import run_build
 
-
-def _build_and_settle(source_app, out_app, preload, _progress):
-    try:
-        built = build_apple_silicon_bundle(
-            source_app_path=source_app,
-            output_app_path=out_app,
-            preload=preload,
-            progress_callback=_progress
-        )
-    except InstallError as e:
-        print(f"[ERROR] Build failed: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"[ERROR] Build failed: {e}")
-        print("[+] Nothing at the output path was replaced.")
-        sys.exit(1)
-    print(f"[+] BUILD SUCCESSFUL! Result: {built.output}")
-    if built.previous:
-        try:
-            left = discard_previous(built.previous)
-        except OSError as e:
-            left = built.previous
-            print(f"[WARN] {e}")
-        if not left:
-            print("[+] Removed the copy it replaced.")
-        else:
-            print(f"[WARN] Could not remove all of the copy it replaced; what is left "
-                  f"is at {left}. Delete it yourself if it is still there after the "
-                  f"next build into that folder.")
+    options = [flag for flag, enabled in (
+        ("--no-preload", not preload),
+        ("--accept-printer-loss", getattr(args, "accept_printer_loss", False)),
+        ("--allow-intel-host", getattr(args, "allow_intel_host", False))) if enabled]
+    code = run_build(source_app, out_path, options,
+                     emit_event=lambda ev: _print_build_event(ev, _progress))
+    if code:
+        sys.exit(code)
 
 
 def cmd_verify(args):
@@ -113,6 +139,8 @@ def cmd_verify(args):
     try:
         ok, results = verify_app_bundle(target_app)
         print(format_human_report("Verification Suite Results", results))
+        if not ok:
+            sys.exit(1)
         print("[+] ALL VERIFICATION CHECKS PASSED SUCCESSFULLY!")
     except Exception as e:
         print(f"[ERROR] Verification FAILED: {e}")
@@ -168,7 +196,14 @@ def main():
     build_p = subparsers.add_parser("build", help="Build native arm64 app copy")
     build_p.add_argument("--source", help="Path to source HP Click.app bundle")
     build_p.add_argument("--out", help="Path to target output HP Click (Apple Silicon).app bundle")
-    build_p.add_argument("--no-preload", action="store_true", help="Disable DYLD_INSERT_LIBRARIES preload")
+    build_p.add_argument("--no-preload", action="store_true",
+                         help="Diagnostic build: leave the preloaded libraries out of the "
+                              "launcher. Such a copy never passes verification: a copy it "
+                              "would replace is put back, and with none there it is left "
+                              "in place unverified")
+
+    build_p.add_argument("--accept-printer-loss", action="store_true", help="Accept losing printer support when replacing a copy")
+    build_p.add_argument("--allow-intel-host", action="store_true", help="Build on Intel for an Apple Silicon Mac; launch verification is skipped")
 
     # verify
     verify_p = subparsers.add_parser("verify", help="Verify built Apple Silicon app bundle")

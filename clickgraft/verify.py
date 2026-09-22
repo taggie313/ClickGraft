@@ -16,6 +16,10 @@ import subprocess
 import tempfile
 import time
 from clickgraft.asar import AsarArchive
+# Re-export these checks for existing callers; they have no launch/profile state.
+from clickgraft.bundle_audits import (CRASH_PACKAGE_JSON, LAUNCHER, SNMP_CREDENTIAL_FRAGMENT,
+                                      _manifest_patches_snmp_line, check_launcher,
+                                      check_minimum_macos, check_patch_outcomes)
 from clickgraft.macho import get_archs, get_load_dylibs, is_macho
 
 
@@ -260,86 +264,6 @@ class LogTail:
         return chunk
 
 
-# Built-copy outcomes. The build applies the manifest's ops; these check that
-# the result is what the ops were for, because an op can apply cleanly to a key
-# nothing reads. That is not hypothetical: every release before 1.5.8 set
-# crashAutoSubmit in the ROOT package.json, whose copy of the key HP's crash
-# reporter never reads, the build succeeded, and every copy went on trying to
-# upload crash dumps, because app/main.js require()s app/package.json (found
-# 19 Sep 2026: a 4.8.117 copy logged "auto-submit: true", and both its Crashpad
-# dumps were marked upload_count: 1, uploaded: 0 -- an attempt each, not a
-# confirmed upload).
-CRASH_PACKAGE_JSON = "app/package.json"
-
-# Present in HP's SNMPv3 credential log line in 4.8.x and 4.10.42 bundle.js, and
-# gone from 4.11.31, where HP replaced the line with one that logs no values.
-SNMP_CREDENTIAL_FRAGMENT = 'authenticationPassword: "+'
-
-
-def _manifest_patches_snmp_line(manifest):
-    for patch in manifest.get("patches", []):
-        if patch.get("path") != "app/bundle.js":
-            continue
-        for op in patch.get("ops", []):
-            if op.get("type") == "replace" and SNMP_CREDENTIAL_FRAGMENT in op.get("anchor", ""):
-                return True
-    return False
-
-
-def check_patch_outcomes(read_file, manifest):
-    """Check the built asar says what the patches were for, not just that
-    they applied. read_file(rel_path) returns the file's text, or None when
-    the archive has no such file. Returns results entries; raises ValueError.
-
-    Only the ops that exist for every version are assumed. The SNMPv3 line is
-    checked where the manifest carries that op, and nothing here depends on
-    the constants.js/industries.js ops, which 4.10.42 no longer has.
-    """
-    results = {}
-
-    pkg_text = read_file(CRASH_PACKAGE_JSON)
-    if pkg_text is None:
-        raise ValueError(
-            f"{CRASH_PACKAGE_JSON} is missing from the built asar. HP's crash "
-            f"reporter reads crashAutoSubmit from it, so this build cannot be "
-            f"shown to have crash uploads off.")
-    try:
-        pkg = json.loads(pkg_text)
-    except ValueError as exc:
-        raise ValueError(f"{CRASH_PACKAGE_JSON} in the built asar is not valid JSON: {exc}") from None
-    hp_configs = pkg.get("hp_configs") if isinstance(pkg, dict) else None
-    if not isinstance(hp_configs, dict) or "crashAutoSubmit" not in hp_configs:
-        found = "no hp_configs.crashAutoSubmit at all"
-    else:
-        found = f"hp_configs.crashAutoSubmit = {json.dumps(hp_configs['crashAutoSubmit'])}"
-    if not (isinstance(hp_configs, dict) and hp_configs.get("crashAutoSubmit") is False):
-        raise ValueError(
-            f"Crash reports are still set to upload: {CRASH_PACKAGE_JSON} has "
-            f"{found}, not false. app/main.js passes that value to "
-            f"crashReporter.start as uploadToServer, so this copy would try to "
-            f"upload crash dumps to HP's server over plain HTTP.")
-    results["crash_reports"] = (
-        f"PASSED ({CRASH_PACKAGE_JSON} has hp_configs.crashAutoSubmit false, "
-        f"so HP Click's crash reporter starts with uploads off)")
-
-    if _manifest_patches_snmp_line(manifest):
-        bundle_text = read_file("app/bundle.js")
-        if bundle_text is None:
-            raise ValueError("app/bundle.js is missing from the built asar, so the "
-                             "SNMPv3 log-line fix cannot be checked.")
-        left = bundle_text.count(SNMP_CREDENTIAL_FRAGMENT)
-        if left:
-            raise ValueError(
-                f"app/bundle.js still contains HP's SNMPv3 credential log line "
-                f"({left} occurrence(s) of '{SNMP_CREDENTIAL_FRAGMENT}'), which "
-                f"writes the user name and both passwords into HP Click's log.")
-        results["snmp_log_line"] = (
-            "PASSED (app/bundle.js no longer has the line that wrote SNMPv3 "
-            "passwords to the log)")
-
-    return results
-
-
 # The smoke launch's private temporary folder goes here, not under $TMPDIR.
 # The copy runs with TMPDIR pointing into it, and HP's native side talks over
 # Qt local sockets (RPCLocalServer in DjCoreServicesNative), which are Unix
@@ -403,6 +327,33 @@ def private_profile(smoke_dir):
     return home
 
 
+def _launched_main_processes(target_app_path, mark, root_pid):
+    """Live main-process candidates from this launch, excluding its helpers.
+
+    Crashpad and print-engine helpers can survive a crash; their survival is
+    not evidence that HP Click is still running. A clean relaunch may hand off
+    to another HPClickExe, but it must still carry this launch's ownership.
+    Up to 1.5.9 any process of the launch still running, Crashpad included,
+    meant the app had not gone.
+    """
+    suffix = "/Contents/MacOS/HPClickExe"
+    executable = os.path.realpath(target_app_path + suffix)
+    found = []
+    for pid, command in launched_processes(target_app_path, mark, root_pid):
+        at = command.find(suffix)
+        if at < 0:
+            continue
+        end = at + len(suffix)
+        if end < len(command) and not command[end].isspace():
+            continue
+        # Electron can also start a utility/renderer using the main binary.
+        if re.search(r"(?:^|\s)--type(?:=|\s)", command[end:]):
+            continue
+        if command.startswith("/") and os.path.realpath(command[:end]) == executable:
+            found.append(pid)
+    return found
+
+
 def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=0.5):
     """Start the built copy once, privately, and watch it initialise.
 
@@ -442,6 +393,18 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
       derived from HOME. See private_profile() for what that cost until
       20 Sep 2026 and what was measured.
 
+    It starts the copy the way macOS does, through its own launcher script
+    (Contents/MacOS/HP Click, the bundle's CFBundleExecutable), which sets the
+    DYLD_* variables and execs HPClickExe, so the pid stays the main process.
+    Up to 1.5.9 it ran HPClickExe itself, with the manifest's preloads put in
+    the environment by this function, and without the PNG shim the launcher
+    inserts: what it tested was not what anyone runs. Measured 22 Sep 2026: a
+    --no-preload 4.8.117 copy, whose launcher had no DYLD_INSERT_LIBRARIES
+    line at all, passed every check including this one, in 9.08 s. Nothing
+    DYLD_* is passed down from here, so the launch has only what the launcher
+    sets. `manifest` is no longer read; the launcher's preloads are checked
+    against it statically, before any launch (bundle_audits.check_launcher).
+
     The copy's stdout and stderr are captured too. They carry the same
     DJRIP/JAVASCRIPT_DJCS lines as "HP Click.log", plus anything dyld prints
     when a library fails to load.
@@ -452,9 +415,11 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
     # folder was made and with the bundle left unsealed.
     _bundle_prefixes(target_app_path)
 
-    exe_path = os.path.join(target_app_path, "Contents", "MacOS", "HPClickExe")
-    lib_dir = os.path.join(target_app_path, "Contents", "Resources", "app", "appData", "macx", "lib")
-    fw_dir = os.path.join(target_app_path, "Contents", "Resources", "app", "appData", "macx", "Frameworks")
+    launcher = os.path.join(target_app_path, *LAUNCHER.split("/"))
+    if not os.path.isfile(launcher):
+        return {"ok": False, "cleanup": None,
+                "message": f"Smoke launch FAILED: the copy has no launcher at {LAUNCHER}, "
+                           f"which is what macOS starts when it is opened."}
 
     smoke_dir = tempfile.mkdtemp(prefix="cg-smoke-", dir=SMOKE_TMP_BASE)
     # What tells this launch's processes apart from the owner's. Unique: only
@@ -464,18 +429,9 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
     log_dir = os.path.join(smoke_dir, "HP", "HP Click", "logs")
     out_path = os.path.join(smoke_dir, "stdout-stderr.log")
 
-    env = os.environ.copy()
-    env["DYLD_FRAMEWORK_PATH"] = fw_dir
-    env["DYLD_LIBRARY_PATH"] = lib_dir
+    env = {k: v for k, v in os.environ.items() if not k.startswith("DYLD_")}
     env["TMPDIR"] = smoke_dir + "/"
     env["HOME"] = private_profile(smoke_dir)
-
-    preload_dylibs = []
-    for dinfo in manifest.get("required_dylibs", []):
-        if dinfo.get("preload") is True:
-            preload_dylibs.append(os.path.join(lib_dir, dinfo["name"]))
-    if preload_dylibs:
-        env["DYLD_INSERT_LIBRARIES"] = ":".join(preload_dylibs)
 
     tails = [(name, LogTail(os.path.join(log_dir, name))) for name in SMOKE_LOG_NAMES]
     tails.append(("stdout/stderr", LogTail(out_path)))
@@ -486,10 +442,10 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
     proc = None
     try:
         with open(out_path, "wb") as out_f:
-            proc = subprocess.Popen([exe_path, f"--user-data-dir={user_data}"], env=env,
+            proc = subprocess.Popen([launcher, f"--user-data-dir={user_data}"], env=env,
                                     stdin=subprocess.DEVNULL, stdout=out_f, stderr=subprocess.STDOUT)
 
-        start_t = time.time()
+        start_t = time.monotonic()
         initialized = False
         reached_at = None
         failures = []            # (signature, source, first line)
@@ -502,23 +458,37 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
         # warm case fails the one launch every new user makes, and reports a working
         # build as broken. With a fresh user-data dir every smoke launch is now that
         # first launch.
-        while time.time() - start_t < timeout_s:
+        #
+        # The budget is for reaching the milestone. Once it is reached, the grace
+        # period below runs in full: up to 1.5.9 this loop stopped at timeout_s
+        # whatever it was doing, so a milestone reached near the end of the budget
+        # was followed by little or no watching for the errors that come after it
+        # (found in review, 22 Sep 2026).
+        while initialized or time.monotonic() - start_t < timeout_s:
             time.sleep(poll_s)
 
-            # A copy that has quit, leaving nothing of it running, will not
-            # reach the milestone later, and waiting out the budget only
+            # A copy that has quit, leaving no main process of it running, will
+            # not reach the milestone later, and waiting out the budget only
             # delayed the same verdict. Decided before the read below, so that
             # read sees everything it wrote. (Not only proc: an app that
-            # relaunches itself hands over to a new process from the bundle.)
-            gone = (proc.poll() is not None
-                    and not launched_processes(target_app_path, mark, proc.pid))
+            # relaunches itself hands over to a new main process from the bundle.)
+            #
+            # A main process that fails is a failure even after the milestone,
+            # and even if Crashpad or another helper is still running; only a
+            # clean exit handing over to another main process of this launch may
+            # outlive it. Measured 22 Sep 2026: 1.5.9 passed a real 4.10.42 copy
+            # whose main process was sent SIGSEGV 0.3 s after the milestone.
+            returncode = proc.poll()
+            gone = (returncode is not None and
+                    (returncode != 0 or not _launched_main_processes(
+                        target_app_path, mark, proc.pid)))
 
             for _name, tail in tails:
                 tail.read_new()
 
             if not initialized and any(m in t.text for _n, t in tails for m in SMOKE_MILESTONES):
                 initialized = True
-                reached_at = time.time() - start_t
+                reached_at = time.monotonic() - start_t
 
             for fail_sig in SMOKE_FAILURE_SIGNATURES:
                 if any(f[0] == fail_sig for f in failures):
@@ -533,11 +503,12 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
             # budget and a broken one waited for a success that never came.
             if failures:
                 break
-            # Keep reading for grace_s after the milestone, to catch late errors.
-            if initialized and (time.time() - start_t) - reached_at >= grace_s:
+            if gone:
+                gone_at = time.monotonic() - start_t
                 break
-            if gone and not initialized:
-                gone_at = time.time() - start_t
+            # Keep reading for grace_s after the milestone, to catch late errors.
+            # The startup timeout must not truncate this observation period.
+            if initialized and (time.monotonic() - start_t) - reached_at >= grace_s:
                 break
 
         if failures:
@@ -546,14 +517,16 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
             message = (f"Smoke launch FAILED with error signatures in log: "
                        f"{[f[0] for f in failures]}. First seen: {detail}. "
                        f"The launch's own logs are in {smoke_dir}.")
-        elif not initialized:
+        elif gone_at is not None or not initialized:
             if gone_at is not None:
                 last = [ln for ln in tails[-1][1].text.splitlines() if ln.strip()]
                 how = (f"was killed by signal {-proc.returncode}" if proc.returncode < 0
                        else f"quit on its own with exit code {proc.returncode}")
                 message = (
                     f"Smoke launch FAILED: the app {how} after {gone_at:.1f}s, "
-                    f"without reporting successful initialization."
+                    + ("having reported successful initialization, so it did not "
+                       "stay up after starting."
+                       if initialized else "without reporting successful initialization.")
                     + (f" Its last output was: {' '.join(last[-1].split())[:240]}." if last else "")
                     + f" The launch's own logs are in {smoke_dir}.")
             else:
@@ -584,52 +557,6 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
             shutil.rmtree(user_data, ignore_errors=True)
 
     return {"ok": ok, "message": message, "cleanup": cleanup}
-
-
-def check_minimum_macos(target_app_path):
-    """No Mach-O in the copy may need a newer macOS than the copy says it needs.
-
-    Returns the results entry; raises ValueError naming each file that does.
-
-    build.py stamps LSMinimumSystemVersion from the highest minimum in the
-    bundle (clickgraft/macos_floor.py), and this reads it back, so a copy that
-    says 12.0 while carrying a library built for 27.0 cannot pass again. Before
-    1.5.9 every copy said HP's 12.0 whatever went into it, and one made from the
-    Homebrew bottles listed first carried a libidn2 that imports _strchrnul,
-    new in macOS 15.4: on macOS 12.0-15.3 it aborts at launch, where macOS
-    would have refused to open it, clearly, had the Info.plist said so.
-
-    Static, so it runs without launching anything and on an Intel Mac.
-    """
-    from clickgraft.macos_floor import bundle_minimums, declared_minimum, format_version
-
-    declared = declared_minimum(target_app_path)
-    if declared is None:
-        raise ValueError(
-            f"{target_app_path} has no readable LSMinimumSystemVersion in its "
-            f"Info.plist, so it says nothing about which macOS it needs.")
-    found, unreadable = bundle_minimums(target_app_path)
-    if unreadable:
-        raise ValueError(
-            f"Could not read the minimum macOS of {len(unreadable)} file(s), so "
-            f"the copy's LSMinimumSystemVersion cannot be checked: "
-            f"{', '.join(unreadable[:5])}")
-    over = [(rel, v) for rel, v in found if v > declared]
-    if over:
-        shown = "; ".join(f"{rel} needs {format_version(v)}" for rel, v in over[:5])
-        more = f" (and {len(over) - 5} more)" if len(over) > 5 else ""
-        raise ValueError(
-            f"{len(over)} file(s) in the copy need a newer macOS than its "
-            f"Info.plist says (LSMinimumSystemVersion {format_version(declared)}): "
-            f"{shown}{more}. On a Mac in between, macOS would open the copy instead "
-            f"of refusing it with a clear message, and it may fail at launch.")
-    top = ""
-    if found:
-        at_top = [rel for rel, v in found if v == found[0][1]]
-        top = (f"; the highest, {format_version(found[0][1])}, is declared by "
-               f"{len(at_top)} of them, e.g. {at_top[0]}")
-    return (f"PASSED (Info.plist says macOS {format_version(declared)} or later, and "
-            f"none of its {len(found)} Mach-O files needs newer{top})")
 
 
 class VerifyError(ValueError):
@@ -817,6 +744,13 @@ def verify_app_bundle(target_app_path, manifest=None, *, results, step):
         raise ValueError(f"Found hardcoded Homebrew dependency paths: {homebrew_refs}")
 
     results["bundle_audit"] = "PASSED (0 unexpected x86_64 binaries, 0 Homebrew path leaks)"
+
+    # 2a. The launcher preloads what the manifest says must be loaded (see
+    # check_launcher). Static, so it runs on an Intel Mac too, and it is the
+    # only check that can see a --no-preload copy: nothing it leaves out is
+    # called at startup.
+    step.now = "launcher"
+    results["launcher"] = check_launcher(target_app_path, manifest)
 
     # 2b. Unprovided flat-namespace symbols.
     #

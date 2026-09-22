@@ -8,6 +8,7 @@ stdout; nothing else is ever printed there.
     python3 -m clickgraft.cli agent env
     python3 -m clickgraft.cli agent plan  --source PATH [--out PATH]
     python3 -m clickgraft.cli agent build --source PATH [--out PATH] [--accept-printer-loss]
+                                          [--expect-replacing TOKEN]
     python3 -m clickgraft.cli agent probe --source PATH
     python3 -m clickgraft.cli agent printerinfo
     python3 -m clickgraft.cli agent restore-previous --backup PATH
@@ -19,11 +20,30 @@ stdout; nothing else is ever printed there.
     {"type":"done","results":{...}}      or {"type":"error","error":"..."}
 
 An error carries a "stage" when the wizard has something specific to say:
-"in_use" and "printers_lost" (the copy it would replace), "macos_too_old"
-(this Mac is older than the copy needs; with "needs" and "this_mac"),
-"leftover_pending" (a copy an earlier build set aside at this path is waiting
-for the owner; with "leftovers"), "busy" (another ClickGraft is working in the
-same folder), "build" and "verify".
+"in_use" and "printers_lost" (the copy it would replace), "replacement_changed"
+(the copy at the output path is not the one Review showed, or changed during
+the build; see below), "macos_too_old" (this Mac is older than the copy needs;
+with "needs" and "this_mac"), "leftover_pending" (a copy an earlier build set
+aside at this path is waiting for the owner; with "leftovers"), "busy"
+(another ClickGraft is working in the same folder), "build" and "verify".
+
+`plan` carries "replacing_token": an opaque string for what is at the output
+path now -- which copy, its version, and the printers replacing it would lose
+-- or for nothing being there. Review passes it back as `build
+--expect-replacing TOKEN`, and the build refuses, as "replacement_changed",
+when the output path no longer holds what Review showed, so the printer-loss
+tick and the "Replacing" line mean the copy they were shown for. Without the
+flag, as from `clickgraft build`, the build pins what is there when it starts.
+Either way the same check runs again just before the install. The error has:
+
+    change        "removed"   a copy was there, and is gone
+                  "appeared"  nothing was there, and a copy is now
+                  "changed"   a different copy, or the same one edited
+    during_build  true when found just before the install, false when found
+                  before anything was downloaded
+    previous_copy "gone" for "removed": nothing is at the output path, and
+                  nothing was put there; "untouched" otherwise: what is there
+                  now has been left alone
 
 Since 1.5.9 the copy a build replaces is set aside, not deleted, until the new
 one has passed verify (build.install_copy), and every "done" and "error" from
@@ -31,6 +51,8 @@ one has passed verify (build.install_copy), and every "done" and "error" from
 
     previous_copy  "none"       nothing was at the output path
                    "untouched"  the build stopped before it moved anything
+                   "gone"       (replacement_changed only) the copy that was
+                                there was removed by something else
                    "restored"   it was set aside, and has been put back
                    "aside"      it was set aside and could not be put back;
                                 it is safe at previous_path
@@ -49,6 +71,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import sys
 import time
 
@@ -66,7 +89,7 @@ from clickgraft.macho import get_archs
 from clickgraft.manifest import ManifestManager
 from clickgraft.printerinfo import as_text as printer_text
 from clickgraft.probe import probe_app_bundle
-from clickgraft.verify import processes_inside, verify_app_bundle
+from clickgraft.verify import VerifyError, processes_inside, verify_app_bundle
 
 # vtool since 1.5.9: it reads the minimum macOS each file in a copy declares
 # (clickgraft/macos_floor.py). Listed here so the Requirements screen's detail,
@@ -347,6 +370,103 @@ def existing_copy(output, source, ps_output=None):
     }
 
 
+class ReplacementChangedError(ValueError):
+    """The output path does not hold what the build was going to replace.
+
+    .change is "removed", "appeared" or "changed" (see the module docstring).
+    Raised before anything at the output path has been moved.
+    """
+
+    def __init__(self, message, change):
+        super().__init__(message)
+        self.change = change
+
+
+def _replacement_facts(output, source):
+    """What replacing_token is made from, or None when nothing is at output.
+
+    The directory's inode and creation time say which copy it is: a rename
+    keeps both, a copy put in its place has others. Not the device number,
+    for the reason build._identity gives. Info.plist's bytes and existing_copy's
+    version and printer list say what it is, so an edit in place is seen too
+    (the 22 Sep 2026 review changed CFBundleShortVersionString in place, same
+    inode, mid-build). open_pids is left out: whether it is open is checked
+    separately, and quitting it must not make it a different copy. So is the
+    path, which the plan and the build may spell differently.
+    """
+    try:
+        st = os.lstat(output)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    try:
+        with open(os.path.join(output, "Contents", "Info.plist"), "rb") as f:
+            plist = hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        plist = None
+    copy = existing_copy(output, source)
+    if copy:
+        copy = {k: v for k, v in copy.items() if k not in ("open_pids", "path")}
+    return {"ino": st.st_ino, "born": getattr(st, "st_birthtime", 0.0),
+            "mode": stat.S_IFMT(st.st_mode), "info_plist": plist, "copy": copy}
+
+
+def replacement_token(output, source):
+    """plan's "replacing_token": an opaque name for what is at output now.
+
+    Review's consent -- the "Replacing" line, and the printer-loss tick --
+    was a boolean passed to a build that started later, so a copy changed
+    between Review and pressing the button was replaced on the strength of a
+    tick given for another (found in review, 22 Sep 2026). The token lets the
+    build check it is replacing what Review showed.
+    """
+    return _token_of(_replacement_facts(output, source))
+
+
+def _token_of(facts):
+    blob = json.dumps(facts, sort_keys=True, separators=(",", ":"))
+    return "cg1-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:40]
+
+
+# The token for an empty output path, which is how a mismatch is told apart
+# as a copy that appeared rather than one that changed.
+_NOTHING_TOKEN = _token_of(None)
+
+
+def _replacement_change(output, had_copy):
+    """-> "removed", "appeared" or "changed", for a token that no longer matches.
+
+    had_copy is whether something was there when the expected token was made.
+    """
+    there = os.path.lexists(output)
+    if had_copy and not there:
+        return "removed"
+    if not had_copy and there:
+        return "appeared"
+    return "changed"
+
+
+_CHANGE_SINCE_REVIEW = {
+    "removed": "The copy at {out} has gone since you reviewed it, so there is "
+               "nothing there for ClickGraft to replace.",
+    "appeared": "A copy has appeared at {out} since you reviewed it. ClickGraft "
+                "won't replace a copy you haven't seen on Review, so it has left "
+                "it alone.",
+    "changed": "The copy at {out} has changed since you reviewed it. ClickGraft "
+               "won't replace a copy you haven't seen on Review, so it has left "
+               "it alone.",
+}
+_CHANGE_DURING_BUILD = {
+    "removed": "The copy at {out} was removed while the new one was being made. "
+               "ClickGraft has not put the new one there in its place, and has "
+               "thrown it away.",
+    "appeared": "A copy appeared at {out} while the new one was being made. "
+                "ClickGraft has left it alone and thrown the new one away.",
+    "changed": "The copy at {out} changed while the new one was being made, so "
+               "it is not the copy this build was going to replace. ClickGraft "
+               "has left it alone and thrown the new one away.",
+}
+
+
 def _first_sentence(text):
     import re
     m = re.match(r"^[\s\S]*?[.!?](?=\s|$)", text or "")
@@ -477,13 +597,21 @@ def build_plan(manifest, source, output):
         # None when nothing is there yet. Otherwise what is being replaced:
         # its version, whether it is open, and any printers the new copy drops.
         "replacing": existing_copy(output, source),
+        # What the Create button's consent is for: passed back as
+        # `build --expect-replacing` (replacement_token).
+        "replacing_token": replacement_token(output, source),
         "patches": [{"path": p["path"], "why": _first_sentence(p.get("why", ""))}
                     for p in manifest["patches"]],
         "dylibs": [{"name": d["name"], "preload": bool(d.get("preload")),
                     "why": _first_sentence(d.get("why", ""))}
                    for d in manifest.get("required_dylibs", [])],
+        # A pinned manifest never fetches SHASUMS256.txt (deps.fetch_electron);
+        # until the 22 Sep 2026 review this line said it did.
         "downloads": [f"Electron {manifest['electron_version']} (darwin-arm64), "
-                      f"SHA-256 checked against the release's SHASUMS256.txt"]
+                      + ("SHA-256 checked against the value pinned in this "
+                         "ClickGraft (from the release's SHASUMS256.txt)"
+                         if manifest.get("electron_sha256") else
+                         "SHA-256 checked against the release's SHASUMS256.txt")]
         + [download_line(d) for d in manifest.get("required_dylibs", [])],
         "macos_floor": floor,
         # A copy an earlier build set aside at this path and never put back or
@@ -567,44 +695,79 @@ def main(argv):
             return 1
 
     if cmd == "build":
-        m = _manifest_for(mm, source or "")
-        if not m:
-            emit({"type": "error", "error": "That is not a supported HP Click version."})
-            return 1
-
-        try:
-            with folder_lock(os.path.dirname(os.path.abspath(output))):
-                return _build_command(m, source, output, rest)
-        except BuildInProgressError as exc:
-            # Another ClickGraft is building, checking or settling a copy in
-            # this folder. Nothing here has been fetched, moved or written.
-            emit({"type": "error", "stage": "busy", "error": str(exc),
-                  "previous_copy": "untouched" if os.path.lexists(output) else "none",
-                  "output": output, "output_exists": os.path.isdir(output)})
-            return 1
+        return run_build(source, output, rest)
 
     emit({"type": "error", "error": f"unknown agent subcommand: {cmd}"})
     return 2
 
 
-def _build_command(m, source, output, rest):
+def run_build(source, output, options=(), emit_event=None):
+    """The build, verify and settle that both the wizard (`agent build`) and
+    `clickgraft build` run, under the output folder's lock.
+
+    Success always means verification finished and the replacement was
+    settled. Options and event fields mean the same for both: options are
+    `agent build`'s flags, and emit_event receives each event the wizard would
+    (emit, by default). Up to 1.5.9 `clickgraft build` had its own copy of
+    this that did not verify, and deleted the copy it replaced as soon as the
+    build finished.
+    """
+    send = emit_event or emit
+    output = os.path.abspath(output)
+    state = {"previous_copy": "untouched" if os.path.lexists(output) else "none",
+             "output": output, "output_exists": os.path.isdir(output)}
+    m = _manifest_for(ManifestManager(), source or "")
+    if not m:
+        # The 1.5.9 CLI said this for a --source that isn't there; the manifest
+        # lookup that replaced it called that an unsupported version.
+        error = ("That is not a supported HP Click version."
+                 if source and os.path.isdir(source) else
+                 f"Source app path does not exist: {os.path.abspath(source or '')}. "
+                 f"Nothing has been downloaded or written.")
+        send(dict({"type": "error", "stage": "build", "error": error}, **state))
+        return 1
+    expected = None
+    if "--expect-replacing" in options:
+        at = list(options).index("--expect-replacing") + 1
+        expected = options[at] if at < len(options) else ""
+    try:
+        with folder_lock(os.path.dirname(output)):
+            return _build_command(m, source, output, options, send, expected)
+    except BuildInProgressError as exc:
+        send(dict({"type": "error", "stage": "busy", "error": str(exc)}, **state))
+        return 1
+
+
+def _build_command(m, source, output, rest, send, expected=None):
     """`agent build`, run holding ClickGraft's lock on the output folder
     (build.folder_lock): the build, verify and what happens to the copy it
-    replaced, which belong together."""
+    replaced, which belong together. `expected` is Review's replacing_token,
+    or None when there was no Review."""
     # Checked again here rather than trusted from Review: the copy can be
     # opened, or swapped for another, between that screen and this button.
-    # Nothing has been fetched or written when either of these returns.
-    replacing = existing_copy(output, source)
+    # Nothing has been fetched or written when any of these returns.
+    token = replacement_token(output, source)
     # Whether there is a copy here for the build to set aside: what a
     # failure before it moves anything has left "untouched".
     had_copy = os.path.lexists(output)
     untouched = "untouched" if had_copy else "none"
+    if expected is not None and expected != token:
+        change = _replacement_change(output, expected != _NOTHING_TOKEN)
+        send({"type": "error", "stage": "replacement_changed", "change": change,
+              "during_build": False,
+              "previous_copy": "gone" if change == "removed" else "untouched",
+              "output": output, "output_exists": os.path.isdir(output),
+              "error": _CHANGE_SINCE_REVIEW[change].format(out=output)
+                       + " Nothing has been downloaded or changed."})
+        return 1
+    replacing = existing_copy(output, source)
     if replacing and replacing["open_pids"]:
         # build.py sets the old copy aside and deletes it once the new one
         # passes. Quitting it is the owner's call -- it may be mid-print --
         # so ClickGraft says so and stops, and never kills it.
-        emit({"type": "error", "stage": "in_use", "output": output,
+        send({"type": "error", "stage": "in_use", "output": output,
               "output_exists": True, "pids": replacing["open_pids"],
+              "previous_copy": "untouched",
               "error": f"The copy at {output} is open (process "
                        f"{', '.join(str(p) for p in replacing['open_pids'])}). "
                        f"Quit it and try again. Nothing has been replaced."})
@@ -612,19 +775,29 @@ def _build_command(m, source, output, rest):
     if replacing and replacing["printers_lost"] and "--accept-printer-loss" not in rest:
         # Review asks for a tick before it passes the flag. Without it the
         # build would replace a copy that supports printers this one can't.
-        emit({"type": "error", "stage": "printers_lost", "output": output,
+        send({"type": "error", "stage": "printers_lost", "output": output,
               "output_exists": True, "printers_lost": replacing["printers_lost"],
+              "previous_copy": "untouched",
               "error": f"The copy at {output} supports printers that a copy of "
                        f"HP Click {replacing['source_version'] or m['app_version']} "
                        f"would not: {', '.join(replacing['printers_lost'])}. "
                        f"Nothing has been replaced."})
         return 1
 
+    # And once more just before the install: ClickGraft's folder lock keeps
+    # out other ClickGrafts, not the owner or anything else, and the build
+    # takes a minute (build.py step 11 has what was tried).
+    def before_install():
+        if replacement_token(output, source) != token:
+            change = _replacement_change(output, had_copy)
+            raise ReplacementChangedError(_CHANGE_DURING_BUILD[change].format(out=output),
+                                          change)
+
     log = _log_path()
-    emit({"type": "start", "log_path": log or ""})
+    send({"type": "start", "log_path": log or ""})
 
     def progress(msg, pct):
-        emit({"type": "progress", "pct": float(pct), "msg": msg})
+        send({"type": "progress", "pct": float(pct), "msg": msg})
         if log:
             try:
                 with open(log, "a", encoding="utf-8") as f:
@@ -635,11 +808,13 @@ def _build_command(m, source, output, rest):
     try:
         built = build_apple_silicon_bundle(source_app_path=source, output_app_path=output,
                                            manifest=m, progress_callback=progress,
+                                           preload=("--no-preload" not in rest),
+                                           before_install=before_install,
                                            allow_foreign_host=("--allow-intel-host" in rest))
     except LeftoverPendingError as exc:
         # A copy an earlier build set aside here is still waiting for the
         # owner. Review says so first; this is for when things changed after.
-        emit({"type": "error", "stage": "leftover_pending", "error": str(exc),
+        send({"type": "error", "stage": "leftover_pending", "error": str(exc),
               "leftovers": _describe_leftovers(exc.leftovers),
               "previous_copy": untouched, "output": output,
               "output_exists": os.path.isdir(output), "log_path": log or ""})
@@ -648,19 +823,30 @@ def _build_command(m, source, output, rest):
         # This Mac is older than the copy would need. Refused before any
         # download unless Electron's runtime set the floor, which is only
         # counted once the copy is made; either way nothing was replaced.
-        emit({"type": "error", "stage": "macos_too_old", "error": str(exc),
+        send({"type": "error", "stage": "macos_too_old", "error": str(exc),
               "needs": exc.needs, "this_mac": exc.this_mac,
               "reasons": exc.reasons, "after_build": getattr(exc, "after_build", False),
               "alternative": native_alternative(parse_version(exc.this_mac)),
               "previous_copy": untouched, "output": output,
               "output_exists": os.path.isdir(output), "log_path": log or ""})
         return 1
+    except ReplacementChangedError as exc:
+        # Its own stage, not "build": nothing went wrong with ClickGraft, and
+        # the wizard's answer is a fresh Review, not a report (22 Sep 2026: this
+        # was sent as "build", and got "The copy wasn't finished" and Send a
+        # report). The staging copy is gone; the output path is as it was found.
+        send({"type": "error", "stage": "replacement_changed", "change": exc.change,
+              "during_build": True,
+              "previous_copy": "gone" if exc.change == "removed" else "untouched",
+              "output": output, "output_exists": os.path.isdir(output),
+              "error": str(exc), "log_path": log or ""})
+        return 1
     except OutputInUseError as exc:
         # The copy was quiet when this command started and was opened during
         # the build. Same stage as the check above, so the screen that says
         # "quit it and check again" is the one shown, and it is true: the
         # build stopped before it moved anything.
-        emit({"type": "error", "stage": "in_use", "output": exc.output,
+        send({"type": "error", "stage": "in_use", "output": exc.output,
               "output_exists": True, "pids": exc.pids, "error": str(exc),
               "during_build": True, "previous_copy": "untouched",
               "log_path": log or ""})
@@ -669,7 +855,7 @@ def _build_command(m, source, output, rest):
         # The new copy could not be put in place, or the build stopped
         # just after it was: the old one was set aside by then, and has
         # been put back, or is safe at previous_path.
-        emit({"type": "error", "error": str(exc), "stage": "build",
+        send({"type": "error", "error": str(exc), "stage": "build",
               "previous_copy": exc.previous_copy,
               "previous_path": exc.previous_path or "",
               "output_exists": os.path.isdir(output), "output": output,
@@ -678,16 +864,21 @@ def _build_command(m, source, output, rest):
     except Exception as exc:                                   # noqa: BLE001
         # Everything else stops before the old copy is moved: signing,
         # the last step that can fail, works on the staging copy.
-        emit({"type": "error", "error": str(exc), "stage": "build",
+        send({"type": "error", "error": str(exc), "stage": "build",
               "previous_copy": untouched,
               "output_exists": os.path.isdir(output), "output": output,
               "log_path": log or ""})
         return 1
 
     previous = getattr(built, "previous", None)
-    emit({"type": "progress", "pct": 1.0, "msg": "Verifying the result…"})
+    send({"type": "progress", "pct": 1.0, "msg": "Verifying the result…"})
     try:
-        _ok, results = verify_app_bundle(output, manifest=m)
+        ok, results = verify_app_bundle(output, manifest=m)
+        if not ok:
+            # verify_app_bundle raises for every failure it knows, and this
+            # used to trust that, so a (False, results) would have been
+            # settled as a pass and the copy it replaced deleted.
+            raise VerifyError("Verification did not pass.", "verification", results)
     except BaseException as exc:                               # noqa: BLE001
         # The copy is built and in place, and has not been shown to work.
         # A copy that has -- the one it replaced -- goes back. With none,
@@ -697,7 +888,7 @@ def _build_command(m, source, output, rest):
                                      getattr(exc, "check", "") or "")
         if not isinstance(exc, Exception):
             raise
-        emit(dict({"type": "error", "error": str(exc), "stage": "verify",
+        send(dict({"type": "error", "error": str(exc), "stage": "verify",
                    "check": getattr(exc, "check", "") or "",
                    "results": getattr(exc, "results", {}) or {},
                    "output_exists": os.path.isdir(output), "output": output,
@@ -733,7 +924,7 @@ def _build_command(m, source, output, rest):
                 notes.append(f"Part of the copy it replaced is left, at {left}")
     for note in notes:
         progress(note, 1.0)
-    emit(done)
+    send(done)
     return 0
 
 
@@ -795,7 +986,14 @@ def _settle_leftover(cmd, backup):
         with folder_lock(folder):
             return _settle_locked(cmd, backup, folder)
     except BuildInProgressError as exc:
-        emit({"type": "error", "stage": "leftover", "backup": backup, "error": str(exc)})
+        # Every refusal says whether the copy is still where it was set aside,
+        # not only the one that could have moved it: the wizard adds "still
+        # safe, set aside where it was" to this message, and until review
+        # (22 Sep 2026) it assumed that when the field was missing. Both
+        # refusals here can follow the copy being deleted in Finder, or put
+        # back from a second window, after the leftover screen was drawn.
+        emit({"type": "error", "stage": "leftover", "backup": backup, "error": str(exc),
+              "backup_exists": os.path.isdir(backup or "")})
         return 1
 
 
@@ -805,7 +1003,8 @@ def _settle_locked(cmd, backup, folder):
     if not backup or not is_set_aside(backup) or not match:
         emit({"type": "error", "stage": "leftover", "backup": backup,
               "error": f"{backup or 'That'} is not a copy ClickGraft set aside, or "
-                       f"the build that set it aside is still running."})
+                       f"the build that set it aside is still running.",
+              "backup_exists": os.path.isdir(backup or "")})
         return 1
     item = match[0]
     if cmd == "discard-previous":

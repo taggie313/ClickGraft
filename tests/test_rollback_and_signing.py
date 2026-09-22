@@ -397,6 +397,19 @@ def _crashed_install(tmp, monkeypatch, out, new_marker):
     return previous
 
 
+def test_a_leftover_that_has_gone_is_refused_without_claiming_it_is_there(tmp, route, monkeypatch):
+    """The wizard adds "still safe, set aside where it was" to this refusal,
+    so the refusal has to say whether it is. Deleted in the Finder, or put back
+    from a second window, after the leftover screen was drawn: until review
+    (22 Sep 2026) the wizard claimed the copy for a path holding nothing."""
+    out = _copy(tmp, "4.8.117", b"owner's")
+    previous = _crashed_install(tmp, monkeypatch, out, b"unchecked")
+    shutil.rmtree(previous)
+    code, events = _run(["restore-previous", "--backup", previous])
+    assert code == 1 and events[-1]["stage"] == "leftover"
+    assert events[-1]["backup_exists"] is False
+
+
 def test_two_interrupted_builds_unwind_to_the_owners_copy(tmp, route, monkeypatch):
     """Two interrupted builds, "Decide later" in between, then "Put it back"
     on each leftover the wizard shows, in the order it shows them. Before the

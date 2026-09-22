@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 import time
 from clickgraft.asar import AsarArchive, patch_and_repack_asar
-from clickgraft.deps import choose_bottles, fetch_electron, resolve_dylib
+from clickgraft.deps import _sha256_of, choose_bottles, fetch_electron, resolve_dylib
 from clickgraft.macos_floor import (exact_floor, floor_reasons, format_version,
                                     plan_floor, refuse_if_too_old, stamp_minimum)
 from clickgraft.macho import run_cmd
@@ -70,9 +70,10 @@ def refuse_if_open(output_app_path):
 
 # What a build hands back: where the copy is, and where the copy it replaced
 # was set aside (None when there was nothing there). The caller decides what
-# happens to that one -- agent.py deletes it once the new copy passes verify,
-# and puts it back when it does not; `clickgraft build`, which does not verify,
-# deletes it straight away.
+# happens to that one -- agent.run_build, which both the wizard and
+# `clickgraft build` go through, deletes it once the new copy passes verify,
+# and puts it back when it does not. Up to 1.5.9 `clickgraft build` did not
+# verify and deleted it straight away.
 Built = collections.namedtuple("Built", "output previous")
 
 
@@ -127,10 +128,10 @@ def folder_lock(folder):
     that had failed its checks back over the owner's working one, and deleted
     that (found in review, 22 Sep 2026). It takes two wizards open at once, or
     a build run by hand beside one, but the cost is the owner's copy, so it is
-    ruled out rather than argued about. agent.py holds it from before the build
-    until the old copy is settled, since verify and the settle belong to the
-    build; build_apple_silicon_bundle takes it too, for `clickgraft build`.
-    Re-entrant within a process, so those two nest.
+    ruled out rather than argued about. agent.run_build holds it from before
+    the build until the old copy is settled, since verify and the settle belong
+    to the build; build_apple_silicon_bundle takes it too, for callers that use
+    it directly. Re-entrant within a process, so those two nest.
 
     An advisory flock on the folder itself: nothing is left behind in
     Applications, and the kernel drops it when the process ends, however it
@@ -295,8 +296,9 @@ def _leftover_state(path, restores_to):
 
     "missing"    nothing at restores_to: the build stopped between its renames
     "installed"  the copy that build put at restores_to is there, and was never
-                 fully checked (the build was stopped, or `clickgraft build`,
-                 which does not check, was)
+                 fully checked (the build was stopped before its checks
+                 finished, or was a `clickgraft build` from 1.5.9 or earlier,
+                 which did not check)
     "passed"     that copy is there and passed; deleting this one failed
     "failed"     that copy is there and failed `check`; putting this one back
                  failed
@@ -585,23 +587,74 @@ def _install_and_report(staging_dir, output_app_path, _log):
     return previous
 
 
+def refuse_overlapping_paths(source, output):
+    """A build must never replace its source or stage inside it.
+
+    Until 1.5.9, --out naming its own --source replaced the stock app and then
+    deleted it: reproduced 22 Sep 2026 on an APFS clone of stock 4.8.117, where
+    the 1.5.9 CLI exited 0, left an arm64-only copy where HP's app had been and
+    printed "Removed the copy it replaced". The source is the one thing a
+    rebuild needs, and nothing puts it back.
+
+    realpath handles symlinked parents, including a not-yet-created output.
+    Filesystem identity also matters: realpath preserves case on macOS, while
+    the default APFS filesystem considers differently cased names identical.
+    Check ancestors by identity too, so nesting through such names is caught.
+    """
+    source, output = os.path.realpath(source), os.path.realpath(output)
+
+    def contains(parent, child):
+        while True:
+            if parent == child:
+                return True
+            try:
+                if os.path.samefile(parent, child):
+                    return True
+            except FileNotFoundError:
+                pass
+            ancestor = os.path.dirname(child)
+            if ancestor == child:
+                return False
+            child = ancestor
+
+    if contains(source, output) or contains(output, source):
+        raise ValueError(
+            f"The source and output must be separate, non-nested locations.\n"
+            f"Source: {source}\nOutput: {output}\n"
+            f"Choose a different output so your original HP Click stays untouched. "
+            f"Nothing has been replaced.")
+
+
 def build_apple_silicon_bundle(
     source_app_path,
     output_app_path=None,
     manifest=None,
     preload=True,
     progress_callback=None
-, allow_foreign_host=False):
+, allow_foreign_host=False, before_install=None):
     """
     Executes end-to-end build pipeline, holding ClickGraft's lock on the output
     folder throughout (folder_lock). See _build_apple_silicon_bundle.
+
+    The output folder is resolved once, here: the lock is taken on that
+    folder, and the staging copy is made, signed and cleaned up in it
+    (_build_apple_silicon_bundle's work_dir). Paths reported back keep the
+    caller's spelling.
+
+    before_install, when given, is called with no arguments after the copy
+    is signed and immediately before anything at the output path is moved. It
+    raises to stop the build there: agent.run_build uses it to refuse a copy
+    that changed after it was reviewed, and nothing has been replaced when it
+    does.
     """
     output = os.path.abspath(output_app_path or os.path.join(
         os.path.dirname(os.path.abspath(source_app_path)), "HP Click (Apple Silicon).app"))
-    with folder_lock(os.path.dirname(output)):
+    work_dir = os.path.realpath(os.path.dirname(output))
+    with folder_lock(work_dir):
         return _build_apple_silicon_bundle(
             source_app_path, output, manifest=manifest, preload=preload,
-            progress_callback=progress_callback, allow_foreign_host=allow_foreign_host)
+            progress_callback=progress_callback, allow_foreign_host=allow_foreign_host,
+            before_install=before_install, work_dir=work_dir)
 
 
 def _build_apple_silicon_bundle(
@@ -610,13 +663,14 @@ def _build_apple_silicon_bundle(
     manifest=None,
     preload=True,
     progress_callback=None
-, allow_foreign_host=False):
+, allow_foreign_host=False, before_install=None, work_dir=None):
     """
     Executes end-to-end build pipeline.
     source_app_path: Path to existing HP Click.app
     output_app_path: Target path (default: alongside source, e.g. HP Click (Apple Silicon).app)
     manifest: Manifest dict (if None, looked up from manifests/ or probed)
-    preload: True to include DYLD_INSERT_LIBRARIES in launcher script
+    preload: True to include DYLD_INSERT_LIBRARIES in launcher script. False
+        makes a diagnostic copy, which verify refuses (bundle_audits.check_launcher)
     progress_callback: optional function(step_str, float_percentage)
 
     Returns Built(output, previous). `previous` is where the copy that was at
@@ -654,6 +708,19 @@ def _build_apple_silicon_bundle(
         parent_dir = os.path.dirname(source_app_path)
         output_app_path = os.path.join(parent_dir, "HP Click (Apple Silicon).app")
     output_app_path = os.path.abspath(output_app_path)
+
+    # The folder the build works in, resolved once, as folder_lock resolved it.
+    # Up to 1.5.9 every step used output_app_path as given, and a symlink in it
+    # is read again at each step: re-pointing the output's parent symlink part
+    # way through a build (22 Sep 2026) put ditto's staging copy in one folder
+    # and sent the steps after it to another, which failed on a missing
+    # staging path; the cleanup looked in the second folder too, and left
+    # 1.4 GB of staging_clickgraft_<pid> behind in the first. The staging copy
+    # and its cleanup now use this, and step 11 refuses to install if the
+    # output path no longer leads here.
+    work_dir = work_dir or os.path.realpath(os.path.dirname(output_app_path))
+
+    refuse_overlapping_paths(source_app_path, output_app_path)
 
     # Writable BEFORE anything is fetched, staged or written.
     #
@@ -770,16 +837,18 @@ def _build_apple_silicon_bundle(
 
     # 2. Fetch Electron runtime zip
     _log(f"Fetching/verifying Electron {electron_version} arm64 runtime...", 0.10)
-    electron_zip = fetch_electron(electron_version)
+    electron_zip = fetch_electron(electron_version, sha256=manifest.get("electron_sha256"))
 
-    # 3. Create staging directory (non-.app name to prevent App Management locks)
-    staging_dir = os.path.join(os.path.dirname(output_app_path), f"staging_clickgraft_{os.getpid()}")
+    # 3. Create staging directory (non-.app name to prevent App Management locks),
+    # in work_dir: the folder that is locked, and the one the finally block
+    # below cleans up, whatever the output path leads to by then.
+    staging_dir = os.path.join(work_dir, f"staging_clickgraft_{os.getpid()}")
     if os.path.exists(staging_dir):
         shutil.rmtree(staging_dir)
     # Copies an earlier build here meant to delete and did not finish: a
     # failed new copy, or an old one already replaced. Never the owner's
     # previous copy, which keeps a name of its own (install_copy).
-    sweep_discards(os.path.dirname(output_app_path))
+    sweep_discards(work_dir)
 
     _log("Staging source app copy...", 0.20)
     run_cmd(["ditto", source_app_path, staging_dir])
@@ -832,11 +901,15 @@ def _build_apple_silicon_bundle(
         dst_lib_dir = os.path.join(staging_dir, "Contents", "Resources", "app", "appData", "macx", "lib")
         os.makedirs(dst_lib_dir, exist_ok=True)
 
+        dependency_records = []
         for dylib_info in manifest.get("required_dylibs", []):
             d_name = dylib_info["name"]
             got = resolve_dylib(dylib_info, floor=floor_plan["floor"],
                                 bottle=bottles.get(dylib_info.get("brew_formula")))
             src_dylib = got["path"]
+            dependency_records.append({"name": d_name, "sha256": _sha256_of(src_dylib),
+                                       "bottle": bottles.get(dylib_info.get("brew_formula")),
+                                       "source": got["source"]})
             where = {"homebrew": "this Mac's Homebrew",
                      "cache": f"cache, Homebrew bottle {got['bottle_tag']}",
                      "download": f"downloaded, Homebrew bottle {got['bottle_tag']}"}[got["source"]]
@@ -950,33 +1023,9 @@ def _build_apple_silicon_bundle(
         if os.path.exists(launcher_path):
             os.remove(launcher_path)
 
-        preload_lines = ""
-        if preload:
-            preload_dylibs = []
-            for dinfo in manifest.get("required_dylibs", []):
-                if dinfo.get("preload") is True:
-                    preload_dylibs.append(f"$APP_DATA_DIR/lib/{dinfo['name']}")
-            # The shim must be inserted too, or the symbol stays unresolved.
-            shim_path = os.path.join(dst_lib_dir, "libclickgraft-pngshim.dylib")
-            if os.path.exists(shim_path):
-                preload_dylibs.append("$APP_DATA_DIR/lib/libclickgraft-pngshim.dylib")
-            if preload_dylibs:
-                preload_str = ":".join(preload_dylibs)
-                preload_lines = f'export DYLD_INSERT_LIBRARIES="{preload_str}"'
-
-        launcher_script = f"""#!/bin/bash
-DIR="$( cd "$( dirname "${{BASH_SOURCE[0]}}" )" && pwd )"
-CONTENTS_DIR="$(dirname "$DIR")"
-APP_DATA_DIR="$CONTENTS_DIR/Resources/app/appData/macx"
-
-export DYLD_FRAMEWORK_PATH="$APP_DATA_DIR/Frameworks"
-export DYLD_LIBRARY_PATH="$APP_DATA_DIR/lib"
-{preload_lines}
-
-exec "$DIR/HPClickExe" "$@"
-"""
+        shim = os.path.exists(os.path.join(dst_lib_dir, "libclickgraft-pngshim.dylib"))
         with open(launcher_path, "w", encoding="utf-8") as lf:
-            lf.write(launcher_script)
+            lf.write(launcher_script(manifest, preload=preload, shim=shim))
         os.chmod(launcher_path, 0o755)
 
         # 9b. Neutralise Squirrel's installer.
@@ -1044,6 +1093,13 @@ exec "$DIR/HPClickExe" "$@"
              + (f" ({len(reached_by)} file(s) declare it, e.g. {reached_by[0][0]})"
                 if reached_by else " (HP's own minimum)"), 0.89)
 
+        with open(os.path.join(staging_dir, "Contents", "Resources", "clickgraft-build.json"),
+                  "w", encoding="utf-8") as provenance:
+            json.dump({"source_asar_sha256": manifest["asar_sha256"],
+                       "electron_version": electron_version,
+                       "electron_sha256": manifest.get("electron_sha256"),
+                       "dependencies": dependency_records}, provenance, indent=2)
+
         # 10. Code Signing. A failed codesign raises here (signing.py), on the
         # staging copy, so nothing at the output path has been touched yet.
         _log("Signing application bundle inner-to-outer...", 0.90)
@@ -1053,6 +1109,26 @@ exec "$DIR/HPClickExe" "$@"
         # 11. Put the staging copy in place, setting the old one aside rather
         # than deleting it (install_copy). The staging copy goes in the finally
         # block below if this fails, so nothing is left behind either.
+        #
+        # The overlap check again, and the caller's own check, because a build
+        # takes a minute and paths are only names: anything can be moved,
+        # re-pointed or swapped in that time. 1.5.9 checked only whether the
+        # copy was open, so a copy swapped for another here was replaced
+        # without having been reviewed. Tried on 22 Sep 2026 at 10-20% of real
+        # builds: the copy removed, swapped for a T-series one, edited in
+        # place, and one put where there had been none are each refused here,
+        # with nothing installed. Both run after signing, the last step that
+        # takes time, and before anything at the output path moves.
+        refuse_overlapping_paths(source_app_path, output_app_path)
+        now_leads_to = os.path.realpath(os.path.dirname(output_app_path))
+        if now_leads_to != work_dir:
+            raise ValueError(
+                f"The folder {os.path.dirname(output_app_path)} now leads somewhere "
+                f"else ({now_leads_to}) than when this build started ({work_dir}), "
+                f"so ClickGraft has not put the new copy there. Nothing has been "
+                f"replaced.")
+        if before_install is not None:
+            before_install()
         previous = _install_and_report(staging_dir, output_app_path, _log)
 
         return Built(output_app_path, previous)
@@ -1060,6 +1136,38 @@ exec "$DIR/HPClickExe" "$@"
     finally:
         if os.path.exists(staging_dir):
             shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def launcher_script(manifest, preload=True, shim=True):
+    """The copy's Contents/MacOS/HP Click, which macOS runs when it is opened.
+
+    A function of its own so that tests can hand verify's launcher check
+    (bundle_audits.check_launcher) exactly what a build writes.
+    """
+    preload_lines = ""
+    if preload:
+        preload_dylibs = []
+        for dinfo in manifest.get("required_dylibs", []):
+            if dinfo.get("preload") is True:
+                preload_dylibs.append(f"$APP_DATA_DIR/lib/{dinfo['name']}")
+        # The shim must be inserted too, or the symbol stays unresolved.
+        if shim:
+            preload_dylibs.append("$APP_DATA_DIR/lib/libclickgraft-pngshim.dylib")
+        if preload_dylibs:
+            preload_str = ":".join(preload_dylibs)
+            preload_lines = f'export DYLD_INSERT_LIBRARIES="{preload_str}"'
+
+    return f"""#!/bin/bash
+DIR="$( cd "$( dirname "${{BASH_SOURCE[0]}}" )" && pwd )"
+CONTENTS_DIR="$(dirname "$DIR")"
+APP_DATA_DIR="$CONTENTS_DIR/Resources/app/appData/macx"
+
+export DYLD_FRAMEWORK_PATH="$APP_DATA_DIR/Frameworks"
+export DYLD_LIBRARY_PATH="$APP_DATA_DIR/lib"
+{preload_lines}
+
+exec "$DIR/HPClickExe" "$@"
+"""
 
 
 def _macos_sdks():

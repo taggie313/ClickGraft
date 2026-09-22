@@ -10,6 +10,12 @@ with its own user-data dir and TMPDIR.
 build.py's refusal to delete a running copy is tested here too, because this is
 where the stand-in bundles are.
 
+The smoke launch starts each stand-in bundle through a launcher script, as the
+real one starts a copy through Contents/MacOS/HP Click (since the 22 Sep 2026
+review; before, it ran HPClickExe with the preloads put in its environment by
+verify itself). The launcher's preloads are checked statically, against the
+launcher build.py writes.
+
 Nothing here launches HP Click. The live tests start a tiny compiled stand-in
 inside fake .app bundles in a temporary folder, and skip without clang.
 Target: Python 3.9+
@@ -437,13 +443,40 @@ static void logline(const char *name, const char *line) {
     FILE *f = fopen(path, "a"); if (f) { fprintf(f, "%s\n", line); fclose(f); }
 }
 int main(int argc, char **argv) {
-    const char *mode = getenv("CG_FAKE_MODE"); if (!mode) mode = "sleep";
+    char mode_buf[64];
+    snprintf(mode_buf, sizeof mode_buf, "%s", getenv("CG_FAKE_MODE") ? getenv("CG_FAKE_MODE") : "sleep");
+    const char *mode = mode_buf;
     const char *rec = getenv("CG_FAKE_RECORD");
     if (rec && strcmp(mode, "child") && strcmp(mode, "sleep")) {
         FILE *f = fopen(rec, "w");
-        if (f) { fprintf(f, "%s\n%s\n%s\n", argc > 1 ? argv[1] : "", getenv("TMPDIR") ? getenv("TMPDIR") : "", getenv("HOME") ? getenv("HOME") : ""); fclose(f); }
+        if (f) { fprintf(f, "%s\n%s\n%s\n%s\n", argc > 1 ? argv[1] : "", getenv("TMPDIR") ? getenv("TMPDIR") : "", getenv("HOME") ? getenv("HOME") : "", getenv("CG_LAUNCHED_BY") ? getenv("CG_LAUNCHED_BY") : ""); fclose(f); }
     }
-    if (!strcmp(mode, "ok")) {
+    if (!strcmp(mode, "late_error")) {
+        /* The milestone at once, then an error well after it: after the
+           startup budget the test gives, but inside the grace period. */
+        logline("HP Click.log", "DJRIP_DJCS: successful initialization =  \"1\"");
+        usleep(2000000);
+        logline("HP Click App.main.log", "error: Uncaught Exception: late failure");
+        sleep(60);
+        return 0;
+    }
+    if (!strncmp(mode, "init_", 5) || !strncmp(mode, "handoff", 7)) {
+        if (!strcmp(mode, "init_helper_exit") || !strncmp(mode, "handoff", 7)) {
+            char buf[2048]; snprintf(buf, sizeof buf, "%s", argv[0]);
+            char child[2300];
+            snprintf(child, sizeof child, "%s/%s", dirname(buf),
+                     !strcmp(mode, "init_helper_exit") ? "chrome_crashpad_handler" : "HPClickExe");
+            setenv("CG_FAKE_MODE", !strcmp(mode, "init_helper_exit") ? "sleep" :
+                   !strcmp(mode, "handoff_crash") ? "init_signal" : "ok", 1);
+            pid_t pid = 0; char *cargv[] = {child, NULL};
+            if (posix_spawn(&pid, child, NULL, NULL, cargv, environ)) return 9;
+        }
+        logline("HP Click.log", "successful initialization");
+        usleep(200000);
+        if (!strcmp(mode, "init_signal")) { raise(SIGKILL); }
+        if (!strcmp(mode, "init_nonzero") || !strcmp(mode, "handoff_nonzero")) return 3;
+        return 0;
+    } else if (!strcmp(mode, "ok")) {
         char buf[2048]; snprintf(buf, sizeof buf, "%s", argv[0]);
         char helper[2300]; snprintf(helper, sizeof helper, "%s/JDFPrintProcessor", dirname(buf));
         setenv("CG_FAKE_MODE", "child", 1);
@@ -482,12 +515,26 @@ def stand_in():
     shutil.rmtree(d, ignore_errors=True)
 
 
+# What the stand-in bundles start with: build.py's launcher, cut down to the
+# lines that matter here. It execs HPClickExe, as the real one does, and leaves
+# a mark the stand-in records, so a test can see the launch went through it.
+FAKE_LAUNCHER = """#!/bin/bash
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export CG_LAUNCHED_BY="the launcher"
+exec "$DIR/HPClickExe" "$@"
+"""
+
+
 def _fake_bundle(root, name, stand_in):
     app = os.path.join(root, name)
     macos = os.path.join(app, "Contents", "MacOS")
     os.makedirs(macos)
-    for exe in ("HPClickExe", "JDFPrintProcessor"):
+    for exe in ("HPClickExe", "JDFPrintProcessor", "chrome_crashpad_handler"):
         shutil.copy2(stand_in, os.path.join(macos, exe))
+    launcher = os.path.join(macos, "HP Click")
+    with open(launcher, "w") as f:
+        f.write(FAKE_LAUNCHER)
+    os.chmod(launcher, 0o755)
     return app
 
 
@@ -568,8 +615,11 @@ def test_live_smoke_launch_is_private_and_stops_only_its_own(bundles, tmp_path, 
         assert res["cleanup"] is None
 
         with open(record) as f:
-            udd_arg, tmpdir, home, spawned = f.read().splitlines()[:4]
+            udd_arg, tmpdir, home, launched_by, spawned = f.read().splitlines()[:5]
         rc, helper_pid = map(int, spawned.split())
+        # Started the way macOS starts a copy, through its launcher, and not
+        # HPClickExe run directly with an environment verify made up.
+        assert launched_by == "the launcher"
         assert rc == 0 and helper_pid > 0, "the stand-in did not start its JDFPrintProcessor"
         with pytest.raises(ProcessLookupError):
             os.kill(helper_pid, 0)      # the orphaned helper was stopped too
@@ -720,6 +770,169 @@ def test_live_smoke_launch_times_out_without_a_milestone(bundles, monkeypatch):
         kept = res["message"].rsplit("logs are in ", 1)[-1].rstrip(".")
         if kept.startswith(verify.SMOKE_TMP_BASE + "/cg-smoke-"):
             shutil.rmtree(kept, ignore_errors=True)
+
+
+@pytest.mark.parametrize("mode", ["init_exit", "init_nonzero", "init_signal",
+                                   "init_helper_exit", "handoff_crash"])
+def test_live_initialized_launch_must_survive_the_grace_period(bundles, monkeypatch, mode):
+    """A main process that goes after the milestone fails the launch. On
+    22 Sep 2026 1.5.9 passed a real 4.10.42 copy sent SIGSEGV 0.3 s after it."""
+    target, _ = bundles
+    monkeypatch.setenv("CG_FAKE_MODE", mode)
+    result = smoke_launch(target, {}, timeout_s=5, grace_s=0.8, poll_s=0.05)
+    try:
+        assert not result["ok"], result
+        assert "having reported successful initialization" in result["message"]
+        assert "after reporting" not in result["message"]
+        assert processes_inside(target) == []
+    finally:
+        kept = result["message"].rsplit("logs are in ", 1)[-1].rstrip(".")
+        if kept.startswith(verify.SMOKE_TMP_BASE + "/cg-smoke-"):
+            shutil.rmtree(kept, ignore_errors=True)
+
+
+def test_handoff_must_be_a_main_process_not_a_helper(monkeypatch):
+    exe = COPY + "/Contents/MacOS/HPClickExe"
+    monkeypatch.setattr(verify, "launched_processes", lambda *args: [
+        (101, exe + " --user-data-dir=/private/tmp/cg-smoke-test/user-data"),
+        (102, exe + " --type=renderer"),
+        (103, exe + " --type utility"),
+        (104, exe + "Helper"),
+        (105, COPY + "/Contents/Frameworks/chrome_crashpad_handler"),
+        (106, "/usr/bin/echo " + exe),
+    ])
+    assert verify._launched_main_processes(COPY, "cg-smoke-test", 100) == [101]
+
+
+def test_live_clean_handoff_to_an_owned_main_process_is_allowed(bundles, monkeypatch):
+    target, _ = bundles
+    monkeypatch.setenv("CG_FAKE_MODE", "handoff")
+    result = smoke_launch(target, {}, timeout_s=5, grace_s=0.8, poll_s=0.05)
+    assert result["ok"], result
+    assert processes_inside(target) == []
+
+
+def test_live_nonzero_exit_fails_even_with_another_main_process_running(bundles, monkeypatch):
+    """Only a CLEAN exit may hand over to another main process of the launch.
+    Here the first one starts a second, both report the milestone, and the
+    first exits 3: that is a failure, however healthy the second looks."""
+    target, _ = bundles
+    monkeypatch.setenv("CG_FAKE_MODE", "handoff_nonzero")
+    result = smoke_launch(target, {}, timeout_s=5, grace_s=1.5, poll_s=0.05)
+    try:
+        assert not result["ok"], result
+        assert "exit code 3" in result["message"]
+        assert processes_inside(target) == [], "the second main process was not stopped"
+    finally:
+        kept = result["message"].rsplit("logs are in ", 1)[-1].rstrip(".")
+        if kept.startswith(verify.SMOKE_TMP_BASE + "/cg-smoke-"):
+            shutil.rmtree(kept, ignore_errors=True)
+
+
+def test_live_startup_timeout_does_not_cut_short_the_grace_period(bundles, monkeypatch):
+    """The milestone comes at once and an error 2 s later: after the 1 s
+    startup budget, inside the 3 s grace period. Up to 1.5.9 the loop ended at
+    the budget (`while elapsed < timeout_s`), never read the error and passed
+    the launch; run against that loop, this test fails (22 Sep 2026)."""
+    target, _ = bundles
+    monkeypatch.setenv("CG_FAKE_MODE", "late_error")
+    result = smoke_launch(target, {}, timeout_s=1.0, grace_s=3.0, poll_s=0.05)
+    try:
+        assert not result["ok"], result
+        assert "Uncaught Exception" in result["message"], result
+    finally:
+        kept = result["message"].rsplit("logs are in ", 1)[-1].rstrip(".")
+        if kept.startswith(verify.SMOKE_TMP_BASE + "/cg-smoke-"):
+            shutil.rmtree(kept, ignore_errors=True)
+
+
+def test_smoke_launch_refuses_a_copy_with_no_launcher(tmp_path):
+    """Nothing to start the way macOS would, so nothing is started at all."""
+    app = tmp_path / "HP Click (Apple Silicon).app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    before = set(os.listdir(verify.SMOKE_TMP_BASE))
+    result = smoke_launch(str(app), {})
+    assert not result["ok"] and "no launcher at Contents/MacOS/HP Click" in result["message"]
+    assert {n for n in set(os.listdir(verify.SMOKE_TMP_BASE)) - before
+            if n.startswith("cg-smoke-")} == set()
+
+
+# ---------------------------------------------------------------------------
+# The launcher's preloads, checked statically against what build.py writes
+
+
+def _manifest(version="4.8.117"):
+    with open(os.path.join(REPO, "manifests", f"{version}.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _launcher_copy(root, manifest, preload=True, shim=True, libs=None):
+    """A bundle holding build.py's own launcher and the libraries it names."""
+    from clickgraft.build import launcher_script
+    app = os.path.join(root, "HP Click (Apple Silicon).app")
+    macos = os.path.join(app, "Contents", "MacOS")
+    lib = os.path.join(app, "Contents", "Resources", "app", "appData", "macx", "lib")
+    os.makedirs(macos)
+    os.makedirs(lib)
+    names = [d["name"] for d in manifest["required_dylibs"]] + (
+        ["libclickgraft-pngshim.dylib"] if shim else [])
+    for name in (names if libs is None else libs):
+        with open(os.path.join(lib, name), "wb") as f:
+            f.write(b"stand-in")
+    with open(os.path.join(macos, "HP Click"), "w") as f:
+        f.write(launcher_script(manifest, preload=preload, shim=shim))
+    return app
+
+
+@pytest.mark.parametrize("version", ["4.8.117", "4.8.118", "4.10.42"])
+def test_the_launcher_build_writes_passes(tmp_path, version):
+    manifest = _manifest(version)
+    entry = verify.check_launcher(_launcher_copy(str(tmp_path), manifest), manifest)
+    assert entry.startswith("PASSED")
+    for d in manifest["required_dylibs"]:
+        assert (d["name"] in entry) == (d.get("preload") is True)
+    assert "libclickgraft-pngshim.dylib" in entry
+
+
+def test_a_no_preload_copy_fails_and_says_why(tmp_path):
+    """22 Sep 2026: a --no-preload 4.8.117 copy passed every check, the test
+    launch included, because nothing it leaves out is called at startup."""
+    manifest = _manifest()
+    app = _launcher_copy(str(tmp_path), manifest, preload=False)
+    with pytest.raises(ValueError) as exc:
+        verify.check_launcher(app, manifest)
+    message = str(exc.value)
+    for name in ("libidn2.0.dylib", "libnghttp2.14.dylib", "libclickgraft-pngshim.dylib"):
+        assert name in message
+    assert "--no-preload" in message and "diagnostic build" in message
+
+
+def test_a_launcher_without_the_png_shim_fails(tmp_path):
+    manifest = _manifest()
+    app = _launcher_copy(str(tmp_path), manifest, shim=False)
+    # The shim is in the copy, and the launcher does not insert it.
+    lib = os.path.join(app, "Contents", "Resources", "app", "appData", "macx", "lib")
+    with open(os.path.join(lib, "libclickgraft-pngshim.dylib"), "wb") as f:
+        f.write(b"stand-in")
+    with pytest.raises(ValueError, match="does not preload libclickgraft-pngshim.dylib"):
+        verify.check_launcher(app, manifest)
+
+
+def test_a_launcher_naming_a_library_the_copy_lacks_fails(tmp_path):
+    manifest = _manifest()
+    app = _launcher_copy(str(tmp_path), manifest,
+                         libs=["libidn2.0.dylib", "libclickgraft-pngshim.dylib"])
+    with pytest.raises(ValueError, match="libnghttp2.14.dylib, which the copy does not have"):
+        verify.check_launcher(app, manifest)
+
+
+def test_verify_runs_the_launcher_check_before_any_launch():
+    """With the static checks, so it runs on an Intel Mac too, and fails a
+    --no-preload copy as "launcher" before the launch it would pass."""
+    import inspect
+    src = inspect.getsource(verify.verify_app_bundle)
+    assert src.index('results["launcher"]') < src.index("if not is_apple_silicon()")
+    assert src.index('step.now = "launcher"') < src.index('results["launcher"]')
 
 
 if __name__ == "__main__":
