@@ -16,16 +16,16 @@ reaches its steady no-printer UI state:
 which is the app having started, initialised DjCore, drawn its window, looked
 for a printer and concluded there isn't one.
 """
+import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from clickgraft import verify
+from common import arguments, prepared_pair, launch
 
 # Each run gets its own TMPDIR and --user-data-dir, so HP's logs land inside it
 # rather than in the shared /tmp/HP folder both runs and any HP Click the owner
@@ -46,14 +46,8 @@ PHASES = [
 ]
 
 
-def pids(bundle):
-    # pgrep -f on a path holding regex metacharacters -- "(Apple Silicon)" --
-    # is a trap, and matching by process NAME would catch the owner's HP Click.
-    return [pid for pid, _cmd in verify.processes_inside(bundle)]
-
-
-def sample(bundle):
-    p = pids(bundle)
+def sample(bundle, mark, root_pid):
+    p = [pid for pid, _ in verify.launched_processes(bundle, mark, root_pid)]
     if not p:
         return 0.0, 0.0
     out = subprocess.run(["ps", "-o", "rss=,cputime=", "-p", ",".join(map(str, p))],
@@ -69,17 +63,6 @@ def sample(bundle):
             d, h, mm, ss = m.groups()
             cpu += int(d or 0) * 86400 + int(h or 0) * 3600 + int(mm) * 60 + float(ss)
     return cpu, rss
-
-
-def kill_all(bundle):
-    """Stop this bundle's own processes and nothing else.
-
-    It used to pkill by name -- every HP Click on the Mac, and every Electron
-    or Chrome crash handler with it -- to clear the shared single-instance
-    lock. Private profiles removed that need (19 Sep 2026).
-    """
-    verify.kill_hpclick_processes(bundle)
-    time.sleep(1.0)
 
 
 def newest_ts(blob, wall0):
@@ -135,105 +118,51 @@ def read(path):
         return ""
 
 
-def run_once(bundle, insert_libs, label):
-    kill_all(bundle)
-    run_tmp = tempfile.mkdtemp(prefix="cg-perf-", dir="/private/tmp")
-    logdir = os.path.join(run_tmp, LOGDIR_REL)
-    render_log = os.path.join(logdir, "HP Click.log")
-    main_log = os.path.join(logdir, "HP Click App.main.log")
-
-    res = f"{bundle}/Contents/Resources/app/appData/macx"
-    env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": os.path.expanduser("~"),
-           "DYLD_FRAMEWORK_PATH": f"{res}/Frameworks",
-           "DYLD_LIBRARY_PATH": f"{res}/lib",
-           "TMPDIR": run_tmp + "/"}
-    if insert_libs:
-        env["DYLD_INSERT_LIBRARIES"] = (
-            f"{res}/lib/libunistring.5.dylib:{res}/lib/libidn2.0.dylib")
-
-    t0, wall0 = time.monotonic(), time.time()
-    proc = subprocess.Popen([f"{bundle}/Contents/MacOS/HPClickExe",
-                             f"--user-data-dir={run_tmp}/user-data"], env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    marks, peak_rss = {}, 0.0
-    last_line_at = None          # elapsed at the newest log line seen
-    last_change = time.monotonic()
-    prev_len = -1
-    while time.monotonic() - t0 < CAP:
-        blob = read(render_log)
-        if len(blob) != prev_len:
-            prev_len = len(blob)
-            last_change = time.monotonic()
+def run_once(bundle, manifest, label):
+    with launch(bundle, manifest) as (proc, folder, mark):
+        render_log = os.path.join(folder, LOGDIR_REL, "HP Click.log")
+        main_log = os.path.join(folder, LOGDIR_REL, "HP Click App.main.log")
+        t0, wall0 = time.monotonic(), time.time()
+        last_change, prev_blob, peak_rss = t0, "", 0.0
+        reached = False
+        error = "Startup did not reach the terminal marker and settle before the deadline"
+        while time.monotonic() - t0 < CAP:
+            blob = read(render_log)
+            if blob != prev_blob:
+                last_change, prev_blob = time.monotonic(), blob
             marks = parse_marks(blob, wall0)
-            if marks:
-                last_line_at = max(marks.values())
-            tail = newest_ts(blob, wall0)
-            if tail is not None:
-                last_line_at = tail
-        _, rss = sample(bundle)
-        peak_rss = max(peak_rss, rss)
-        if last_line_at is not None and time.monotonic() - last_change > LOG_QUIET:
-            break
-        time.sleep(0.25)
-
-    total = time.monotonic() - t0
-    cpu, _ = sample(bundle)
-    marks = parse_marks(read(render_log), wall0)
-    updated = "update-downloaded" in read(main_log)
-    kill_all(bundle)
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    shutil.rmtree(run_tmp, ignore_errors=True)
-
-    r = {"marks": marks, "cpu_s": cpu, "rss_mb": peak_rss, "quiet_at": last_line_at,
-         "total_s": total, "reached": last_line_at is not None,
-         "updater_downloaded": updated}
-    print(f"  {label}: log_quiet_at={last_line_at if last_line_at else -1:6.2f}s "
-          f"djcore={marks.get('djcore_ready',-1):6.2f}s "
-          f"cpu={cpu:6.2f}s rss={peak_rss:5.0f}MB "
-          f"{'[UPDATER DOWNLOADED]' if updated else ''}", flush=True)
-    return r
-
-
-def bench(label, bundle, insert_libs, runs=3):
-    print(f"\n=== {label} ===", flush=True)
-    return [run_once(bundle, insert_libs, f"run {i+1}") for i in range(runs)]
+            _, rss = sample(bundle, mark, proc.pid)
+            peak_rss = max(peak_rss, rss)
+            if proc.poll() is not None:
+                error = f"Application exited during startup ({proc.returncode})"
+                break
+            if "no_printer" in marks and "djcore_ready" in marks and time.monotonic() - last_change >= LOG_QUIET:
+                reached = True
+                break
+            time.sleep(0.25)
+        cpu, _ = sample(bundle, mark, proc.pid)
+        updated = "update-downloaded" in read(main_log)
+        result = {"marks": parse_marks(read(render_log), wall0), "cpu_s": cpu,
+                  "rss_mb": peak_rss, "quiet_at": newest_ts(read(render_log), wall0),
+                  "total_s": time.monotonic() - t0, "reached": reached,
+                  "updater_downloaded": updated}
+        if not reached or updated:
+            result["error"] = "Updater ran; comparison invalid" if updated else error
+        print(f"{label}: {result}", flush=True)
+        return result
 
 
 def med(rows, key, sub=None):
-    vals = [(r["marks"].get(sub) if sub else r[key]) for r in rows]
-    vals = sorted(v for v in vals if isinstance(v, (int, float)))
-    return vals[len(vals) // 2] if vals else None
+    values = [(row["marks"].get(sub) if sub else row[key]) for row in rows if "error" not in row]
+    values = sorted(value for value in values if isinstance(value, (int, float)))
+    return values[len(values) // 2] if values else None
 
 
 if __name__ == "__main__":
-    SC = ("/private/tmp/claude-501/-Users-taggie-JoshCode-HPClickRepack/"
-          "74d0dedf-8678-415f-8151-72966c072e2f/scratchpad")
-    arm = bench("arm64 repack", "/Applications/HP Click.app", True)
-    # Copy of the pristine backup, updater bypassed to match the arm64 build.
-    # Kept out of .app form so macOS App Management never locks it.
-    intel = bench("x86_64 stock under Rosetta", f"{SC}/IntelWork", False)
-
-    print("\n" + "=" * 70)
-    print(f"{'metric':<26}{'arm64':>12}{'x86_64/Rosetta':>18}{'ratio':>12}")
-    print("=" * 70)
-    rows = [("time to log quiescence", "quiet_at", None),
-            ("time to DjCore ready", "marks", "djcore_ready"),
-            ("time to printer svc", "marks", "first_printer_svc"),
-            ("time to 'no printer'", "marks", "no_printer"),
-            ("CPU-seconds burned", "cpu_s", None),
-            ("peak RSS (MB)", "rss_mb", None)]
-    for name, key, sub in rows:
-        a, b = med(arm, key, sub), med(intel, key, sub)
-        if a is None or b is None:
-            print(f"{name:<26}{str(a):>12}{str(b):>18}{'n/a':>12}")
-        else:
-            print(f"{name:<26}{a:>12.2f}{b:>18.2f}{b/a if a else 0:>11.2f}x")
-    print("\nreached terminal marker: "
-          f"arm64 {sum(r['reached'] for r in arm)}/{len(arm)}, "
-          f"intel {sum(r['reached'] for r in intel)}/{len(intel)}")
-    print("intel runs that downloaded an update: "
-          f"{sum(r['updater_downloaded'] for r in intel)}/{len(intel)}")
+    args = arguments("Compare startup using private copies of same-version Intel and arm64 apps")
+    with prepared_pair(args.arm, args.intel) as (copies, manifest, provenance):
+        results = {arch: [run_once(bundle, manifest, f"{arch} run {i + 1}")
+                          for i in range(args.runs)] for arch, bundle in copies.items()}
+    with open(args.output, "w") as out:
+        json.dump({"inputs": provenance, "runs": results}, out, indent=2)
+    sys.exit(1 if any("error" in r for rows in results.values() for r in rows) else 0)

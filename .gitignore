@@ -47,3 +47,6 @@ site/deploy/deploy.env
 # than to the person triaging it. Keep them local.
 ag-review*.md
 *-review.md
+
+# Benchmark-only Node tooling
+benchmarks/node_modules/
