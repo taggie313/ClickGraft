@@ -28,14 +28,32 @@ matched the source.
 2. Write `packaging/release.json`. `importance: important` is reserved for
    "fixes something that stops the tool working" — it is the only word left
    that means it.
-3. `rm -rf dist/ && ./packaging/build_app.sh` — build fresh, never reuse `dist/`.
-4. `./packaging/sign_and_notarize.sh`
-5. `git tag -a vX.Y.Z` and push the tag **before** deploying: the appcast's
-   release history is built from tags, reading each tag's `release.json`.
-6. `./site/deploy/redeploy.sh` — its healthcheck lists the GitHub release as
-   "not created yet"; that is step 7, not a failure. A `✗` there is real.
-7. `gh release create vX.Y.Z dist/ClickGraft.zip` with a title of the form
-   `ClickGraft X.Y.Z — short tag line`.
+3. `python3 packaging/check_release.py` — the patch guard, the whole suite and
+   a throwaway build. Read every skip it lists; two are environmental (a
+   case-sensitive filesystem, and Linux for the site's atomic swap).
+4. **Commit everything that ships** — `clickgraft/`, `manifests/`,
+   `packaging/*.swift`, `build_app.sh`, `AppIcon.icns`, LICENSE, NOTICE — and
+   change none of it again before the tag. The artifact gate compares the
+   shipped zip against the sources the tag committed, so a later edit to any
+   of them invalidates the release rather than the working tree.
+5. `rm -rf dist/ && ./packaging/build_app.sh` — build fresh, never reuse `dist/`.
+6. `./packaging/sign_and_notarize.sh`
+7. `git tag -a vX.Y.Z` and push the tag **before** deploying: the appcast's
+   release history is built from tags, reading each tag's `release.json`, and
+   the gate resolves the zip's version to that tag.
+8. `python3 packaging/check_release.py --artifact dist/ClickGraft.zip` — the
+   same check `redeploy.sh` runs: version, recorded sources, payload,
+   signature, stapling, Gatekeeper.
+9. `./site/deploy/redeploy.sh` — its healthcheck lists the GitHub release as
+   "not created yet"; that is the next step, not a failure. A `✗` there is real.
+10. `gh release create vX.Y.Z dist/ClickGraft.zip` with a title of the form
+    `ClickGraft X.Y.Z — short tag line`.
+
+Site-only redeploys between releases are fine: the gate checks the zip against
+its own tag, not against HEAD. Zips released before 1.6.0 carry no source
+record, so redeploying one needs
+`CLICKGRAFT_ALLOW_LEGACY_ARTIFACT=<version> ./site/deploy/redeploy.sh`,
+naming that exact version.
 
 The download is published as `ClickGraft-<version>.zip`, with `ClickGraft.zip`
 left as a **symlink** to it. A symlink and not a redirect, because a 302 would

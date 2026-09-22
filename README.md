@@ -170,15 +170,21 @@ Open an issue with that report attached and the version can be added.
 
 1. Copy your app to a staging directory (`ditto`, so it's a fast APFS clone).
 2. Download `electron-vX-darwin-arm64.zip` from the official Electron releases
-   and verify it against that release's published `SHASUMS256.txt`.
+   and check it against the SHA-256 the version manifest pins, which was taken
+   from that release's published `SHASUMS256.txt`.
 3. Replace the Electron framework, the four helper executables, and the main
    binary. HP's icons, localizations and native modules are left alone; its
    `Info.plist` files keep HP's version and change only the bundle identifier
    (step 6), the archive's integrity hash (step 5) and the minimum macOS
    (step 7).
 4. Add the arm64 libraries HP's own arm64 slices need but never shipped —
-   see below. Fetched from Homebrew's CDN, each from the bottle for the oldest
-   macOS Homebrew builds it for, and SHA-256 verified.
+   see below. The version manifest pins each one to a single Homebrew bottle,
+   by the SHA-256 of the bottle and of the library inside, so a build uses
+   exactly those bytes whatever Homebrew publishes later; a copy already in
+   your Homebrew or ClickGraft's cache is used only if it is identical. Each
+   pin is the bottle for the oldest macOS Homebrew built that library for when
+   it was chosen (22 Sep 2026: macOS 13 for libidn2, macOS 15 for the other
+   three).
 5. Apply the version manifest's archive patches: the updater lock, crash-report
    upload turned off in `app/package.json` (the file HP's crash reporter reads),
    HP's own 4.11.31 change to a log line that recorded SNMPv3 printer passwords,
@@ -187,17 +193,17 @@ Open an issue with that report attached and the version can be added.
 6. Give the copy its own bundle identifier so macOS keeps the two apps distinct.
 7. Set the copy's minimum macOS to the highest any binary in it declares, and
    never lower than HP's own. On an Apple Silicon Mac older than that, the build
-   stops — normally before downloading anything, because HP's files and
-   Homebrew's list of bottles settle it in advance.
+   stops — normally before downloading anything, because HP's files and the
+   pinned bottles settle it in advance.
 8. Ad-hoc sign inner-to-outer. Every signature is required: if `codesign`
    fails, the build stops there with codesign's own message, before the copy
    already in the output folder has been touched.
 9. Rename into place. A copy already there is set aside first — renamed,
-   hidden, in the same folder — not deleted. The wizard deletes it only once
-   the new copy passes `verify`; if the new one fails, it is removed and the old
-   one goes back as it was. (With nothing to put back, the new copy stays.)
-   `clickgraft build` doesn't verify, so it deletes the old copy once the build
-   succeeds. A note beside the set-aside copy records which copy took its place,
+   hidden, in the same folder — not deleted. ClickGraft deletes it only once
+   the new copy passes `verify` — from the wizard and from `clickgraft build`
+   alike; if the new one fails, it is removed and the old one goes back as it
+   was. (With nothing to put back, the new copy stays.)
+   A note beside the set-aside copy records which copy took its place,
    so only that one is ever removed to put it back; a build won't start while a
    set-aside copy for the same path is waiting for its owner; and one build,
    check and settle runs at a time per folder.

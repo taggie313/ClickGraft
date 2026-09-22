@@ -233,8 +233,8 @@ def plan_floor(source_app_path, manifest, bottles=None, cache_dir=None, timeout=
 
     Counts HP's LSMinimumSystemVersion, every Mach-O of HP's that the build
     keeps, and the macOS each Homebrew bottle the build will use is published
-    for (deps.choose_bottles; a query to Homebrew's formula API, not a
-    download). Electron's runtime is not counted here because it has not been
+    for (deps.choose_bottles; pinned in shipped manifests, with API discovery
+    only for unpinned development manifests). Electron's runtime is not counted here because it has not been
     downloaded yet; build.py counts it from the finished copy and refuses there
     too. Electron 39.8.4's arm64 files all declare 12.0 (measured 22 Sep 2026),
     below HP's own.
