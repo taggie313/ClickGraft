@@ -15,5 +15,5 @@
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "recommended",
-  "summary": "Copies now use the support libraries built for macOS 15, so they no longer fail to open on macOS 15.0 to 15.3 when Homebrew isn't installed, and ClickGraft says up front that a copy needs macOS 15. Making a new copy keeps the one you have until the new one passes its checks, and puts it back if it doesn't. Signing problems now stop the build instead of passing unnoticed."
+  "summary": "The wizard can no longer get stuck at the last step when something goes wrong behind it, and it says plainly when it can't tell what happened. Making a copy from the command line now runs the same checks as the wizard, including the printer warning, and refuses to replace a copy that changed while it worked. The libraries a copy needs are pinned to exact versions, and downloads fail only when they really stall."
 }
