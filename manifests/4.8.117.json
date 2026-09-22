@@ -82,19 +82,40 @@
       "name": "libidn2.0.dylib",
       "brew_formula": "libidn2",
       "why": "The arm64 slice of Dj{Core,Conn}ServicesNative-Electron.node has flat-namespace undefined symbols _idn2_check_version, _idn2_free, _idn2_lookup_ul, _idn2_strerror and ZERO libidn2 load commands. The x86_64 slice has none of them. HP's arm64 build links a curl with IDN support and never ships the library. Flat lookup resolves at CALL time, so the app launches fine and only dies on IDN code paths -- do not conclude from a clean launch that this is unnecessary.",
-      "preload": true
+      "preload": true,
+      "bottle": {
+        "tag": "arm64_ventura",
+        "version": "2.3.8",
+        "url": "https://ghcr.io/v2/homebrew/core/libidn2/blobs/sha256:d0d933dad3ab921d09acd3fe3efa952ee8859f3d9d03aa0210490aca25e0c544",
+        "sha256": "d0d933dad3ab921d09acd3fe3efa952ee8859f3d9d03aa0210490aca25e0c544",
+        "dylib_sha256": "97077bad11c4c26bf35406567d06f5db1109183732a2cc5b2e80c4cb90c29c82"
+      }
     },
     {
       "name": "libunistring.5.dylib",
       "brew_formula": "libunistring",
       "why": "dependency of libidn2",
-      "preload": false
+      "preload": false,
+      "bottle": {
+        "tag": "arm64_sequoia",
+        "version": "1.4.2",
+        "url": "https://ghcr.io/v2/homebrew/core/libunistring/blobs/sha256:513bf2378982459bf3daf286cec9d50d3f491686f8caa8749604de3be4e6db77",
+        "sha256": "513bf2378982459bf3daf286cec9d50d3f491686f8caa8749604de3be4e6db77",
+        "dylib_sha256": "b91909942fee950e6eaa67a670bd11354b8ae2200e7e8b8a1c31fc302e02f191"
+      }
     },
     {
       "name": "libintl.8.dylib",
       "brew_formula": "gettext",
       "why": "dependency of libidn2",
-      "preload": false
+      "preload": false,
+      "bottle": {
+        "tag": "arm64_sequoia",
+        "version": "1.0",
+        "url": "https://ghcr.io/v2/homebrew/core/gettext/blobs/sha256:98a116d35792ccd730360ffc8c0d8fc5799b2282b96bb7696192c573f064a331",
+        "sha256": "98a116d35792ccd730360ffc8c0d8fc5799b2282b96bb7696192c573f064a331",
+        "dylib_sha256": "6b7eb0dbb34ec9ee01b542f1f7770469791d792b6c7b2a2ca91b0bc39ea007ec"
+      }
     },
     {
       "name": "libnghttp2.14.dylib",
@@ -102,9 +123,17 @@
       "why": "The arm64 slice of Dj{Core,Conn}ServicesNative-Electron.node has 36 flat-namespace undefined _nghttp2_* symbols from HP's libcurl build with HTTP/2 support. Same class as the idn2 gap: HP links a curl with h2 and ships no nghttp2. nghttp2 is MIT licensed.  NOTE: the formula is libnghttp2, NOT nghttp2. Homebrew split the library out into its own formula; the nghttp2 bottle now contains the command-line tools and no .dylib at all, so fetching it downloads and verifies fine and then finds nothing to extract.",
       "$measured": "ALPN measured 2026-07-31: us1.api.ws-hp.com negotiates http/1.1 ONLY -- an earlier note wrongly cited it as an h2 endpoint. lfp-downloads.hpcloud.hp.com DOES negotiate h2, but that is the updater host, which this patch disables. So no confirmed h2 path is exercised by the patched build today. Bundled anyway because the cost is one small MIT dylib and the failure mode is a hard process abort at call time on any HP endpoint that later enables h2.",
       "preload": true,
-      "$preload_note": "MUST be true. These symbols are flat-namespace ('dynamically looked up'), which dyld resolves only against images ACTUALLY LOADED in the process. Nothing declares a load command for libnghttp2, so with preload:false the dylib sits in the bundle, satisfies an `nm -gU` scan, and is never loaded -- verified with vmmap: libidn2/libunistring/libintl LOADED, libnghttp2 NOT LOADED. Presence on disk is not satisfaction."
+      "$preload_note": "MUST be true. These symbols are flat-namespace ('dynamically looked up'), which dyld resolves only against images ACTUALLY LOADED in the process. Nothing declares a load command for libnghttp2, so with preload:false the dylib sits in the bundle, satisfies an `nm -gU` scan, and is never loaded -- verified with vmmap: libidn2/libunistring/libintl LOADED, libnghttp2 NOT LOADED. Presence on disk is not satisfaction.",
+      "bottle": {
+        "tag": "arm64_sequoia",
+        "version": "1.70.0",
+        "url": "https://ghcr.io/v2/homebrew/core/libnghttp2/blobs/sha256:2d1fba5839f4ed59e57791f9e06b84eb2203b5db274933865a68b50e66452a79",
+        "sha256": "2d1fba5839f4ed59e57791f9e06b84eb2203b5db274933865a68b50e66452a79",
+        "dylib_sha256": "50ec14ee6ae96524f205f9514dae4399f7274d56e7625838a6b2f4b8c8efd3f7"
+      }
     }
   ],
+  "$bottles_pinned": "Measured 22 Sep 2026. Each library's bottle is pinned: its registry url, the tarball's sha256 (the digest the url names) and dylib_sha256, the hash of the library extracted from it before the build rewrites its install name and signs it. Builds use exactly these bytes whatever Homebrew publishes later, and a local Homebrew or cached copy only when it is byte for byte the same. How they were chosen: Homebrew's formula API that day listed libidn2 2.3.8, libunistring 1.4.2, gettext 1.0 (which provides libintl) and libnghttp2 1.70.0, and each pin is the bottle for the oldest macOS on offer (the rule in deps.choose_bottle): arm64_ventura for libidn2, arm64_sequoia for the other three, which Homebrew publishes for sequoia and newer only. Each tarball was fetched from ghcr.io and hashed, and each library extracted and read: all arm64, libidn2 declaring minos 13.0 and the others 15.0, and none importing _strchrnul. GHCR still served libidn2 2.3.0's arm64_big_sur blob that day, so a superseded bottle stays fetchable; should a pin ever answer 404, the build says a newer ClickGraft is needed. To re-pin, repeat all of this and change the three manifests together.",
   "$not_a_dependency": {
     "libmagic.1.dylib": "HP already ships this, already universal (x86_64 arm64). Linked by both .node modules, JDFPrintProcessor and goyaApp. Do not copy or replace it."
   },
@@ -122,5 +151,7 @@
     "MPGetTaskStorageValue"
   ],
   "$accepted_unprovided_symbols_note": "Carbon Multiprocessing Services, removed from macOS long ago. Referenced by AdobePDFL, libACR, libACRstd, JDFPrintProcessor and DjCoreServicesNative -- Adobe's RIP stack. ACCEPTED, not shimmed: unlike png_init_filter_functions_neon, where a no-op is the correct behaviour because libpng installs C fallbacks first, these return values a caller acts on (a task id, per-task storage). A plausible-looking lie could cause subtly wrong rendering instead of an honest crash. They are equally unresolvable in HP's own x86_64 build, so Adobe's code has evidently guarded these paths for years. Revisit if a crash ever lands with PC=0 and LR inside the Adobe stack.",
-  "$patches_verified": "Re-measured 19 Sep 2026 on the stock archive: every replace anchor occurs exactly once (the SNMPv3 one included), app/package.json has hp_configs.crashAutoSubmit true, and index.html loads shared/constants.js as a classic script."
+  "$patches_verified": "Re-measured 19 Sep 2026 on the stock archive: every replace anchor occurs exactly once (the SNMPv3 one included), app/package.json has hp_configs.crashAutoSubmit true, and index.html loads shared/constants.js as a classic script.",
+  "$electron_sha256_measured": "Measured 22 Sep 2026: the SHA-256 that the v39.8.4 release's SHASUMS256.txt gives for electron-v39.8.4-darwin-arm64.zip, and the SHA-256 of the 112,031,731-byte archive downloaded from GitHub that day. Pinned, so a build checks the archive against this and never fetches or trusts that file.",
+  "electron_sha256": "47636d2c4e07dc587fad991d2e682a8a8aa42281732e33323418e16e4d31245d"
 }
