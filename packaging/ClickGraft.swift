@@ -397,6 +397,21 @@ final class Wizard: NSObject, NSApplicationDelegate {
     var replacedIsOpen = false
     var replaceLosesPrinters = false
     var acceptPrinterLoss = false
+    // Review's macOS check (1.5.9): this Mac is older than the copy would
+    // need, so the button stays off. The backend refuses too.
+    var macTooOld = false
+
+    // Since 1.5.9 a build sets the copy it replaces aside, hidden, until the
+    // new one has passed its checks. `leftovers` is any the backend found from
+    // a run that was stopped in between (agent env); `asidePath` is the one a
+    // failed build here could not put back. Both are the owner's working copy,
+    // so nothing here deletes or restores one without being asked.
+    var leftovers: [[String: Any]] = []
+    var leftoverDeferred = false
+    var asidePath = ""
+    // The leftover at the output path Review is about to build into, if any;
+    // the button stays off until it is dealt with.
+    var pendingLeftover: [String: Any]?
 
     // MARK: lifecycle
 
@@ -551,7 +566,43 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     // MARK: 2 — Requirements
 
+    /// The macOS every copy ClickGraft can make needs, for the one screen that
+    /// comes before the backend has run: 15.0 for 4.8.117, 4.8.118 and 4.10.42
+    /// (22 Sep 2026). HP's own libmagic declares it in all three, and Homebrew
+    /// publishes three of the four support libraries only for macOS 15 and
+    /// later (clickgraft/macos_floor.py). Review and the build work out each
+    /// copy's own minimum and have the last word; this only spares someone on
+    /// macOS 12 to 14 the Command Line Tools, which /usr/bin/python3 offers to
+    /// install the moment anything runs it -- a large download, behind an
+    /// administrator password, for a copy their Mac could never open.
+    /// tests/test_rollback_and_signing.py checks it against every stock HP
+    /// Click it can find, so it can't drift above what a copy needs.
+    static let copiesNeedMacOS = OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)
+
+    /// copiesNeedMacOS the way people say it: "15".
+    var copiesNeedName: String {
+        macName("\(Wizard.copiesNeedMacOS.majorVersion).\(Wizard.copiesNeedMacOS.minorVersion)")
+    }
+
+    /// Apple Silicon, asked of the kernel rather than the backend, which can't
+    /// run yet here. True under Rosetta too: hw.optional.arm64 describes the
+    /// Mac, not the process.
+    static var hostIsAppleSilicon: Bool {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        return sysctlbyname("hw.optional.arm64", &value, &size, nil, 0) == 0 && value == 1
+    }
+
     @objc func showRequirements() {
+        // Before anything runs python3: on a Mac without the Command Line Tools
+        // that alone brings up macOS's offer to install them. On an Intel Mac
+        // the copy is for another Mac, whose macOS the Intel panel below speaks
+        // to, so only Apple Silicon is checked.
+        if Wizard.hostIsAppleSilicon
+            && !ProcessInfo.processInfo.isOperatingSystemAtLeast(Wizard.copiesNeedMacOS) {
+            showMacTooOldForAnyCopy()
+            return
+        }
         // Probed afresh each time, so Check again notices an accepted licence.
         Toolchain.refresh()
         if Toolchain.state == .xcodeLicenceNeeded {
@@ -569,6 +620,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
         candidates = d["candidates"] as? [[String: Any]] ?? []
         outputPath = d["default_output"] as? String ?? ""
         outputPerUser = d["output_per_user"] as? Bool ?? false
+        leftovers = d["leftovers"] as? [[String: Any]] ?? []
+        if !leftovers.isEmpty && !leftoverDeferred {
+            showLeftover()
+            return
+        }
         let ok = e["clt"] as? Bool ?? false
         // Default true: if an older backend omits the key, fail open rather
         // than blocking every user on a missing field.
@@ -610,6 +666,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
                     ? "DesignJet T310, T320, T350, T720 and T750"
                     : (self?.printerList(dropped) ?? "")
                 let tSeries = "the " + models
+                let floor = self?.copiesNeedName ?? "15"
                 return """
                 Installing these tools needs an administrator password. So does putting the \
                 copy into Applications, and making one downloads Apple's Apple Silicon engine \
@@ -626,13 +683,15 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 Mac they administer, and what comes out is an ordinary app they can deploy \
                 like any other. It needs nothing installed on the Macs that receive it — no \
                 developer tools, no ClickGraft, no downloads — and nothing from the Mac that \
-                made it. Forward them the notes below.
+                made it, but they do need macOS \(floor) or later. Forward them the notes \
+                below.
 
                 3. Or make the copy on a Mac of your own that has the tools, with your version \
-                of HP Click installed, and bring the app over. Move it on a USB drive or a \
-                file share if you can: after AirDrop or a download, macOS refuses to open it \
-                the first time, and you have to allow it in System Settings, under Privacy & \
-                Security.
+                of HP Click installed, and bring the app over. This Mac needs macOS \(floor) \
+                or later to open it, and so does a Mac with Apple Silicon to make it. Move it \
+                on a USB drive or a file share if you can: after AirDrop or a download, macOS \
+                refuses to open it the first time, and you have to allow it in System \
+                Settings, under Privacy & Security.
 
                 ---
                 For whoever does it, measured on macOS 27 (20 Sep 2026):
@@ -652,6 +711,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
                 • The copy carries the HP Click version it was made from, so make it from \
                 the version your printers need: the \(models) need HP Click 4.8.117.
+
+                • It needs macOS \(floor) or later, and its Info.plist says so: macOS won't \
+                open it on an older Mac. A Mac with Apple Silicon needs macOS \(floor) or later \
+                to make it too. An Intel Mac can make it on the macOS it has, but can't \
+                test-launch it (22 Sep 2026).
                 """
             })
         }
@@ -672,6 +736,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          "Everything except the final test-launch works here, because this "
                          + "Mac can't run the copy in order to check it. Tick the box and "
                          + "carry on — the copy will be made, just not tried out."),
+                UI.small("The Mac you make it for needs macOS \(copiesNeedName) or later: "
+                         + "macOS won't open the copy on anything older."),
                 UI.small("Move the finished app on a USB drive or a file share if you can. "
                          + "After AirDrop or a download, macOS refuses to open it the first "
                          + "time, because the copy is signed by the Mac that made it rather "
@@ -696,6 +762,39 @@ final class Wizard: NSObject, NSApplicationDelegate {
         if !ok { buttons.append(UI.button("Check again", self, #selector(showRequirements))) }
         buttons += [UI.spacer(), next]
         present(rows, buttons: buttons)
+    }
+
+    /// This Mac's macOS is older than any copy ClickGraft can make needs
+    /// (copiesNeedMacOS). Said here, before the Command Line Tools, and with
+    /// HP's own Apple Silicon version, which HP lists for this Mac.
+    func showMacTooOldForAnyCopy() {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        let here = "\(v.majorVersion).\(v.minorVersion)"
+            + (v.patchVersion == 0 ? "" : ".\(v.patchVersion)")
+        let needs = copiesNeedName
+        var rows: [NSView] = [
+            UI.title("ClickGraft needs macOS \(needs) or later"),
+            UI.body("This Mac has macOS \(here). The copy ClickGraft makes needs macOS "
+                    + "\(needs) or later, because files HP ships inside HP Click, and the "
+                    + "support files ClickGraft adds from Homebrew, are built for it. So "
+                    + "ClickGraft can't make one on this Mac, and there's nothing to install "
+                    + "for it."),
+            UI.panel([
+                UI.point("Your HP Click is unchanged.", "It works as it did."),
+                UI.point("Once this Mac is on macOS \(needs) or later,",
+                         "open ClickGraft again and it can make the copy."),
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.12)),
+        ]
+        // The same facts agent.native_alternative gives Review, which can't be
+        // asked yet: HP lists 4.11.31 for macOS 12 to 26, and ClickGraft itself
+        // needs 12.
+        let alt = nativeAlternative(["version": "4.11.31", "hp_lists_from": "12.0",
+                                     "hp_lists_to": "26.0"])
+        if !alt.isEmpty {
+            rows.append(UI.panel(alt, tint: NSColor.systemBlue.withAlphaComponent(0.10)))
+        }
+        present(rows, buttons: [UI.button("Back", self, #selector(showWelcome)), UI.spacer(),
+                                UI.button("Quit", self, #selector(quit), primary: true)])
     }
 
     /// Xcode was updated and its licence is unaccepted, and there are no Command
@@ -730,6 +829,184 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     @objc func openSelectedXcode() {
         if let u = Toolchain.selectedXcode() { NSWorkspace.shared.open(u) }
+    }
+
+    // MARK: 2a — A previous copy left set aside (1.5.9)
+
+    /// A build sets the copy it replaces aside, hidden, until the new one has
+    /// passed its checks, then deletes it -- or puts it back if the new one
+    /// fails. Quit or crash in between, or a delete or put-back that fails,
+    /// and the owner's previous copy stays set aside, where nothing else would
+    /// ever mention it. Neither choice is made for them.
+    ///
+    /// Worded from the backend's `state` for it (build._leftover_state), never
+    /// from assumption. The first version of this screen said "never fully
+    /// checked" of whatever was at the path, including a copy that had passed
+    /// and one that had failed, and its "Put it back" removed whatever was
+    /// there -- once, after two interrupted builds, the owner's own copy
+    /// (found in review, 22 Sep 2026). Now the backend only removes the copy
+    /// that build put there, and says when something else is there instead.
+    @objc func showLeftover() {
+        guard let item = leftovers.first else { finishLeftover(); return }
+        let version = item["version"] as? String ?? ""
+        let current = item["current_version"] as? String ?? ""
+        let there = item["restores_to"] as? String ?? ""
+        let name = (there as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+        let exists = item["restores_to_exists"] as? Bool ?? false
+        // An older backend sends no state: treat a copy there as unknown.
+        let state = item["state"] as? String ?? (exists ? "other" : "missing")
+        let check = item["check"] as? String ?? ""
+        let checkName = Wizard.checkNames[check] ?? (check.isEmpty ? "one of the checks" : check)
+        let made = version.isEmpty ? "" : ", made from HP Click \(version),"
+        let newMade = current.isEmpty ? "" : ", made from HP Click \(current),"
+
+        let body: String
+        var points: [NSView] = []
+        var buttons: [NSView] = [UI.button("Decide later", self, #selector(deferLeftover)),
+                                 UI.spacer()]
+        switch state {
+        case "passed":
+            body = "The last time ClickGraft made a copy of HP Click, the new copy passed its "
+                + "checks, but ClickGraft couldn't remove the one it replaced. Your previous "
+                + "copy\(made) is still here, hidden, in the same folder."
+            points = [
+                UI.point("Remove it if the new copy works for you.",
+                         "The new copy\(newMade) stays where it is. That's what ClickGraft "
+                         + "would have done."),
+                UI.point("Put it back", "if you'd rather go back to it. The new copy is then "
+                         + "removed."),
+            ]
+            buttons += [UI.button("Put it back", self, #selector(restoreLeftover)),
+                        UI.button("Remove it", self, #selector(discardLeftover), primary: true)]
+        case "failed":
+            body = "The last time ClickGraft made a copy of HP Click, the new copy didn't "
+                + "pass its checks, and ClickGraft couldn't put your previous copy back in "
+                + "its place. Your previous copy\(made) is safe: it's hidden, in the same "
+                + "folder. What failed: \(checkName)."
+            points = [
+                UI.point("Put it back.", "The new copy, which didn't pass, is removed, and "
+                         + "your previous copy goes back where it was. If \(name) is open, "
+                         + "quit it first."),
+                UI.point("Keep the new copy", "only if you've used it since and it works. "
+                         + "Your previous copy is then deleted."),
+            ]
+            buttons += [UI.button("Keep the new copy", self, #selector(discardLeftover)),
+                        UI.button("Put it back", self, #selector(restoreLeftover), primary: true)]
+        case "missing":
+            body = "The last time ClickGraft made a copy of HP Click, it stopped part-way "
+                + "through replacing yours. Your previous copy\(made) was set aside first, so "
+                + "it's safe, but there's no copy in its place at the moment."
+            points = [UI.point("Put it back.", "It goes back where it was, as it was.")]
+            buttons += [UI.button("Put it back", self, #selector(restoreLeftover), primary: true)]
+        case "other":
+            body = "ClickGraft set your previous copy\(made) aside while it was replacing it, "
+                + "and it's still here, hidden, in the same folder. The \(name) in its place "
+                + "now isn't the one ClickGraft put there"
+                + (current.isEmpty ? "" : " (it's made from HP Click \(current))")
+                + ", so ClickGraft won't remove it to make room."
+            points = [
+                UI.point("To put your previous copy back,", "move \(name) out of that folder "
+                         + "yourself first — to the Trash, say — then press Put it back."),
+                UI.point("If you don't need your previous copy,", "delete it. The \(name) "
+                         + "in its place stays as it is."),
+            ]
+            buttons += [UI.button("Delete it", self, #selector(discardLeftover)),
+                        UI.button("Put it back", self, #selector(restoreLeftover), primary: true)]
+        default:    // "installed": the build stopped while it was checking
+            body = "The last time ClickGraft made a copy of HP Click, it stopped before it "
+                + "had finished checking the new one. Your previous copy\(made) was set aside "
+                + "first, so it's safe. It's hidden, in the same folder as the new one."
+            points = [
+                UI.point("Put it back if you're not sure.",
+                         "The new copy\(current.isEmpty ? "," : newMade) which never finished "
+                         + "its checks, is removed, "
+                         + "and your previous copy goes back where it was."),
+                UI.point("Keep the new copy", "only if you've used it since and it works. "
+                         + "Your previous copy is then deleted."),
+            ]
+            buttons += [UI.button("Keep the new copy", self, #selector(discardLeftover)),
+                        UI.button("Put it back", self, #selector(restoreLeftover), primary: true)]
+        }
+        points.append(UI.point("Your original HP Click was not changed.", ""))
+
+        present([
+            UI.title("Your previous copy is still here"),
+            UI.body(body),
+            UI.panel(points, tint: NSColor.systemOrange.withAlphaComponent(0.12)),
+            // Why "Decide later" costs something: a build refuses while this
+            // is waiting (build.LeftoverPendingError), so a second one can
+            // never be set aside on top of it.
+            UI.small("Until you decide, ClickGraft won't replace \(name) again."),
+            UI.small("Set aside at:"),
+            UI.text(item["path"] as? String ?? "", size: 11, mono: true),
+        ], buttons: buttons)
+    }
+
+    /// Where the wizard goes once a leftover is dealt with or put off:
+    /// Requirements when it was found at launch, Review when a build was
+    /// refused because of it.
+    var afterLeftover: (() -> Void)?
+
+    private func finishLeftover() {
+        let then = afterLeftover
+        afterLeftover = nil
+        if let then = then { then() } else { showRequirements() }
+    }
+
+    @objc func deferLeftover() {
+        leftoverDeferred = true
+        finishLeftover()
+    }
+
+    @objc func restoreLeftover() {
+        guard let path = leftovers.first?["path"] as? String else { return }
+        putBack(path) { [weak self] in self?.finishLeftover() }
+    }
+
+    @objc func discardLeftover() {
+        guard let item = leftovers.first, let path = item["path"] as? String else { return }
+        let there = ((item["restores_to"] as? String ?? "") as NSString).lastPathComponent
+            .replacingOccurrences(of: ".app", with: "")
+        let a = NSAlert()
+        a.messageText = "Delete your previous copy?"
+        a.informativeText = "It's deleted, not moved to the Trash, and can't be brought "
+            + "back. \(there.isEmpty ? "The copy in its place" : there) and your original "
+            + "HP Click stay as they are."
+        a.addButton(withTitle: "Delete it")
+        a.addButton(withTitle: "Cancel")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        let r = agent.once(["discard-previous", "--backup", path])
+        if (r?["type"] as? String) != "discarded" {
+            tell("ClickGraft couldn't delete it",
+                 r?["error"] as? String ?? "The part of ClickGraft that does the work "
+                 + "didn't respond. Your previous copy is still where it was.")
+            return
+        }
+        finishLeftover()
+    }
+
+    /// Put a set-aside copy back, say how it went, then carry on with `then`.
+    private func putBack(_ path: String, then: @escaping () -> Void) {
+        let r = agent.once(["restore-previous", "--backup", path])
+        guard (r?["type"] as? String) == "restored" else {
+            tell("ClickGraft couldn't put it back",
+                 (r?["error"] as? String ?? "The part of ClickGraft that does the work "
+                  + "didn't respond.") + "\n\nYour previous copy is still safe, set aside "
+                 + "where it was.")
+            return
+        }
+        let out = r?["output"] as? String ?? ""
+        tell("Your previous copy is back",
+             "It's at \(out), as it was.")
+        then()
+    }
+
+    private func tell(_ title: String, _ text: String) {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.addButton(withTitle: "OK")
+        a.runModal()
     }
 
     // MARK: 3 — Choose
@@ -1022,6 +1299,44 @@ final class Wizard: NSObject, NSApplicationDelegate {
                     + "button below."),
         ]
 
+        // First of all, because nothing below it can happen. The copy needs
+        // the highest macOS any file in it declares (15.0 for every supported
+        // version on 22 Sep 2026: HP's own libmagic, and Homebrew's support
+        // files), and a Mac older than that would get a copy that fails at
+        // launch. The backend refuses too; saying so here spares a download.
+        let floor = p["macos_floor"] as? [String: Any] ?? [:]
+        macTooOld = (floor["this_mac_ok"] as? Bool) == false
+        if macTooOld {
+            let needs = floor["needs"] as? String ?? ""
+            var parts: [NSView] = [
+                UI.point("This copy needs macOS \(macName(needs)) or later, and this Mac has "
+                         + "macOS \(floor["this_mac"] as? String ?? "?").",
+                         floorReason(floor["reasons"] as? [String] ?? [], needs: needs)),
+                UI.small("Your HP Click is unchanged and works as it did. Once this Mac is on "
+                         + "macOS \(macName(needs)) or later, ClickGraft can make the copy."),
+            ]
+            parts += nativeAlternative(floor["alternative"] as? [String: Any])
+            rows.append(UI.panel(parts, tint: NSColor.systemOrange.withAlphaComponent(0.14)))
+        }
+
+        // A copy an earlier build set aside here and never put back or deleted.
+        // The build refuses until the owner has decided (build.py,
+        // LeftoverPendingError): a second one set aside on top of it could
+        // only be undone in the right order, which nothing on screen explains.
+        pendingLeftover = p["leftover"] as? [String: Any]
+        if let item = pendingLeftover {
+            let v = item["version"] as? String ?? ""
+            rows.append(UI.panel([
+                UI.point("Your previous copy is still set aside from last time.",
+                         "The last time ClickGraft replaced \(appName), it didn't finish, and "
+                         + (v.isEmpty ? "your previous copy" : "your previous copy, made from "
+                            + "HP Click \(v),")
+                         + " is still set aside, hidden, in the same folder. Decide what "
+                         + "happens to it before ClickGraft makes another copy."),
+                UI.button("Decide now", self, #selector(decidePendingLeftover)),
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.14)))
+        }
+
         // First on the screen, because it is the one thing here that can cost
         // someone their plotter. HP took the T310/T320/T350/T720/T750 out in
         // 4.8.118 and shipped that as a background update of 4.8.117, so a
@@ -1053,10 +1368,10 @@ final class Wizard: NSObject, NSApplicationDelegate {
             rows.append(UI.panel(parts, tint: NSColor.systemOrange.withAlphaComponent(0.14)))
         }
 
-        // build.py deletes the old copy before renaming the new one into place,
-        // so it can't be open. Quitting it is left to the person, because it may
-        // be in the middle of a print; the backend refuses too, in case it is
-        // opened after this screen was drawn.
+        // build.py sets the old copy aside and deletes it once the new one has
+        // passed its checks, so it can't be open. Quitting it is left to the
+        // person, because it may be in the middle of a print; the backend
+        // refuses too, in case it is opened after this screen was drawn.
         if !openPids.isEmpty {
             rows.append(UI.panel([
                 UI.point("\(appName) is open.",
@@ -1067,10 +1382,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
             ], tint: NSColor.systemOrange.withAlphaComponent(0.14)))
         }
 
-        // The build deletes an existing output bundle outright. Promising
-        // "nothing is overwritten" while doing that is the one lie this screen
-        // cannot afford, so a second run says what it really does, and names
-        // what it is replacing.
+        // A second run replaces the copy that is there. Promising "nothing is
+        // overwritten" while doing that is the one lie this screen cannot
+        // afford, so it says what it really does, and names what it is
+        // replacing. Since 1.5.9 the old copy is kept until the new one has
+        // passed its checks, and put back if it doesn't, and the line under
+        // this one says so -- until then it was deleted before the new one
+        // was checked at all.
         let replaceLine: String
         if !replacing {
             replaceLine = "A new app. Nothing is overwritten."
@@ -1095,6 +1413,10 @@ final class Wizard: NSObject, NSApplicationDelegate {
             UI.point(replacing ? "Replacing" : "Creating", ""),
             UI.text(out, size: 11, mono: true),
             UI.small(replaceLine),
+            replacing
+                ? UI.small("ClickGraft keeps the copy that's there until the new one has passed "
+                           + "its checks, and puts it back if it doesn't.")
+                : UI.spacer(),
 
             // Only when the fallback is actually in play. Saying "this is just
             // for you" on a normal /Applications build would invent a
@@ -1205,7 +1527,63 @@ final class Wizard: NSObject, NSApplicationDelegate {
     }
 
     private func updateCreateButton() {
-        createButton?.isEnabled = !replacedIsOpen && (!replaceLosesPrinters || acceptPrinterLoss)
+        createButton?.isEnabled = !macTooOld && !replacedIsOpen && pendingLeftover == nil
+            && (!replaceLosesPrinters || acceptPrinterLoss)
+    }
+
+    @objc func decidePendingLeftover() {
+        guard let item = pendingLeftover else { return }
+        leftovers = [item]
+        afterLeftover = { [weak self] in self?.showReview() }
+        showLeftover()
+    }
+
+    /// "15.0" -> "15", "15.4" -> "15.4": how people say a macOS version.
+    private func macName(_ v: String) -> String {
+        let parts = v.split(separator: ".")
+        return parts.count == 2 && parts[1] == "0" ? String(parts[0]) : v
+    }
+
+    /// One plain sentence saying what sets the copy's minimum macOS, from the
+    /// backend's phrases (clickgraft/macos_floor.py floor_reasons). Every one
+    /// but "HP Click itself" is plural files, so one verb fits them all.
+    private func floorReason(_ reasons: [String], needs: String) -> String {
+        let parts = reasons.filter { $0 != "HP Click itself" }
+        if parts.isEmpty {
+            if reasons.isEmpty { return "" }
+            let v = picked?["version"] as? String ?? ""
+            return "That's the macOS \(v.isEmpty ? "HP Click" : "HP Click \(v)") itself asks for."
+        }
+        return "That's because " + parts.joined(separator: ", and ")
+            + (parts.count > 1 ? "," : "") + " are built for macOS \(macName(needs)) or later."
+    }
+
+    /// HP's own Apple Silicon version, when the backend says HP lists it for
+    /// this Mac (agent.native_alternative). Its printer gap is said every
+    /// time: the T-series owners it would strand are the people most likely to
+    /// still be making copies.
+    private func nativeAlternative(_ alt: [String: Any]?) -> [NSView] {
+        guard let alt = alt, let ver = alt["version"] as? String else { return [] }
+        let from = macName(alt["hp_lists_from"] as? String ?? "12.0")
+        // HP's list, as HP gives it: "12 to 26" on 22 Sep 2026, not "and later".
+        let upTo = (alt["hp_lists_to"] as? String).map { " to " + macName($0) } ?? " and later"
+        let native = candidates.first { ($0["reason"] as? String) == "hp_native" }
+        let haveIt = (native?["version"] as? String) == ver
+        let dropped = native?["printers_dropped"] as? [String] ?? []
+        let models = dropped.isEmpty ? "DesignJet T310, T320, T350, T720 and T750"
+                                     : printerList(dropped)
+        var out: [NSView] = [
+            UI.point("HP Click \(ver) may be the better answer.",
+                     "It's HP's own Apple Silicon version, so it needs no copy, and HP lists "
+                     + "it for macOS \(from)\(upTo)."
+                     + (haveIt ? " It's already in your Applications folder." : "")
+                     + " It doesn't support the \(models), so if you print to one of those, "
+                     + "keep the HP Click you have."),
+        ]
+        if !haveIt {
+            out.append(UI.button("Where to get \(ver)", self, #selector(openVersionsPage)))
+        }
+        return out
     }
 
     private func technicalPlan() -> String {
@@ -1321,6 +1699,33 @@ final class Wizard: NSObject, NSApplicationDelegate {
         let crossBuilt = lastResults["smoke_launch"]?.hasPrefix("SKIPPED") == true
         logPath = ev["log_path"] as? String ?? logPath
         let name = (out as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+        // The copy's own LSMinimumSystemVersion, as the backend read it back.
+        let needs = macName(ev["needs_macos"] as? String ?? "")
+        let forMac = needs.isEmpty ? "the Mac you made it for"
+                                   : "the Mac you made it for, which needs macOS \(needs) or later"
+
+        // What became of the copy this one replaced (1.5.9). Until then this
+        // said "drag it to the Trash and carry on as before" after a rebuild
+        // too, when "before" -- the copy it replaced -- had just been deleted.
+        let original: NSView
+        switch ev["previous_copy"] as? String ?? "" {
+        case "replaced":
+            original = UI.point("Your original is untouched.",
+                                "The copy this one replaced was removed once this one had "
+                                + "passed its checks. If anything about the new copy bothers "
+                                + "you, drag it to the Trash and use your original, which works "
+                                + "as it always did. ClickGraft can make another copy whenever "
+                                + "you like.")
+        case "aside":
+            original = UI.point("Your original is untouched.",
+                                "The copy this one replaced couldn't be removed. It's set aside, "
+                                + "hidden, in the same folder, and ClickGraft will offer to "
+                                + "remove it the next time you open it.")
+        default:
+            original = UI.point("Your original is untouched.",
+                                "If anything about the new copy bothers you, drag it to the "
+                                + "Trash and carry on as before.")
+        }
 
         present([
             UI.text("Your Apple Silicon copy is ready", size: 22, weight: .semibold,
@@ -1328,8 +1733,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
             UI.body("\(name) is in your Applications folder, next to your original."),
             UI.body(crossBuilt
                     ? "It's built for Apple Silicon and it's signed. It has not been "
-                    + "started up, because this Mac can't run it — try it on the Mac you "
-                    + "made it for."
+                    + "started up, because this Mac can't run it — try it on \(forMac)."
                     : "Everything checked out: it's built for your Mac's processor, it's "
                     + "signed, and it starts up correctly."),
             // The numbers and the Activity Monitor tip are both about running
@@ -1356,9 +1760,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          "The two apps share your printers and settings, so opening one while "
                          + "the other is running makes the second one quit without saying "
                          + "anything. Quit one before opening the other."),
-                UI.point("Your original is untouched.",
-                         "If anything about the new copy bothers you, drag it to the Trash and "
-                         + "carry on as before."),
+                original,
             ], tint: NSColor.systemOrange.withAlphaComponent(0.11)),
             // The checks above prove the bundle is sound; they cannot prove a
             // page came out of a plotter. This project has shipped to people in
@@ -1398,52 +1800,163 @@ final class Wizard: NSObject, NSApplicationDelegate {
     /// copy is sitting in Applications and usually works — telling that user
     /// "nothing was installed" is simply false, and sends them to support over
     /// an app they could be using.
+    ///
+    /// 1.5.9: what each screen says about the copy being replaced comes from
+    /// the backend's `previous_copy` and `new_copy`, never from assumption. Up
+    /// to 1.5.8 the red screen promised "nothing about your Mac is different
+    /// from a minute ago" and the orange one "drag it to the Trash and nothing
+    /// about your Mac has changed", while build.py had already deleted the copy
+    /// the new one replaced. Now that copy is set aside until the new one
+    /// passes, and put back when it doesn't, and each screen says which of
+    /// those happened.
     private func showFailed(_ ev: [String: Any]) {
         let stage = ev["stage"] as? String ?? ""
         if stage == "in_use" || stage == "printers_lost" {
             showNotReplaced(ev)
             return
         }
+        if stage == "macos_too_old" {
+            showTooOld(ev)
+            return
+        }
+        if stage == "leftover_pending" {
+            // Review says so first; this is for one that appeared after it
+            // was drawn. Nothing was fetched or changed, so go straight to the
+            // choice, and back to Review once it is made.
+            leftovers = ev["leftovers"] as? [[String: Any]] ?? []
+            leftoverDeferred = false
+            afterLeftover = { [weak self] in self?.showReview() }
+            showLeftover()
+            return
+        }
         let message = ev["error"] as? String ?? ""
-        let madeIt = (ev["output_exists"] as? Bool ?? false)
-                     && (ev["stage"] as? String ?? "") == "verify"
+        let previous = ev["previous_copy"] as? String ?? ""
+        let newCopy = ev["new_copy"] as? String ?? ""
+        let check = ev["check"] as? String ?? ""
+        let checkName = Wizard.checkNames[check] ?? (check.isEmpty ? "one of the checks" : check)
+        let verifyFailed = stage == "verify"
+        asidePath = previous == "aside" ? (ev["previous_path"] as? String ?? "") : ""
         logPath = ev["log_path"] as? String ?? logPath
         lastError = message
-        outcome = madeIt ? "the copy was made but a check did not pass"
-                         : "the build did not finish"
+        lastResults = ev["results"] as? [String: String] ?? [:]
+        let checkNote = check.isEmpty ? "" : " (\(check))"
+        switch (verifyFailed, previous) {
+        case (true, "restored"):
+            outcome = "a check did not pass\(checkNote); the previous copy was put back"
+        case (true, "aside"):
+            outcome = "a check did not pass\(checkNote); the previous copy could not be put "
+                    + "back and is set aside"
+        case (true, _):
+            outcome = "the copy was made but a check did not pass\(checkNote)"
+        case (false, "restored"):
+            outcome = "the build did not finish; the previous copy was put back"
+        case (false, "aside"):
+            outcome = "the build did not finish; the previous copy could not be put back "
+                    + "and is set aside"
+        default:
+            outcome = "the build did not finish"
+        }
         let out = ev["output"] as? String ?? outputPath
+        let name = (out as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+        let original = UI.point("Your original HP Click was not changed.",
+                                "That hasn't been touched at any point.")
+        let report = UI.point("Please send the report.",
+                              "It says which check failed and why, which is usually enough "
+                              + "to fix it. Check back here in a day or so: if a new "
+                              + "ClickGraft solves it, the app will offer you the update itself.")
 
         var rows: [NSView]
-        if madeIt {
-            let name = (out as NSString).lastPathComponent
-                .replacingOccurrences(of: ".app", with: "")
+        var buttons: [NSView] = [UI.button("Back", self, #selector(showReview))]
+        if verifyFailed && previous == "restored" {
+            // The new copy failed and the old one, which worked, is back.
             rows = [
-                UI.text("Your copy was made, but one check didn't pass",
-                        size: 22, weight: .semibold, color: .systemOrange),
-                UI.body("\(name) is in your Applications folder. ClickGraft builds the "
-                        + "copy first and then checks it over, and it was the check that "
-                        + "failed — not the copy."),
+                UI.text("The new copy didn't pass its checks", size: 22, weight: .semibold,
+                        color: .systemOrange),
+                UI.body("So your previous copy has been put back, as it was, and the new "
+                        + "one has been removed. What failed: \(checkName)."),
                 UI.panel([
-                    UI.point("Your original HP Click was not changed.",
-                             "That hasn't been touched at any point."),
-                    UI.point("The copy is most likely fine.", "Try opening it. If it "
-                             + "starts and finds your printer, you're done."),
-                    UI.point("If it doesn't work,", "drag it to the Trash and nothing "
-                             + "about your Mac has changed."),
+                    UI.point("Your previous copy is back where it was.",
+                             "Use it just as you did before."),
+                    original,
+                    report,
                 ], tint: NSColor.systemOrange.withAlphaComponent(0.10)),
                 UI.section("WHAT THE CHECK SAID"),
                 UI.small(message),
                 Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
             ]
+            buttons.append(UI.button("Try again", self, #selector(startBuild)))
+            buttons += [UI.spacer(),
+                        UI.button("Send a report", self, #selector(sendReport), primary: true)]
+        } else if verifyFailed && previous == "aside" {
+            // It failed, and the old one could not go back: usually because the
+            // new copy was opened in the seconds after the test launch. The
+            // backend's own words are in the detail below, not in this sentence.
+            let newIsOpen = (ev["restore_reason"] as? String) == "open"
+            rows = [
+                UI.text("The new copy didn't pass its checks", size: 22, weight: .semibold,
+                        color: .systemOrange),
+                UI.body("ClickGraft couldn't put your previous copy back in its place"
+                        + (newIsOpen ? ", because the new copy is open." : ".")
+                        + " Your previous copy is safe. It has been set aside, hidden, in "
+                        + "the same folder. What failed: \(checkName)."),
+                UI.panel([
+                    UI.point("Put it back when you're ready.",
+                             "Quit \(name) if it's open, then press Put it back. ClickGraft "
+                             + "will also offer to do it the next time you open it."),
+                    original,
+                ], tint: NSColor.systemOrange.withAlphaComponent(0.10)),
+                UI.section("WHAT THE CHECK SAID"),
+                UI.small(message),
+                Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
+            ]
+            buttons.append(UI.button("Send a report", self, #selector(sendReport)))
+            buttons += [UI.spacer(),
+                        UI.button("Put it back", self, #selector(putBackAside), primary: true)]
+        } else if verifyFailed && newCopy != "removed" && (ev["output_exists"] as? Bool ?? false) {
+            // No previous copy, so the new one stays: it is all there is, and a
+            // copy that failed a check has so far always still launched.
+            rows = [
+                UI.text("The new copy didn't pass its checks", size: 22, weight: .semibold,
+                        color: .systemOrange),
+                UI.body("\(name) is in your Applications folder, but ClickGraft couldn't "
+                        + "confirm that it works. What failed: \(checkName)."),
+                UI.panel([
+                    original,
+                    UI.point("The new copy may still work.", "Try opening it. If it starts "
+                             + "and finds your printer, you're done."),
+                    UI.point("If it doesn't,", "drag it to the Trash."),
+                ], tint: NSColor.systemOrange.withAlphaComponent(0.10)),
+                UI.section("WHAT THE CHECK SAID"),
+                UI.small(message),
+                Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
+            ]
+            buttons.append(UI.button("Send a report", self, #selector(sendReport)))
+            buttons.append(UI.button("Open the copy", self, #selector(revealOutput)))
+            buttons += [UI.spacer(), UI.button("Try again", self, #selector(startBuild))]
         } else {
+            let previousLine: String
+            switch previous {
+            case "none":
+                previousLine = (ev["output_exists"] as? Bool ?? false)
+                    ? "" : "Nothing was put in your Applications folder."
+            case "untouched":
+                previousLine = "Your previous copy hasn't been touched either."
+            case "restored":
+                previousLine = "ClickGraft had started to put the new copy in place, so it has "
+                    + "put your previous copy back, as it was."
+            case "aside":
+                previousLine = "Your previous copy couldn't be put back in its place, but it's "
+                    + "safe: it has been set aside, hidden, in the same folder. Press Put it "
+                    + "back to return it."
+            default:
+                previousLine = ""
+            }
             rows = [
                 UI.text("The copy wasn't finished", size: 22, weight: .semibold,
                         color: .systemRed),
                 UI.body(message),
                 UI.panel([
-                    UI.point("Your original HP Click was not changed.",
-                             "Nothing was installed, and nothing about your Mac is "
-                             + "different from a minute ago."),
+                    UI.point("Your original HP Click was not changed.", previousLine),
                     // "…if it keeps happening" was in this panel, and it cost us the
                     // one failure report we have. Someone in Indonesia hit an
                     // unwritable /Applications and retried NINE times before sending
@@ -1459,23 +1972,85 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 ]),
                 Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
             ]
-        }
-
-        // On a hard failure the report is the primary action, not "Try again".
-        // Retrying an unwritable folder or an unreadable bundle produces the same
-        // failure with no new information, and the button that looks like the
-        // answer is the one people press.
-        var buttons: [NSView] = [UI.button("Back", self, #selector(showReview))]
-        if madeIt {
-            buttons.append(UI.button("Send a report", self, #selector(sendReport)))
-            buttons.append(UI.button("Open the copy", self, #selector(revealOutput)))
-            buttons += [UI.spacer(), UI.button("Try again", self, #selector(startBuild))]
-        } else {
+            // On a hard failure the report is the primary action, not "Try
+            // again". Retrying an unwritable folder or an unreadable bundle
+            // produces the same failure with no new information, and the button
+            // that looks like the answer is the one people press.
             buttons.append(UI.button("Try again", self, #selector(startBuild)))
-            buttons += [UI.spacer(),
-                        UI.button("Send a report", self, #selector(sendReport), primary: true)]
+            buttons.append(UI.spacer())
+            if previous == "aside" {
+                buttons.append(UI.button("Put it back", self, #selector(putBackAside)))
+            }
+            buttons.append(UI.button("Send a report", self, #selector(sendReport), primary: true))
         }
         present(rows, buttons: buttons)
+    }
+
+    /// verify's check names (clickgraft/verify.py VerifyError.check), as a
+    /// person would say them. The key itself goes into the report.
+    static let checkNames: [String: String] = [
+        "bundle": "the first look at the new copy",
+        "architectures": "the check that it's built for Apple Silicon",
+        "bundle_audit": "the check of every file in it",
+        "flat_symbols": "the check for anything HP's code needs that's missing",
+        "minimum_macos": "the check of which macOS it needs",
+        "code_signature": "the check of its signature",
+        "asar_integrity": "the check of HP's app files inside it",
+        "update_locks": "the check that HP's updater can't replace it",
+        "patch_outcomes": "the check of the small fixes",
+        "smoke_launch": "the test launch",
+        "resealed": "signing it again after the test launch",
+    ]
+
+    @objc func putBackAside() {
+        guard !asidePath.isEmpty else { return }
+        putBack(asidePath) { [weak self] in
+            self?.asidePath = ""
+            self?.showReview()
+        }
+    }
+
+    /// This Mac's macOS is older than the copy needs (1.5.9). Not the red
+    /// screen and no report offer: nothing went wrong, and a report can't
+    /// change which macOS the files inside HP Click are built for. Usually
+    /// refused before any download; `after_build` is the rarer case where the
+    /// engine's own files set the minimum, known only once the copy is made.
+    private func showTooOld(_ ev: [String: Any]) {
+        let needs = ev["needs"] as? String ?? ""
+        let thisMac = ev["this_mac"] as? String ?? "?"
+        let afterBuild = ev["after_build"] as? Bool ?? false
+        let previous = ev["previous_copy"] as? String ?? ""
+        logPath = ev["log_path"] as? String ?? logPath
+        lastError = ev["error"] as? String ?? ""
+        outcome = afterBuild
+            ? "the copy was made, needed a newer macOS than this Mac's, and was thrown away"
+            : "the build did not start: this Mac's macOS is older than the copy needs"
+
+        var unchanged: [NSView] = [
+            UI.point("Your HP Click is unchanged.", "It works as it did."),
+        ]
+        if previous == "untouched" {
+            unchanged.append(UI.point("Your previous copy hasn't been touched either.", ""))
+        }
+        unchanged.append(UI.point("Once this Mac is on macOS \(macName(needs)) or later,",
+                                  "ClickGraft can make the copy."))
+        var rows: [NSView] = [
+            UI.title("This copy needs macOS \(macName(needs)) or later"),
+            UI.body(afterBuild
+                ? "This Mac has macOS \(thisMac). ClickGraft could only tell once the copy "
+                  + "was made, so it has thrown that copy away. Nothing here was replaced."
+                : "This Mac has macOS \(thisMac), so ClickGraft hasn't made the copy. "
+                  + "Nothing has been downloaded or changed."),
+        ]
+        let reason = floorReason(ev["reasons"] as? [String] ?? [], needs: needs)
+        if !reason.isEmpty { rows.append(UI.body(reason)) }
+        rows.append(UI.panel(unchanged, tint: NSColor.systemOrange.withAlphaComponent(0.12)))
+        let alt = nativeAlternative(ev["alternative"] as? [String: Any])
+        if !alt.isEmpty {
+            rows.append(UI.panel(alt, tint: NSColor.systemBlue.withAlphaComponent(0.10)))
+        }
+        present(rows, buttons: [UI.button("Back", self, #selector(showReview)), UI.spacer(),
+                                UI.button("Quit", self, #selector(quit), primary: true)])
     }
 
     /// The backend refused because of the copy it would replace: it is open, or
@@ -1486,8 +2061,9 @@ final class Wizard: NSObject, NSApplicationDelegate {
     ///
     /// `during_build` (1.5.8) is the copy being opened during the build rather
     /// than before it: build.py checks again in its last step, just before it
-    /// would delete the old bundle. Then the download did happen and the new
-    /// copy was built and discarded, so this screen must not say otherwise.
+    /// would set the old bundle aside (1.5.9; up to 1.5.8, delete it). Then the
+    /// download did happen and the new copy was built and discarded, so this
+    /// screen must not say otherwise.
     private func showNotReplaced(_ ev: [String: Any]) {
         let out = ev["output"] as? String ?? outputPath
         let name = (out as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")

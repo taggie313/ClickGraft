@@ -9,7 +9,8 @@ import json
 import os
 import sys
 
-from clickgraft.build import build_apple_silicon_bundle
+from clickgraft.build import (BuildInProgressError, InstallError, build_apple_silicon_bundle,
+                              discard_previous, folder_lock)
 from clickgraft.deps import check_clt
 from clickgraft.manifest import ManifestManager
 from clickgraft.probe import probe_app_bundle
@@ -47,17 +48,53 @@ def cmd_build(args):
     def _progress(msg, pct):
         print(f"[{pct*100:5.1f}%] {msg}")
 
+    # The build sets the copy it replaces aside rather than deleting it, and
+    # hands back where (build.install_copy). A build that raises has already
+    # put it back, or says where it is (InstallError "aside"), so all that is
+    # left here is deleting it once the build has succeeded. The wizard waits
+    # for verify before it does that; this command does not verify, so the
+    # build finishing is all it has to go on, as it always was. Both under the
+    # output folder's lock, as in the wizard (build.folder_lock).
+    out_path = os.path.abspath(out_app or os.path.join(
+        os.path.dirname(os.path.abspath(source_app)), "HP Click (Apple Silicon).app"))
     try:
-        final_app = build_apple_silicon_bundle(
+        with folder_lock(os.path.dirname(out_path)):
+            _build_and_settle(source_app, out_path, preload, _progress)
+    except BuildInProgressError as e:
+        # Another ClickGraft is building, checking or settling a copy there.
+        print(f"[ERROR] Build failed: {e}")
+        print("[+] Nothing at the output path was replaced.")
+        sys.exit(1)
+
+
+def _build_and_settle(source_app, out_app, preload, _progress):
+    try:
+        built = build_apple_silicon_bundle(
             source_app_path=source_app,
             output_app_path=out_app,
             preload=preload,
             progress_callback=_progress
         )
-        print(f"[+] BUILD SUCCESSFUL! Result: {final_app}")
-    except Exception as e:
+    except InstallError as e:
         print(f"[ERROR] Build failed: {e}")
         sys.exit(1)
+    except Exception as e:
+        print(f"[ERROR] Build failed: {e}")
+        print("[+] Nothing at the output path was replaced.")
+        sys.exit(1)
+    print(f"[+] BUILD SUCCESSFUL! Result: {built.output}")
+    if built.previous:
+        try:
+            left = discard_previous(built.previous)
+        except OSError as e:
+            left = built.previous
+            print(f"[WARN] {e}")
+        if not left:
+            print("[+] Removed the copy it replaced.")
+        else:
+            print(f"[WARN] Could not remove all of the copy it replaced; what is left "
+                  f"is at {left}. Delete it yourself if it is still there after the "
+                  f"next build into that folder.")
 
 
 def cmd_verify(args):

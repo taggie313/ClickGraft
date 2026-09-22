@@ -4,6 +4,7 @@ Audits architectures, rpaths, hardcoded paths, code signatures, ASAR integrity, 
 Target: Python 3.9+ (Standard Library only)
 """
 
+import functools
 import hashlib
 import json
 import os
@@ -585,10 +586,139 @@ def smoke_launch(target_app_path, manifest, timeout_s=90.0, grace_s=3.0, poll_s=
     return {"ok": ok, "message": message, "cleanup": cleanup}
 
 
-def verify_app_bundle(target_app_path, manifest=None):
+def check_minimum_macos(target_app_path):
+    """No Mach-O in the copy may need a newer macOS than the copy says it needs.
+
+    Returns the results entry; raises ValueError naming each file that does.
+
+    build.py stamps LSMinimumSystemVersion from the highest minimum in the
+    bundle (clickgraft/macos_floor.py), and this reads it back, so a copy that
+    says 12.0 while carrying a library built for 27.0 cannot pass again. Before
+    1.5.9 every copy said HP's 12.0 whatever went into it, and one made from the
+    Homebrew bottles listed first carried a libidn2 that imports _strchrnul,
+    new in macOS 15.4: on macOS 12.0-15.3 it aborts at launch, where macOS
+    would have refused to open it, clearly, had the Info.plist said so.
+
+    Static, so it runs without launching anything and on an Intel Mac.
+    """
+    from clickgraft.macos_floor import bundle_minimums, declared_minimum, format_version
+
+    declared = declared_minimum(target_app_path)
+    if declared is None:
+        raise ValueError(
+            f"{target_app_path} has no readable LSMinimumSystemVersion in its "
+            f"Info.plist, so it says nothing about which macOS it needs.")
+    found, unreadable = bundle_minimums(target_app_path)
+    if unreadable:
+        raise ValueError(
+            f"Could not read the minimum macOS of {len(unreadable)} file(s), so "
+            f"the copy's LSMinimumSystemVersion cannot be checked: "
+            f"{', '.join(unreadable[:5])}")
+    over = [(rel, v) for rel, v in found if v > declared]
+    if over:
+        shown = "; ".join(f"{rel} needs {format_version(v)}" for rel, v in over[:5])
+        more = f" (and {len(over) - 5} more)" if len(over) > 5 else ""
+        raise ValueError(
+            f"{len(over)} file(s) in the copy need a newer macOS than its "
+            f"Info.plist says (LSMinimumSystemVersion {format_version(declared)}): "
+            f"{shown}{more}. On a Mac in between, macOS would open the copy instead "
+            f"of refusing it with a clear message, and it may fail at launch.")
+    top = ""
+    if found:
+        at_top = [rel for rel, v in found if v == found[0][1]]
+        top = (f"; the highest, {format_version(found[0][1])}, is declared by "
+               f"{len(at_top)} of them, e.g. {at_top[0]}")
+    return (f"PASSED (Info.plist says macOS {format_version(declared)} or later, and "
+            f"none of its {len(found)} Mach-O files needs newer{top})")
+
+
+class VerifyError(ValueError):
+    """A check did not pass.
+
+    .check names it: a key of the results dict ("architectures", ...,
+    "smoke_launch", "resealed"), "patch_outcomes" for the checks
+    check_patch_outcomes makes, or "bundle" for the look at the bundle before
+    any of them. .results holds every entry made before it failed. agent.py
+    passes both to the wizard, which has to say which check a copy failed when
+    it puts the previous copy back.
+    """
+
+    def __init__(self, message, check, results=None):
+        super().__init__(message)
+        self.check = check
+        self.results = dict(results or {})
+
+
+class _Step:
+    """Which check verify_app_bundle is on, so a failure can say."""
+
+    def __init__(self):
+        self.now = "bundle"
+
+
+def _names_the_failed_check(verify):
+    """Every failure out of `verify` becomes a VerifyError naming its check.
+
+    A wrapper rather than a try around the body, so the checks read top to
+    bottom as they always have; each one only sets step.now as it starts.
+    """
+    @functools.wraps(verify)
+    def wrapper(target_app_path, manifest=None):
+        results, step = {}, _Step()
+        try:
+            return verify(target_app_path, manifest, results=results, step=step)
+        except VerifyError:
+            raise
+        except Exception as exc:                                   # noqa: BLE001
+            raise VerifyError(str(exc), step.now, results) from exc
+    return wrapper
+
+
+def codesign_verifies(app_path):
+    """(True, "") when `codesign --verify` accepts app_path, else (False, why).
+
+    No --deep, as the code_signature check has always run it (D7). Used again
+    after the re-seal, so the copy handed over is held to the same standard as
+    the one checked before the launch. Not a test to run on HP's own apps:
+    stock 4.10.42 fails it with "a sealed resource is missing or invalid" and
+    runs anyway, because Adobe's print engine writes font caches into the
+    bundle on first launch (see the re-seal below).
+    """
+    r = subprocess.run(["codesign", "--verify", app_path], capture_output=True, text=True)
+    if r.returncode == 0:
+        return True, ""
+    return False, (r.stderr or r.stdout or "").strip() or f"exit status {r.returncode}"
+
+
+def reseal(target_app_path):
+    """Re-sign the copy after its test launch, and check the result verifies.
+
+    -> (ok, results entry). Up to 1.5.8 the entry said "PASSED" whenever the
+    re-sign did not raise, and it never raised: every codesign in it ran with
+    check=False. A copy whose signature no longer matched its files was
+    reported as re-sealed. Now signing raises on a failed codesign
+    (signing.py), and the result has to pass `codesign --verify` as well.
+    """
+    from clickgraft.signing import sign_bundle
+    try:
+        notes = sign_bundle(target_app_path)
+    except Exception as exc:                                       # noqa: BLE001
+        return False, f"FAILED (could not re-sign after the test launch: {exc})"
+    ok, why = codesign_verifies(target_app_path)
+    if not ok:
+        return False, (f"FAILED (re-signed after the test launch, but codesign "
+                       f"--verify rejects the result: {why})")
+    return True, ("PASSED (re-signed after first-run font caches were written, "
+                  "and codesign --verify accepts it"
+                  + (f"; {'; '.join(notes)}" if notes else "") + ")")
+
+
+@_names_the_failed_check
+def verify_app_bundle(target_app_path, manifest=None, *, results, step):
     """
     Runs complete verification suite against target_app_path.
-    Returns (True, details_dict) on success, or raises ValueError on failure.
+    Returns (True, details_dict) on success, or raises VerifyError (a
+    ValueError) naming the check that failed.
     """
     target_app_path = os.path.abspath(target_app_path)
     if not os.path.exists(target_app_path):
@@ -636,9 +766,8 @@ def verify_app_bundle(target_app_path, manifest=None):
                 f"{', '.join(sorted(mm.manifests)) or 'none loaded'}."
             )
 
-    results = {}
-
     # 1. Mach-O Architectures Check
+    step.now = "architectures"
     main_exe = os.path.join(target_app_path, "Contents", "MacOS", "HPClickExe")
     exe_archs = get_archs(main_exe)
     if "arm64" not in exe_archs:
@@ -652,6 +781,7 @@ def verify_app_bundle(target_app_path, manifest=None):
     results["architectures"] = "PASSED (Native arm64 Electron runtime)"
 
     # 2. Full-bundle Mach-O & RPATH Audit
+    step.now = "bundle_audit"
     expected_x86 = set(manifest.get("expected_x86_only", []))
     x86_only_found = []
     homebrew_refs = []
@@ -706,6 +836,7 @@ def verify_app_bundle(target_app_path, manifest=None):
     # Known-unprovided symbols are listed in the manifest and accepted. Anything
     # NOT on that list is a new time bomb of exactly the kind that already went
     # off once, so it fails the build rather than a customer's print job.
+    step.now = "flat_symbols"
     accepted_missing = set(manifest.get("accepted_unprovided_symbols", []))
     flat_undef, exported = set(), set()
     for root, _dirs, files in os.walk(target_app_path):
@@ -745,14 +876,21 @@ def verify_app_bundle(target_app_path, manifest=None):
         f"all accepted)"
     )
 
+    # 2c. The copy's LSMinimumSystemVersion against every Mach-O in it (see
+    # check_minimum_macos).
+    step.now = "minimum_macos"
+    results["minimum_macos"] = check_minimum_macos(target_app_path)
+
     # 3. Code Signatures & Entitlements (D7: single call, no --deep)
-    cs_res = subprocess.run(["codesign", "--verify", target_app_path], capture_output=True, text=True)
-    if cs_res.returncode != 0:
-        raise ValueError(f"Code signature verification FAILED for {target_app_path}\nStderr: {cs_res.stderr}")
+    step.now = "code_signature"
+    cs_ok, cs_why = codesign_verifies(target_app_path)
+    if not cs_ok:
+        raise ValueError(f"Code signature verification FAILED for {target_app_path}\nStderr: {cs_why}")
 
     results["code_signature"] = "PASSED (Ad-hoc signature valid on disk)"
 
     # 4. ASAR Integrity & Entry Count Checks
+    step.now = "asar_integrity"
     archive = AsarArchive(asar_p)
     packed_c, unpacked_c = archive.count_entries()
 
@@ -784,6 +922,7 @@ def verify_app_bundle(target_app_path, manifest=None):
     # and the forced-update path in a single edit. Assert the return is there
     # AND that no registration has escaped to module scope, because the first
     # assertion only holds while HP keeps them inside the function.
+    step.now = "update_locks"
     updater_path = "app/node/main/app-updater.js"
     nodes = archive.get_all_file_nodes()
     if updater_path not in nodes:
@@ -849,6 +988,7 @@ def verify_app_bundle(target_app_path, manifest=None):
 
     # 4c. What the patches were for, read back from the built asar (see
     # check_patch_outcomes). Static, so it runs on an Intel Mac too.
+    step.now = "patch_outcomes"
     def _read_built(rel_path):
         node = nodes.get(rel_path)
         if node is None:
@@ -867,6 +1007,7 @@ def verify_app_bundle(target_app_path, manifest=None):
     # OSError 86 "Bad CPU type in executable". That is not a defect in the
     # copy — a cross-build for another Mac is a supported thing to do — so it
     # is reported as not-checked rather than failed.
+    step.now = "smoke_launch"
     from clickgraft.hostarch import is_apple_silicon
     if not is_apple_silicon():
         results["smoke_launch"] = (
@@ -888,16 +1029,21 @@ def verify_app_bundle(target_app_path, manifest=None):
     # Re-seal it here so the user is handed a bundle whose signature matches what
     # is actually on disk. This runs after the launch on purpose: sign first and
     # the very next run invalidates it again.
-    from clickgraft.signing import sign_bundle
-    try:
-        sign_bundle(target_app_path)
-        results["resealed"] = "PASSED (re-signed after first-run font caches were written)"
-    except Exception as exc:                                       # noqa: BLE001
-        results["resealed"] = f"WARNING: could not re-sign after smoke launch: {exc}"
+    #
+    # A re-seal that fails, or whose result codesign --verify rejects, fails
+    # the copy (see reseal). It is the signature the owner is handed, and it
+    # is held to the standard the code_signature check applied before the
+    # launch. A failed launch is reported first: it is the one that matters.
+    sealed, results["resealed"] = reseal(target_app_path)
 
     if not smoke["ok"]:
         raise ValueError(smoke["message"])
 
     results["smoke_launch"] = smoke["message"]
+
+    if not sealed:
+        raise VerifyError(
+            f"The copy started up, but its signature could not be renewed after "
+            f"the test launch: {results['resealed']}", "resealed", results)
 
     return True, results

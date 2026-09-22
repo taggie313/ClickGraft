@@ -128,6 +128,12 @@ Things that decide whether a version is supportable:
   in the arm64 slice but not the x86_64 one, and unsatisfied by anything in the
   bundle. That check is how the missing `libidn2` and `libnghttp2` were found;
   a new version may need different libraries.
+- **Look at the macOS the copy will need.** It is worked out, not written in
+  the manifest: the highest minimum any binary in the finished copy declares.
+  The build log states it and `verify` checks it (`minimum_macos`). It is 15.0
+  for every supported version (22 Sep 2026), set by HP's own `libmagic` and by
+  Homebrew's bottles, so a version whose files declare more raises it for
+  everyone who uses that version, and belongs in its release notes.
 
 Write the manifest's `why` fields as if for someone who has to decide, two years
 from now, whether a patch is still needed. The existing entries are the model.
@@ -141,8 +147,10 @@ python3 -m pytest tests/ -q
 ```
 
 They need a stock HP Click present and take a few minutes, because several
-perform real builds. Use Apple's `/usr/bin/python3` — the project targets 3.9,
-standard library only, no pip installs.
+perform real builds — which is also why, on Apple Silicon, they need macOS 15 or
+later: below the copy's minimum a build refuses to start. Use Apple's
+`/usr/bin/python3` — the project targets 3.9, standard library only, no pip
+installs.
 
 **Report what you actually ran.** Don't mark a test as passing unless it
 executed. This matters more than it sounds: an earlier GUI passed every

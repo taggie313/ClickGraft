@@ -46,11 +46,22 @@ that one piece.
 
 ## Requirements
 
-**Xcode Command Line Tools.** That is the entire list.
+**macOS 15 or later, and Xcode Command Line Tools.** That is the entire list.
 
-It provides the `python3` ClickGraft runs on, plus `codesign`,
-`install_name_tool`, `lipo`, `otool`, and `nm`. No Homebrew. No compiler. No
-`pip install`.
+**macOS 15 or later** to run the copy, and on a Mac with Apple Silicon to make
+it. (An Intel Mac can make one for another Mac on the macOS it has.) HP's own
+`libmagic` already declares macOS 15.0 in every supported version (as does its
+OpenSSL in 4.10.42), and Homebrew publishes three of the four libraries the copy
+adds only for macOS 15 and later. The copy's `Info.plist` states it, so macOS
+itself won't open the copy on an older Mac, and ClickGraft says so before it
+asks for the Command Line Tools or downloads anything. On macOS 12 to 14, look at
+HP Click 4.11.31 instead: HP's own Apple Silicon build, which needs no copy and
+which HP lists for macOS 12 to 26. It doesn't support the five DesignJets that
+only 4.8.117 does.
+
+**The Command Line Tools** provide the `python3` ClickGraft runs on, plus
+`codesign`, `install_name_tool`, `lipo`, `otool`, `vtool` and `nm`. No Homebrew.
+No compiler. No `pip install`.
 
 **You probably don't have to install it yourself.** `/usr/bin/python3` is one of
 the Command Line Tools stubs, so opening ClickGraft on a Mac that lacks them
@@ -106,6 +117,12 @@ plan, which lists every patch, every library added, and everything downloaded.
 **To uninstall:** drag `HP Click (Apple Silicon).app` to the Trash. Your original
 was never modified, so there is nothing else to undo.
 
+**Making the copy again** in the wizard replaces this one, but not until the new
+copy has passed ClickGraft's checks — a test launch among them, on a Mac with
+Apple Silicon. Until then the old one is kept, hidden in the same folder, and if
+the new one fails it goes back where it was. If ClickGraft is stopped part-way,
+it says so the next time it opens and asks what to do with the copy it kept.
+
 ---
 
 ## Command line
@@ -157,16 +174,33 @@ Open an issue with that report attached and the version can be added.
 3. Replace the Electron framework, the four helper executables, and the main
    binary. HP's icons, localizations and native modules are left alone; its
    `Info.plist` files keep HP's version and change only the bundle identifier
-   (step 6) and the archive's integrity hash (step 5).
+   (step 6), the archive's integrity hash (step 5) and the minimum macOS
+   (step 7).
 4. Add the arm64 libraries HP's own arm64 slices need but never shipped —
-   see below. Fetched from Homebrew's CDN and SHA-256 verified.
+   see below. Fetched from Homebrew's CDN, each from the bottle for the oldest
+   macOS Homebrew builds it for, and SHA-256 verified.
 5. Apply the version manifest's archive patches: the updater lock, crash-report
    upload turned off in `app/package.json` (the file HP's crash reporter reads),
    HP's own 4.11.31 change to a log line that recorded SNMPv3 printer passwords,
    and, on 4.8.117 and 4.8.118, the `SyntaxError` fix below. Each text
    replacement asserts its anchor appears **exactly once**.
 6. Give the copy its own bundle identifier so macOS keeps the two apps distinct.
-7. Ad-hoc sign inner-to-outer, then rename into place.
+7. Set the copy's minimum macOS to the highest any binary in it declares, and
+   never lower than HP's own. On an Apple Silicon Mac older than that, the build
+   stops — normally before downloading anything, because HP's files and
+   Homebrew's list of bottles settle it in advance.
+8. Ad-hoc sign inner-to-outer. Every signature is required: if `codesign`
+   fails, the build stops there with codesign's own message, before the copy
+   already in the output folder has been touched.
+9. Rename into place. A copy already there is set aside first — renamed,
+   hidden, in the same folder — not deleted. The wizard deletes it only once
+   the new copy passes `verify`; if the new one fails, it is removed and the old
+   one goes back as it was. (With nothing to put back, the new copy stays.)
+   `clickgraft build` doesn't verify, so it deletes the old copy once the build
+   succeeds. A note beside the set-aside copy records which copy took its place,
+   so only that one is ever removed to put it back; a build won't start while a
+   set-aside copy for the same path is waiting for its owner; and one build,
+   check and settle runs at a time per folder.
 
 The archive rebuild asserts, before anything is written: entry counts unchanged,
 every unpatched entry byte-identical to the source, every integrity hash

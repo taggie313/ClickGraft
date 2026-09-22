@@ -162,25 +162,50 @@ per Xcode version.
 **Controls:** `Back` · `Continue` (disabled until present) · `Check again`
 
 **Disclosure — "If you can't install them on this Mac"** *(1.5.8)*. Shown only
-while the tools are missing, under the orange panel:
+while the tools are missing, under the orange panel. What the app shows, with the
+*(1.5.9)* additions marked; "15" comes from the wizard's own `copiesNeedMacOS`:
 
-> On a work Mac, installing them is usually something only IT can do. Three ways
-> round it, in the order worth trying:
+> Installing these tools needs an administrator password. So does putting the
+> copy into Applications, and making one downloads Apple's Apple Silicon engine
+> and two small libraries from the internet. On a managed Mac all three are
+> usually someone else's to allow. Three ways round it:
 >
-> 1. **Check HP Click 4.11.31 first.** HP's September 2026 version runs on Apple
+> 1. Check HP Click 4.11.31 first. HP's September 2026 version runs on Apple
 >    Silicon by itself: no tools, no copy, nothing for ClickGraft to do. Download
 >    it from HP's support page — but not if you print to the DesignJet T310,
 >    T320, T350, T720 and T750, which only HP Click 4.8.117 supports.
-> 2. **Ask whoever manages the Mac to run one command:** `xcode-select --install`.
->    It installs Apple's own developer tools and nothing else. ClickGraft does not
->    need Xcode, an Apple developer account, or anything from us.
-> 3. **Make the copy on another Mac.** Any Mac with Apple Silicon, these tools and
->    your version of HP Click installed can make it, and the copy it produces is a
->    complete app: bring it over and drag it into Applications. Move it on a USB
->    drive or a file share if you can. After AirDrop or a download, macOS refuses
->    to open it the first time, because the copy is signed by the Mac that made it
->    rather than by Apple — open System Settings, go to Privacy & Security, and
->    allow it there.
+> 2. Ask IT to make one copy for everyone. It is usually a smaller ask than
+>    installing developer tools across the estate: they make the copy once, on a
+>    Mac they administer, and what comes out is an ordinary app they can deploy
+>    like any other. It needs nothing installed on the Macs that receive it — no
+>    developer tools, no ClickGraft, no downloads — and nothing from the Mac that
+>    made it, *but they do need macOS 15 or later (1.5.9)*. Forward them the
+>    notes below.
+> 3. Or make the copy on a Mac of your own that has the tools, with your version
+>    of HP Click installed, and bring the app over. *This Mac needs macOS 15 or
+>    later to open it, and so does a Mac with Apple Silicon to make it (1.5.9).*
+>    Move it on a USB drive or a file share if you can: after AirDrop or a
+>    download, macOS refuses to open it the first time, and you have to allow it
+>    in System Settings, under Privacy & Security.
+>
+> For whoever does it, measured on macOS 27 (20 Sep 2026):
+>
+> - Deploy it as a package. …
+> - Build that package on the Mac that made the copy. …
+> - Don't re-sign it. …
+> - The copy carries the HP Click version it was made from, so make it from the
+>   version your printers need: the DesignJet T310, T320, T350, T720 and T750
+>   need HP Click 4.8.117.
+> - *(1.5.9)* It needs macOS 15 or later, and its Info.plist says so: macOS
+>   won't open it on an older Mac. A Mac with Apple Silicon needs macOS 15 or
+>   later to make it too. An Intel Mac can make it on the macOS it has, but
+>   can't test-launch it (22 Sep 2026).
+
+Why the macOS lines *(1.5.9)*: every copy now states macOS 15 as its minimum, so
+routes 2 and 3 sent a managed Mac on macOS 12 to 14 to IT for an app macOS would
+refuse to open. Until 1.5.9 route 3 was recorded here as "Any Mac with Apple
+Silicon, these tools and your version of HP Click installed can make it", which
+stopped being true for Apple Silicon Macs older than 15, where the build refuses.
 
 The printer names come from the backend's own `printers_dropped`, not from a
 fixed list, so they stay right when HP's list changes. Carriage widths are dropped
@@ -195,7 +220,41 @@ rather than on the screen, per the note below: it is what someone forwards to IT
 not what they are asked to type.
 
 The same transfer caveat is now on the Intel-Mac panel, which already offered to
-build for another Mac and never said how to get the copy there.
+build for another Mac and never said how to get the copy there. *(1.5.9)* That
+panel also says, under "Building for another Mac is supported":
+
+> The Mac you make it for needs macOS 15 or later: macOS won't open the copy on
+> anything older.
+
+**Blocked — this Mac is older than any copy needs** *(1.5.9)*. On a Mac with Apple
+Silicon older than macOS 15, replaces this screen, before anything runs
+`/usr/bin/python3`: on a Mac without the Command Line Tools that alone brings up
+macOS's offer to install them, a large download behind an administrator password,
+for a copy that Mac could never open. The wizard checks macOS itself here
+(`copiesNeedMacOS`), because the backend can't run yet; the test suite holds that
+figure to what every stock version's own files need. Intel Macs aren't checked:
+their copy is for another Mac.
+
+> **ClickGraft needs macOS 15 or later**
+>
+> This Mac has macOS 14.6. The copy ClickGraft makes needs macOS 15 or later,
+> because files HP ships inside HP Click, and the support files ClickGraft adds
+> from Homebrew, are built for it. So ClickGraft can't make one on this Mac, and
+> there's nothing to install for it.
+>
+> **Your HP Click is unchanged.** It works as it did.
+>
+> **Once this Mac is on macOS 15 or later,** open ClickGraft again and it can
+> make the copy.
+>
+> *(blue)* **HP Click 4.11.31 may be the better answer.** It's HP's own Apple
+> Silicon version, so it needs no copy, and HP lists it for macOS 12 to 26. It
+> doesn't support the DesignJet T310, T320, T350, T720 and T750, so if you print
+> to one of those, keep the HP Click you have.
+>
+> `Where to get 4.11.31`
+
+**Controls:** `Back` · `Quit`
 
 **Disclosure — "What ClickGraft uses them for":**
 
@@ -447,10 +506,14 @@ Why they changed in 1.5.8:
 
 **Disclosure — "Show technical detail":** the exact patches, anchors, dylib names,
 download URLs and SHA-256s. Unchanged from what's there now — someone who opens
-this wants precision, not prose.
+this wants precision, not prose. *(1.5.9)* Each Homebrew line under DOWNLOADS
+names the bottle and the macOS it is built for, as the backend writes it:
+"libidn2.0.dylib from Homebrew's CDN (arm64_ventura bottle, for macOS 13.0 and
+later), SHA-256 checked".
 
 **Controls:** `Back` · `Create the copy` (off while the copy being replaced is
-open, and until the printer box is ticked when there is one *(1.5.8)*)
+open, and until the printer box is ticked when there is one *(1.5.8)*; off when
+this Mac's macOS is older than the copy needs *(1.5.9)*)
 
 **Note:** the button says what it does. Not "Start", not "Build" — "Create the
 copy" repeats the central reassurance at the exact moment of commitment.
@@ -518,6 +581,23 @@ half-made copy. If we add one later it must delete the partial copy and say so.
 > **Your original is untouched.** If anything about the new copy bothers you, drag
 > it to the Trash and carry on as before.
 
+*(1.5.9)* That second sentence is said only when nothing was replaced
+(`previous_copy: "none"`). After a rebuild, "carry on as before" was untrue: the
+copy the owner used before had just been deleted. Instead:
+
+- `previous_copy: "replaced"` — **Your original is untouched.** The copy this one
+  replaced was removed once this one had passed its checks. If anything about
+  the new copy bothers you, drag it to the Trash and use your original, which
+  works as it always did. ClickGraft can make another copy whenever you like.
+- `previous_copy: "aside"` (it passed, and the old one couldn't be deleted) —
+  **Your original is untouched.** The copy this one replaced couldn't be removed.
+  It's set aside, hidden, in the same folder, and ClickGraft will offer to remove
+  it the next time you open it.
+
+On an Intel Mac the second body sentence ends "…try it on the Mac you made it
+for, which needs macOS 15 or later." *(1.5.9)*, the figure read back from the
+copy's own Info.plist (`needs_macos`).
+
 **Controls:** `Show me the app` · `Open the log` · `Report a problem` ·
 `Share how it went` · `Done`
 
@@ -536,16 +616,12 @@ It gets a heading, not a footnote.
 
 ## Error states
 
-**Something went wrong during the build:**
-
-> **The copy wasn't finished.**
->
-> *(plain description of what failed)*
->
-> **Your original HP Click was not changed.** Nothing was installed. You can try
-> again, or send the log if it keeps happening.
->
-> `Try again` · `Open the log` · `Back`
+**Something went wrong during the build:** superseded twice — the "…if it
+keeps happening" wording, which taught someone to retry nine times before sending
+a report (see the comment in `showFailed`), and the "Nothing was installed"
+promise, which was false once a build could replace a copy (1.5.9). The current screen, and every variant of the line about the
+previous copy, is under *1.5.9 → The copy wasn't finished — changed* below.
+Change it there, not here.
 
 **Source app isn't what ClickGraft expected:**
 
@@ -553,6 +629,38 @@ It gets a heading, not a footnote.
 >
 > It may have been updated, or already modified. ClickGraft won't guess — making
 > changes in the wrong place could damage the app.
+
+**This Mac's macOS is older than the copy needs** *(1.5.9)* — the backend
+refuses with `stage: "macos_too_old"`, before anything is downloaded, and gives
+`needs` and `this_mac`. The copy's minimum is the highest minimum any file in it
+declares (15.0 for 4.8.117, 4.8.118 and 4.10.42 on 22 Sep 2026: HP's own
+libmagic in all three and OpenSSL in 4.10.42, and the Homebrew support files),
+and never lower than HP's own 12.0. It is written into the copy's Info.plist, so
+a Mac too old for a copy made elsewhere gets macOS's own "requires macOS 15.0 or
+later" rather than a crash at launch. Review can say it first: the plan's
+`macos_floor` carries the same numbers and, when this Mac is too old, the same
+`message`. The wizard has its own screen for it, and a panel on Review (see
+*1.5.9* below); the backend's message is still written to stand alone, because
+it is what `clickgraft build` prints and what a report carries:
+
+> This Mac has macOS 14.6.1, and a copy of HP Click 4.10.42 would need macOS
+> 15.0 or later, so ClickGraft has not made one. Nothing has been downloaded or
+> written. That comes from files HP ships inside HP Click itself and the support
+> files ClickGraft adds from Homebrew, which are built for macOS 15.0 or later.
+>
+> Your HP Click is unchanged and works as it did. Once this Mac is on macOS 15.0
+> or later, ClickGraft can make the copy.
+
+The "That comes from…" sentence names only what actually sets the floor: one of
+the two, or both. When nothing inside does and HP's own Info.plist sets it, the
+sentence is "That is the macOS HP Click 4.10.42 itself asks for." If the engine
+ever sets it, that is only known once the copy is made, so the refusal comes at
+the end of the build instead: the first two sentences become "…and the copy of
+HP Click 4.10.42 that ClickGraft made needs macOS 26.0 or later. ClickGraft has
+thrown it away rather than put it in place, and nothing here was replaced.", and
+the reason "the files of the Apple Silicon engine ClickGraft puts in the copy".
+A report is no help to this person, so the screen of its own has no report
+offer.
 
 **The build refused to replace the copy** *(1.5.8)* — orange, not red, and no
 report offer: nothing went wrong and the person can put it right. Review checks
@@ -573,9 +681,10 @@ drawn.
 
 The copy can also be opened *during* the build, which takes about a minute — the
 new copy is in the output folder only at the very end. `build.py` checks again in
-its last step, immediately before it would delete the old bundle, and stops
-instead; the copy it built is thrown away. The same screen appears, with the
-second sentence replaced, because by then the download did happen:
+its last step, immediately before it would set the old bundle aside (up to
+1.5.8: delete it), and stops instead; the copy it built is thrown away. The same
+screen appears, with the second sentence replaced, because by then the download
+did happen:
 
 > It was opened while the new copy was being made, so that new copy was thrown
 > away rather than put in its place. Nothing here changed.
@@ -595,6 +704,373 @@ second sentence replaced, because by then the download did happen:
 
 **Note:** every error screen states that the original is untouched. That is the
 first thing a worried user wants to know, and it costs one line.
+
+---
+
+## 1.5.9 — the copy being replaced, and the macOS a copy needs
+
+Every string below is new or changed in 1.5.9.
+
+**Why.** Up to 1.5.8 a second build deleted the copy already in Applications and
+then renamed the new one into place, and checked the new one only after that. A
+new copy that failed its checks had already cost the owner the one that worked,
+and a rename that failed cost them both. Meanwhile the red screen said "Nothing
+was installed, and nothing about your Mac is different from a minute ago", and
+the orange one "drag it to the Trash and nothing about your Mac has changed".
+Now the copy being replaced is set aside, hidden and never deleted, until the
+new one has passed its checks, and put back when it doesn't. The backend says
+what became of it in every result (`previous_copy`, `new_copy`, `check`), and
+each screen says exactly that and nothing it can't know.
+
+A new copy that fails its checks is **removed** when there is a previous copy to
+put back in its place: the old one has been shown to work and the new one
+hasn't. With no previous copy the new one **stays**, as before 1.5.9: it is all
+there is, and until now every copy that failed a check still launched. What a
+report needs — the check's message and the test launch's own logs — lives
+outside the copy, so nothing is lost by removing it.
+
+### Review — Screen 4
+
+**When this Mac's macOS is older than the copy needs** — orange, first on the
+screen, and `Create the copy` stays off:
+
+> **This copy needs macOS 15 or later, and this Mac has macOS 14.6.** That's
+> because files HP ships inside HP Click itself, and the support files ClickGraft
+> adds from Homebrew, are built for macOS 15 or later.
+>
+> Your HP Click is unchanged and works as it did. Once this Mac is on macOS 15 or
+> later, ClickGraft can make the copy.
+>
+> **HP Click 4.11.31 may be the better answer.** It's HP's own Apple Silicon
+> version, so it needs no copy, and HP lists it for macOS 12 to 26. It doesn't
+> support the DesignJet T310, T320, T350, T720 and T750, so if you print to one of
+> those, keep the HP Click you have.
+>
+> `Where to get 4.11.31`
+
+The reason sentence names only what sets the minimum, from the backend's
+`reasons`: "That's because files HP ships inside HP Click itself are built for
+macOS 15 or later.", "That's because the support files ClickGraft adds from
+Homebrew are built for…", "That's because the files of the Apple Silicon engine
+ClickGraft puts in the copy are built for…", or, when only HP's own Info.plist
+sets it, "That's the macOS HP Click 4.10.42 itself asks for." The version is said
+the way people say it: "15", or "15.4" when the minor number isn't 0.
+
+The 4.11.31 paragraph appears only when HP lists it for this Mac (macOS 12 or
+later; `alternative` in the plan). "12 to 26" is HP's own list as it stood on
+22 Sep 2026 (`hp_lists_from`, `hp_lists_to`): it was "12 and later" until review,
+which overstated it, since HP's page stops at 26. When 4.11.31 is already in Applications, "It's
+already in your Applications folder." follows the first sentence and the button
+goes. The printers come from that app's own list when it is installed, and
+otherwise are the five HP dropped after 4.8.117. "HP lists it for" is HP's word:
+4.11.31 carries the same minimum-15.0 libmagic and OpenSSL as 4.10.42 under its
+12.0 Info.plist, so ClickGraft does not vouch for it on an older Mac.
+
+**Where things go**, when a copy is already there — one new line under the
+existing replace line:
+
+> ClickGraft keeps the copy that's there until the new one has passed its checks,
+> and puts it back if it doesn't.
+
+**When a copy an earlier build set aside here is still waiting** (the plan's
+`leftover`) — orange, near the top, and `Create the copy` stays off until it is
+dealt with:
+
+> **Your previous copy is still set aside from last time.** The last time
+> ClickGraft replaced HP Click (Apple Silicon), it didn't finish, and your
+> previous copy, made from HP Click 4.8.117, is still set aside, hidden, in the
+> same folder. Decide what happens to it before ClickGraft makes another copy.
+>
+> `Decide now`
+
+`Decide now` opens the screen below and comes back to Review. Why: a build sets
+the copy at the path aside, so a build over a waiting one stacks a second on top
+of it, and the two can only be undone newest first — which nothing on screen
+explained. In review, two presses of `Put it back` in the order shown deleted the
+owner's working copy. The backend refuses such a build too (`stage:
+"leftover_pending"`), and the wizard then goes straight to the screen below.
+
+### Your previous copy is still here — new screen, before Screen 2
+
+Shown when `agent env` finds a copy a build set aside and never put back or
+deleted, and from Review as above. Nothing else would ever mention it — it is
+hidden in the same folder — so this screen does, and makes no choice for the
+owner.
+
+Worded from the backend's `state` for it, never from assumption. The first draft
+said "the new copy, which was never fully checked" of whatever was at the path —
+including a copy that had passed, and one that had failed — and its primary button
+removed whatever was there. Since review the backend records, beside each copy it
+sets aside, which copy it put in its place and what verify made of that one, and
+only ever removes that copy to make room.
+
+**Heading:** Your previous copy is still here
+
+**`installed`** — the build stopped while it was checking the new copy (quit,
+crashed or killed):
+
+> The last time ClickGraft made a copy of HP Click, it stopped before it had
+> finished checking the new one. Your previous copy, made from HP Click 4.8.117,
+> was set aside first, so it's safe. It's hidden, in the same folder as the new
+> one.
+>
+> **Put it back if you're not sure.** The new copy, made from HP Click 4.10.42,
+> which never finished its checks, is removed, and your previous copy goes back
+> where it was.
+>
+> **Keep the new copy** only if you've used it since and it works. Your previous
+> copy is then deleted.
+
+`Decide later` · `Keep the new copy` · **`Put it back`**
+
+**`passed`** — the new copy passed, and deleting the old one failed:
+
+> The last time ClickGraft made a copy of HP Click, the new copy passed its
+> checks, but ClickGraft couldn't remove the one it replaced. Your previous copy,
+> made from HP Click 4.8.117, is still here, hidden, in the same folder.
+>
+> **Remove it if the new copy works for you.** The new copy, made from HP Click
+> 4.10.42, stays where it is. That's what ClickGraft would have done.
+>
+> **Put it back** if you'd rather go back to it. The new copy is then removed.
+
+`Decide later` · `Put it back` · **`Remove it`**
+
+**`failed`** — the new copy failed a check, and putting the old one back failed:
+
+> The last time ClickGraft made a copy of HP Click, the new copy didn't pass its
+> checks, and ClickGraft couldn't put your previous copy back in its place. Your
+> previous copy, made from HP Click 4.8.117, is safe: it's hidden, in the same
+> folder. What failed: the test launch.
+>
+> **Put it back.** The new copy, which didn't pass, is removed, and your previous
+> copy goes back where it was. If HP Click (Apple Silicon) is open, quit it first.
+>
+> **Keep the new copy** only if you've used it since and it works. Your previous
+> copy is then deleted.
+
+`Decide later` · `Keep the new copy` · **`Put it back`**
+
+**`missing`** — nothing is at the path (the build stopped between its renames):
+
+> The last time ClickGraft made a copy of HP Click, it stopped part-way through
+> replacing yours. Your previous copy, made from HP Click 4.8.117, was set aside
+> first, so it's safe, but there's no copy in its place at the moment.
+>
+> **Put it back.** It goes back where it was, as it was.
+
+`Decide later` · **`Put it back`**
+
+**`other`** — something is at the path, but not the copy that build put there
+(moved by hand, or made by a ClickGraft before 1.5.9), so nothing will remove it:
+
+> ClickGraft set your previous copy, made from HP Click 4.8.117, aside while it
+> was replacing it, and it's still here, hidden, in the same folder. The HP Click
+> (Apple Silicon) in its place now isn't the one ClickGraft put there (it's made
+> from HP Click 4.10.42), so ClickGraft won't remove it to make room.
+>
+> **To put your previous copy back,** move HP Click (Apple Silicon) out of that
+> folder yourself first — to the Trash, say — then press Put it back.
+>
+> **If you don't need your previous copy,** delete it. The HP Click (Apple
+> Silicon) in its place stays as it is.
+
+`Decide later` · `Delete it` · **`Put it back`**
+
+Every state ends the panel with **Your original HP Click was not changed.**, then,
+small:
+
+> Until you decide, ClickGraft won't replace HP Click (Apple Silicon) again.
+
+then "Set aside at:" and the path, small and in monospace. "made from HP Click …"
+is left out of either sentence when that copy's version can't be read. `Decide
+later` carries on — to Screen 2, or back to Review — and it is asked again next
+time.
+
+`Keep the new copy` asks first:
+
+> **Delete your previous copy?**
+> It's deleted, not moved to the Trash, and can't be brought back. HP Click
+> (Apple Silicon) and your original HP Click stay as they are.
+>
+> `Delete it` · `Cancel`
+
+(`Keep the new copy`, `Remove it` and `Delete it` all ask this.)
+
+After `Put it back` — here, or on a failure screen below:
+
+> **Your previous copy is back**
+> It's at /Applications/HP Click (Apple Silicon).app, as it was.
+
+and if it can't be done, the backend's reason, then:
+
+> **ClickGraft couldn't put it back**
+> *(the reason)*
+>
+> Your previous copy is still safe, set aside where it was.
+
+If the delete fails: **ClickGraft couldn't delete it** and the backend's reason.
+
+### This copy needs macOS 15 or later — new screen
+
+Replaces the red screen for `stage: "macos_too_old"`. Not red and no report
+offer: nothing went wrong, and a report can't change which macOS HP's files are
+built for.
+
+**Heading:** This copy needs macOS 15 or later
+
+**Body:**
+
+> This Mac has macOS 14.6, so ClickGraft hasn't made the copy. Nothing has been
+> downloaded or changed.
+>
+> *(the reason sentence, as on Review)*
+
+or, when the engine's own files set the minimum and that was only known once the
+copy was made:
+
+> This Mac has macOS 14.6. ClickGraft could only tell once the copy was made, so
+> it has thrown that copy away. Nothing here was replaced.
+
+**Panel** (orange):
+
+> **Your HP Click is unchanged.** It works as it did.
+>
+> **Your previous copy hasn't been touched either.** *(only when there is one)*
+>
+> **Once this Mac is on macOS 15 or later,** ClickGraft can make the copy.
+
+Then the 4.11.31 panel as on Review, in blue.
+
+**Controls:** `Back` · `Quit`
+
+### The new copy didn't pass its checks — replaces "Your copy was made, but one check didn't pass"
+
+Every version says which check failed, as "What failed: …", from verify's
+`check`:
+
+| `check` | said as |
+|---|---|
+| `bundle` | the first look at the new copy |
+| `architectures` | the check that it's built for Apple Silicon |
+| `bundle_audit` | the check of every file in it |
+| `flat_symbols` | the check for anything HP's code needs that's missing |
+| `minimum_macos` | the check of which macOS it needs |
+| `code_signature` | the check of its signature |
+| `asar_integrity` | the check of HP's app files inside it |
+| `update_locks` | the check that HP's updater can't replace it |
+| `patch_outcomes` | the check of the small fixes |
+| `smoke_launch` | the test launch |
+| `resealed` | signing it again after the test launch |
+
+**The previous copy has been put back** (`previous_copy: "restored"`) — orange:
+
+> **The new copy didn't pass its checks**
+>
+> So your previous copy has been put back, as it was, and the new one has been
+> removed. What failed: the test launch.
+>
+> **Your previous copy is back where it was.** Use it just as you did before.
+>
+> **Your original HP Click was not changed.** That hasn't been touched at any
+> point.
+>
+> **Please send the report.** It says which check failed and why, which is usually
+> enough to fix it. Check back here in a day or so: if a new ClickGraft solves
+> it, the app will offer you the update itself.
+>
+> WHAT THE CHECK SAID — *(the message)*
+
+**Controls:** `Back` · `Try again` · `Send a report`
+
+**There was no previous copy** (`previous_copy: "none"`, `new_copy: "kept"`) —
+orange:
+
+> **The new copy didn't pass its checks**
+>
+> HP Click (Apple Silicon) is in your Applications folder, but ClickGraft couldn't
+> confirm that it works. What failed: the test launch.
+>
+> **Your original HP Click was not changed.** That hasn't been touched at any
+> point.
+>
+> **The new copy may still work.** Try opening it. If it starts and finds your
+> printer, you're done.
+>
+> **If it doesn't,** drag it to the Trash.
+
+(It said "There's nothing else to remove." until review: ClickGraft's download
+cache stays in ~/.cache/clickgraft, and a failed test launch keeps its logs in
+/private/tmp/cg-smoke-*, on purpose, for the report.)
+>
+> WHAT THE CHECK SAID — *(the message)*
+
+**Controls:** `Back` · `Send a report` · `Open the copy` · `Try again`
+
+**The previous copy couldn't be put back** (`previous_copy: "aside"`) — usually
+because the new copy was opened in the seconds after the test launch — orange:
+
+> **The new copy didn't pass its checks**
+>
+> ClickGraft couldn't put your previous copy back in its place, because the new
+> copy is open. Your previous copy is safe. It has been set aside, hidden, in the
+> same folder. What failed: the test launch.
+
+("…in its place." when the reason is anything else; the backend's own words go
+to the detail log.)
+>
+> **Put it back when you're ready.** Quit HP Click (Apple Silicon) if it's open,
+> then press Put it back. ClickGraft will also offer to do it the next time you
+> open it.
+>
+> **Your original HP Click was not changed.** That hasn't been touched at any
+> point.
+
+**Controls:** `Back` · `Send a report` · `Put it back`
+
+### The copy wasn't finished — changed
+
+The first point's second sentence now depends on `previous_copy`, and "Nothing
+was installed, and nothing about your Mac is different from a minute ago" is
+gone — the Electron download and support files stay in ClickGraft's cache, and
+before 1.5.9 the copy being replaced could already be gone:
+
+> **Your original HP Click was not changed.** *then one of:*
+>
+> - Nothing was put in your Applications folder. *(no copy was there, and none
+>   is now)*
+> - Your previous copy hasn't been touched either. *(the build stopped before it
+>   moved anything — signing is its last step that can fail, and it works on a
+>   separate copy)*
+> - ClickGraft had started to put the new copy in place, so it has put your
+>   previous copy back, as it was.
+> - Your previous copy couldn't be put back in its place, but it's safe: it has
+>   been set aside, hidden, in the same folder. Press Put it back to return it.
+
+**Controls:** `Back` · `Try again` · `Put it back` (only in the last case) ·
+`Send a report`
+
+**Another ClickGraft is working in the same folder** (`stage: "busy"`) — the same
+red screen, with the backend's words as the body:
+
+> Another ClickGraft is making or checking a copy in /Applications right now.
+> Wait for it to finish, then try again. Nothing here has been changed.
+
+Why: two builds into one folder at once — two wizards open, or one beside a build
+run by hand — could interleave so that the second one's rollback put a copy that
+had failed its checks back over the owner's, and deleted that. One build, check
+and settle at a time per folder since review.
+
+### What a report says happened
+
+The `outcome:` line of a report now follows the same state: "a check did not
+pass (smoke_launch); the previous copy was put back", "a check did not pass
+(smoke_launch); the previous copy could not be put back and is set aside", "the
+copy was made but a check did not pass (smoke_launch)", "the build did not
+finish; the previous copy was put back", "the build did not start: this Mac's
+macOS is older than the copy needs", and "the copy was made, needed a newer macOS
+than this Mac's, and was thrown away". Its `checks:` list now carries the checks
+that passed before the one that failed.
 
 ---
 

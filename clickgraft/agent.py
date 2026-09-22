@@ -10,13 +10,42 @@ stdout; nothing else is ever printed there.
     python3 -m clickgraft.cli agent build --source PATH [--out PATH] [--accept-printer-loss]
     python3 -m clickgraft.cli agent probe --source PATH
     python3 -m clickgraft.cli agent printerinfo
+    python3 -m clickgraft.cli agent restore-previous --backup PATH
+    python3 -m clickgraft.cli agent discard-previous --backup PATH
 
 `build` streams:
     {"type":"progress","pct":0.4,"msg":"..."}
     ...
     {"type":"done","results":{...}}      or {"type":"error","error":"..."}
+
+An error carries a "stage" when the wizard has something specific to say:
+"in_use" and "printers_lost" (the copy it would replace), "macos_too_old"
+(this Mac is older than the copy needs; with "needs" and "this_mac"),
+"leftover_pending" (a copy an earlier build set aside at this path is waiting
+for the owner; with "leftovers"), "busy" (another ClickGraft is working in the
+same folder), "build" and "verify".
+
+Since 1.5.9 the copy a build replaces is set aside, not deleted, until the new
+one has passed verify (build.install_copy), and every "done" and "error" from
+`build` says what became of it, so the wizard never has to guess:
+
+    previous_copy  "none"       nothing was at the output path
+                   "untouched"  the build stopped before it moved anything
+                   "restored"   it was set aside, and has been put back
+                   "aside"      it was set aside and could not be put back;
+                                it is safe at previous_path
+                   "replaced"   (done only) the new copy passed and it is gone
+                   "aside" on a done: the new copy passed, and the old one could
+                   not be deleted; the next `agent env` offers it
+    needs_macos    (done) the copy's own LSMinimumSystemVersion, "15.0"
+    new_copy       (verify errors) "removed" to make room for the previous
+                   copy, or "kept" at the output path
+    check          (verify errors) which check failed: a VerifyError.check
+    restore_reason (verify errors, previous_copy "aside") "open" when the new
+                   copy was open, else "error"; restore_error has the detail
 """
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -24,16 +53,25 @@ import sys
 import time
 
 from clickgraft import graftable
-from clickgraft.build import OutputInUseError, build_apple_silicon_bundle
+from clickgraft.build import (BuildInProgressError, InstallError, LeftoverPendingError,
+                              OutputInUseError, build_apple_silicon_bundle, discard_previous,
+                              folder_lock, is_set_aside, leftovers, record_outcome,
+                              restore_previous)
 from clickgraft.deps import check_clt
 from clickgraft.hostarch import host_info
+from clickgraft.macos_floor import (MacOSTooOldError, declared_minimum, floor_reasons,
+                                    format_version, host_macos, parse_version, plan_floor,
+                                    too_old_message)
 from clickgraft.macho import get_archs
 from clickgraft.manifest import ManifestManager
 from clickgraft.printerinfo import as_text as printer_text
 from clickgraft.probe import probe_app_bundle
 from clickgraft.verify import processes_inside, verify_app_bundle
 
-REQUIRED_TOOLS = ["codesign", "install_name_tool", "lipo", "otool", "nm", "ditto"]
+# vtool since 1.5.9: it reads the minimum macOS each file in a copy declares
+# (clickgraft/macos_floor.py). Listed here so the Requirements screen's detail,
+# and test_toolchain_fallback's run on the Command Line Tools alone, cover it.
+REQUIRED_TOOLS = ["codesign", "install_name_tool", "lipo", "otool", "nm", "vtool", "ditto"]
 APP_NAME = "HP Click (Apple Silicon).app"
 # What build.py step 7 sets on every copy, and nothing of HP's uses.
 COPY_BUNDLE_ID = "com.hp.hpclick.arm64"
@@ -86,9 +124,37 @@ def resolve_output():
     return os.path.join(SYSTEM_APPS, APP_NAME), False
 
 
+# The stdout a write has already failed on, because nobody is reading it.
+_unread = None
+
+
 def emit(obj):
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+    """One JSON line to the wizard. A closed pipe is not an error.
+
+    Quitting the wizard does not stop this process: the wizard never
+    terminates it, and it should not, since a build killed between putting the
+    new copy in place and settling the old one leaves the old one stranded.
+    So the build carries on to the end with nobody reading, and every write
+    after the wizard has gone raised BrokenPipeError. Raised from a progress
+    message, that skipped the step after it -- once, the deletion of the copy a
+    new one had just replaced after passing every check (found in review, 22
+    Sep 2026). Now the rest of the output goes to /dev/null, so the build
+    settles exactly as it would have with the wizard watching; the log file
+    still has every line.
+    """
+    global _unread
+    if _unread is sys.stdout:
+        return
+    try:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        _unread = sys.stdout
+        # Or the interpreter's own flush at exit reports the same error.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError, AttributeError, io.UnsupportedOperation):
+            pass
 
 
 def _log_path():
@@ -100,6 +166,48 @@ def _log_path():
         return None
 
 
+def _previous_copies(folders):
+    """Copies set aside by a build that did not finish, for `agent env`.
+
+    A build that crashed or was killed after putting the new copy in place,
+    and before verify passed, leaves the owner's previous copy set aside
+    (build.install_copy). Nothing deletes it: the wizard says it is there and
+    offers to put it back or remove it, and does neither on its own.
+    """
+    out, seen = [], set()
+    for folder in folders:
+        folder = os.path.realpath(folder) if folder else ""
+        if not folder or folder in seen:
+            continue
+        seen.add(folder)
+        out += _describe_leftovers(leftovers(folder))
+    return out
+
+
+def _describe_leftovers(items):
+    """build.leftovers() entries, with what the wizard says about each.
+
+    "state" (build._leftover_state) is what the leftover screen is worded
+    from: whether the copy at the path is the one that build put there, and
+    what verify made of it. Before the 1.5.9 review the screen said "never
+    fully checked" of every copy it found there, including ones that had
+    passed and ones that had failed.
+    """
+    out = []
+    for item in items:
+        item = dict(item)
+        info = _info_plist(item["path"])
+        there = item["restores_to"]
+        item.update({
+            "version": _bundle_version(item["path"]),
+            "made_by_clickgraft": info.get("CFBundleIdentifier") == COPY_BUNDLE_ID,
+            "restores_to_exists": os.path.lexists(there),
+            "current_version": _bundle_version(there) if os.path.isdir(there) else "",
+        })
+        out.append(item)
+    return out
+
+
 def environment(mm):
     h = host_info()
     return {
@@ -108,6 +216,9 @@ def environment(mm):
         "host": h,
         "tools": {t: (shutil.which(t) or "") for t in REQUIRED_TOOLS},
         "versions": sorted(mm.manifests),
+        # This Mac's macOS, e.g. "15.6.1"; "" if unreadable. The plan's
+        # macos_floor says what a copy needs.
+        "macos": format_version(host_macos()) or "",
     }
 
 
@@ -214,9 +325,9 @@ def existing_copy(output, source, ps_output=None):
     as --fake-version, rewrites that "version" to 99.99.999. Nothing calls it
     today, but a copy made that way would name a version that never existed.
 
-    open_pids: processes running from the copy. build.py deletes the old copy
-    outright before renaming the new one into place, so it must not be open.
-    ps_output is for tests.
+    open_pids: processes running from the copy. build.py sets the old copy
+    aside and deletes it once the new one passes its checks, so it must not be
+    open. ps_output is for tests.
     """
     if not output or not os.path.isdir(output):
         return None
@@ -268,7 +379,95 @@ def fixes_for(manifest):
     return out
 
 
+# HP's own Apple Silicon build, which needs no copy. Offered when this Mac is
+# too old for one: HP's download page lists 4.11.31 for macOS 12 to 26, and
+# its Info.plist says LSMinimumSystemVersion 12.0 (both read 22 Sep 2026; it
+# runs on 27 too, which HP's list doesn't have yet). It carries the same
+# minos-15.0 libmagic and OpenSSL as 4.10.42 under that 12.0, so this is HP's
+# word for it, and the wizard says so -- in HP's words, "12 to 26", not "12 and
+# later". It lacks the DesignJet T310/T320/T350/T720/T750, like every HP Click
+# after 4.8.117. packaging/ClickGraft.swift says the same on its Requirements
+# screen, where the backend has not run yet.
+HP_NATIVE_VERSION = "4.11.31"
+HP_NATIVE_LISTED_FROM = (12, 0, 0)
+HP_NATIVE_LISTED_TO = (26, 0, 0)
+
+
+def native_alternative(this_mac):
+    """{"version", "hp_lists_from", "hp_lists_to"} when HP's own build is an
+    option for this Mac; None when this Mac is older than HP lists it for, or
+    unreadable."""
+    if this_mac is None or this_mac < HP_NATIVE_LISTED_FROM:
+        return None
+    return {"version": HP_NATIVE_VERSION,
+            "hp_lists_from": format_version(HP_NATIVE_LISTED_FROM),
+            "hp_lists_to": format_version(HP_NATIVE_LISTED_TO)}
+
+
+def macos_floor_plan(manifest, source, floor=None):
+    """What Review can say about macOS before anything is downloaded.
+
+    The copy's minimum macOS is the highest any file in it declares, and never
+    lower than HP's own (clickgraft/macos_floor.py). build.py refuses to start
+    when this Mac is older, and this is the same arithmetic done first, so the
+    wizard can say so on Review rather than after the button.
+
+        needs        "15.0": the copy's minimum as far as it can be known now.
+                     Electron's runtime is not downloaded yet and so not
+                     counted; the build counts it and stamps the exact value
+                     (the same 15.0 for 4.8.117, 4.8.118 and 4.10.42 on
+                     22 Sep 2026).
+        this_mac     "27.0", or "" if unreadable
+        for_this_mac False on an Intel Mac, where the copy is for another Mac
+                     and this Mac's macOS says nothing about it
+        this_mac_ok  True/False; None when unknown or not for_this_mac
+        message      the refusal build would give, when this_mac_ok is False
+        reasons      what sets it, as phrases ("files HP ships inside HP Click
+                     itself", "the support files ClickGraft adds from Homebrew")
+        hp_declares  HP's own LSMinimumSystemVersion, "12.0"
+        hp_needs, hp_file   HP's highest-minimum file that the copy keeps
+        bottles      {formula: {"tag": "arm64_sequoia", "needs": "15.0"}}
+        complete     False when Homebrew could not be asked, in which case
+                     needs leaves the Homebrew files out and problem says why
+        alternative  when this_mac_ok is False: native_alternative(), HP's own
+                     Apple Silicon version if HP lists it for this Mac
+    """
+    plan = floor or plan_floor(source, manifest)
+    this_mac = host_macos()
+    for_this_mac = bool(host_info()["apple_silicon"])
+    need = plan["floor"]
+    ok = None
+    if for_this_mac and need is not None and this_mac is not None:
+        ok = this_mac >= need
+    reasons = floor_reasons(plan)
+    return {
+        "needs": format_version(need) or "",
+        "this_mac": format_version(this_mac) or "",
+        "for_this_mac": for_this_mac,
+        "this_mac_ok": ok,
+        "message": (too_old_message(need, this_mac, reasons, manifest.get("app_version"))
+                    if ok is False else ""),
+        "reasons": reasons,
+        "hp_declares": format_version(plan["declared"]) or "",
+        "hp_needs": format_version(plan["hp"][1]) if plan["hp"] else "",
+        "hp_file": plan["hp"][0] if plan["hp"] else "",
+        "bottles": {f: {"tag": b["tag"], "needs": format_version(b["macos"])}
+                    for f, b in plan["bottles"].items()},
+        "complete": plan["complete"],
+        "problem": plan["problem"],
+        "alternative": native_alternative(this_mac) if ok is False else None,
+    }
+
+
 def build_plan(manifest, source, output):
+    floor = macos_floor_plan(manifest, source)
+
+    def download_line(d):
+        b = floor["bottles"].get(d.get("brew_formula"))
+        bottle = (f" ({b['tag']} bottle, for macOS {b['needs']} and later)"
+                  if b else "")
+        return f"{d['name']} from Homebrew's CDN{bottle}, SHA-256 checked"
+
     return {
         "source": source,
         "output": output,
@@ -285,9 +484,23 @@ def build_plan(manifest, source, output):
                    for d in manifest.get("required_dylibs", [])],
         "downloads": [f"Electron {manifest['electron_version']} (darwin-arm64), "
                       f"SHA-256 checked against the release's SHASUMS256.txt"]
-        + [f"{d['name']} from Homebrew's CDN, SHA-256 checked"
-           for d in manifest.get("required_dylibs", [])],
+        + [download_line(d) for d in manifest.get("required_dylibs", [])],
+        "macos_floor": floor,
+        # A copy an earlier build set aside at this path and never put back or
+        # deleted. The build refuses until the owner has decided
+        # (build.LeftoverPendingError), so Review says so before the button.
+        "leftover": _pending_leftover(output),
     }
+
+
+def _pending_leftover(output):
+    """The leftover waiting at `output`, described as `agent env` does, or None."""
+    if not output:
+        return None
+    name = os.path.basename(output)
+    items = [i for i in leftovers(os.path.dirname(os.path.abspath(output)))
+             if os.path.basename(i["restores_to"]) == name]
+    return _describe_leftovers(items)[0] if items else None
 
 
 def _manifest_for(mm, source):
@@ -319,8 +532,15 @@ def main(argv):
               # A copy appearing in the home folder instead of /Applications,
               # with no explanation, reads as the tool putting it in the wrong
               # place rather than the only place this account may write.
-              "output_per_user": out_per_user})
+              "output_per_user": out_per_user,
+              # 1.5.9: a previous copy a build set aside and never got to put
+              # back or delete, because it crashed or was killed mid-verify.
+              "leftovers": _previous_copies([os.path.dirname(default_out),
+                                             SYSTEM_APPS, USER_APPS])})
         return 0
+
+    if cmd in ("restore-previous", "discard-previous"):
+        return _settle_leftover(cmd, arg("--backup") or "")
 
     if cmd == "plan":
         m = _manifest_for(mm, source or "")
@@ -352,77 +572,264 @@ def main(argv):
             emit({"type": "error", "error": "That is not a supported HP Click version."})
             return 1
 
-        # Checked again here rather than trusted from Review: the copy can be
-        # opened, or swapped for another, between that screen and this button.
-        # Nothing has been fetched or written when either of these returns.
-        replacing = existing_copy(output, source)
-        if replacing and replacing["open_pids"]:
-            # build.py deletes the old copy before renaming the new one into
-            # place. Quitting it is the owner's call -- it may be mid-print --
-            # so ClickGraft says so and stops, and never kills it.
-            emit({"type": "error", "stage": "in_use", "output": output,
-                  "output_exists": True, "pids": replacing["open_pids"],
-                  "error": f"The copy at {output} is open (process "
-                           f"{', '.join(str(p) for p in replacing['open_pids'])}). "
-                           f"Quit it and try again. Nothing has been replaced."})
-            return 1
-        if replacing and replacing["printers_lost"] and "--accept-printer-loss" not in rest:
-            # Review asks for a tick before it passes the flag. Without it the
-            # build would replace a copy that supports printers this one can't.
-            emit({"type": "error", "stage": "printers_lost", "output": output,
-                  "output_exists": True, "printers_lost": replacing["printers_lost"],
-                  "error": f"The copy at {output} supports printers that a copy of "
-                           f"HP Click {replacing['source_version'] or m['app_version']} "
-                           f"would not: {', '.join(replacing['printers_lost'])}. "
-                           f"Nothing has been replaced."})
-            return 1
-
-        log = _log_path()
-        emit({"type": "start", "log_path": log or ""})
-
-        def progress(msg, pct):
-            emit({"type": "progress", "pct": float(pct), "msg": msg})
-            if log:
-                try:
-                    with open(log, "a", encoding="utf-8") as f:
-                        f.write(f"{time.strftime('%H:%M:%S')}  {pct * 100:5.1f}%  {msg}\n")
-                except OSError:
-                    pass
-
         try:
-            build_apple_silicon_bundle(source_app_path=source, output_app_path=output,
-                                       manifest=m, progress_callback=progress,
-                                       allow_foreign_host=("--allow-intel-host" in rest))
-        except OutputInUseError as exc:
-            # The copy was quiet when this command started and was opened during
-            # the build. Same stage as the check above, so the screen that says
-            # "quit it and check again" is the one shown, and it is true: the
-            # build stopped before it deleted anything.
-            emit({"type": "error", "stage": "in_use", "output": exc.output,
-                  "output_exists": True, "pids": exc.pids, "error": str(exc),
-                  "during_build": True, "log_path": log or ""})
+            with folder_lock(os.path.dirname(os.path.abspath(output))):
+                return _build_command(m, source, output, rest)
+        except BuildInProgressError as exc:
+            # Another ClickGraft is building, checking or settling a copy in
+            # this folder. Nothing here has been fetched, moved or written.
+            emit({"type": "error", "stage": "busy", "error": str(exc),
+                  "previous_copy": "untouched" if os.path.lexists(output) else "none",
+                  "output": output, "output_exists": os.path.isdir(output)})
             return 1
-        except Exception as exc:                                   # noqa: BLE001
-            emit({"type": "error", "error": str(exc), "stage": "build",
-                  "output_exists": os.path.isdir(output), "output": output,
-                  "log_path": log or ""})
-            return 1
-
-        emit({"type": "progress", "pct": 1.0, "msg": "Verifying the result…"})
-        try:
-            _ok, results = verify_app_bundle(output, manifest=m)
-        except Exception as exc:                                   # noqa: BLE001
-            # The build finished before this ran. The copy is on disk, and in
-            # every case seen so far it launches fine — a failed check here
-            # means "we could not confirm it", not "it is broken", and
-            # certainly not "nothing was installed".
-            emit({"type": "error", "error": str(exc), "stage": "verify",
-                  "output_exists": os.path.isdir(output), "output": output,
-                  "log_path": log or ""})
-            return 1
-
-        emit({"type": "done", "results": results, "output": output, "log_path": log or ""})
-        return 0
 
     emit({"type": "error", "error": f"unknown agent subcommand: {cmd}"})
     return 2
+
+
+def _build_command(m, source, output, rest):
+    """`agent build`, run holding ClickGraft's lock on the output folder
+    (build.folder_lock): the build, verify and what happens to the copy it
+    replaced, which belong together."""
+    # Checked again here rather than trusted from Review: the copy can be
+    # opened, or swapped for another, between that screen and this button.
+    # Nothing has been fetched or written when either of these returns.
+    replacing = existing_copy(output, source)
+    # Whether there is a copy here for the build to set aside: what a
+    # failure before it moves anything has left "untouched".
+    had_copy = os.path.lexists(output)
+    untouched = "untouched" if had_copy else "none"
+    if replacing and replacing["open_pids"]:
+        # build.py sets the old copy aside and deletes it once the new one
+        # passes. Quitting it is the owner's call -- it may be mid-print --
+        # so ClickGraft says so and stops, and never kills it.
+        emit({"type": "error", "stage": "in_use", "output": output,
+              "output_exists": True, "pids": replacing["open_pids"],
+              "error": f"The copy at {output} is open (process "
+                       f"{', '.join(str(p) for p in replacing['open_pids'])}). "
+                       f"Quit it and try again. Nothing has been replaced."})
+        return 1
+    if replacing and replacing["printers_lost"] and "--accept-printer-loss" not in rest:
+        # Review asks for a tick before it passes the flag. Without it the
+        # build would replace a copy that supports printers this one can't.
+        emit({"type": "error", "stage": "printers_lost", "output": output,
+              "output_exists": True, "printers_lost": replacing["printers_lost"],
+              "error": f"The copy at {output} supports printers that a copy of "
+                       f"HP Click {replacing['source_version'] or m['app_version']} "
+                       f"would not: {', '.join(replacing['printers_lost'])}. "
+                       f"Nothing has been replaced."})
+        return 1
+
+    log = _log_path()
+    emit({"type": "start", "log_path": log or ""})
+
+    def progress(msg, pct):
+        emit({"type": "progress", "pct": float(pct), "msg": msg})
+        if log:
+            try:
+                with open(log, "a", encoding="utf-8") as f:
+                    f.write(f"{time.strftime('%H:%M:%S')}  {pct * 100:5.1f}%  {msg}\n")
+            except OSError:
+                pass
+
+    try:
+        built = build_apple_silicon_bundle(source_app_path=source, output_app_path=output,
+                                           manifest=m, progress_callback=progress,
+                                           allow_foreign_host=("--allow-intel-host" in rest))
+    except LeftoverPendingError as exc:
+        # A copy an earlier build set aside here is still waiting for the
+        # owner. Review says so first; this is for when things changed after.
+        emit({"type": "error", "stage": "leftover_pending", "error": str(exc),
+              "leftovers": _describe_leftovers(exc.leftovers),
+              "previous_copy": untouched, "output": output,
+              "output_exists": os.path.isdir(output), "log_path": log or ""})
+        return 1
+    except MacOSTooOldError as exc:
+        # This Mac is older than the copy would need. Refused before any
+        # download unless Electron's runtime set the floor, which is only
+        # counted once the copy is made; either way nothing was replaced.
+        emit({"type": "error", "stage": "macos_too_old", "error": str(exc),
+              "needs": exc.needs, "this_mac": exc.this_mac,
+              "reasons": exc.reasons, "after_build": getattr(exc, "after_build", False),
+              "alternative": native_alternative(parse_version(exc.this_mac)),
+              "previous_copy": untouched, "output": output,
+              "output_exists": os.path.isdir(output), "log_path": log or ""})
+        return 1
+    except OutputInUseError as exc:
+        # The copy was quiet when this command started and was opened during
+        # the build. Same stage as the check above, so the screen that says
+        # "quit it and check again" is the one shown, and it is true: the
+        # build stopped before it moved anything.
+        emit({"type": "error", "stage": "in_use", "output": exc.output,
+              "output_exists": True, "pids": exc.pids, "error": str(exc),
+              "during_build": True, "previous_copy": "untouched",
+              "log_path": log or ""})
+        return 1
+    except InstallError as exc:
+        # The new copy could not be put in place, or the build stopped
+        # just after it was: the old one was set aside by then, and has
+        # been put back, or is safe at previous_path.
+        emit({"type": "error", "error": str(exc), "stage": "build",
+              "previous_copy": exc.previous_copy,
+              "previous_path": exc.previous_path or "",
+              "output_exists": os.path.isdir(output), "output": output,
+              "log_path": log or ""})
+        return 1
+    except Exception as exc:                                   # noqa: BLE001
+        # Everything else stops before the old copy is moved: signing,
+        # the last step that can fail, works on the staging copy.
+        emit({"type": "error", "error": str(exc), "stage": "build",
+              "previous_copy": untouched,
+              "output_exists": os.path.isdir(output), "output": output,
+              "log_path": log or ""})
+        return 1
+
+    previous = getattr(built, "previous", None)
+    emit({"type": "progress", "pct": 1.0, "msg": "Verifying the result…"})
+    try:
+        _ok, results = verify_app_bundle(output, manifest=m)
+    except BaseException as exc:                               # noqa: BLE001
+        # The copy is built and in place, and has not been shown to work.
+        # A copy that has -- the one it replaced -- goes back. With none,
+        # the new copy stays: it is all there is, and in every case seen
+        # before 1.5.9 a copy that failed here still launched fine.
+        state = _after_failed_verify(output, previous, progress,
+                                     getattr(exc, "check", "") or "")
+        if not isinstance(exc, Exception):
+            raise
+        emit(dict({"type": "error", "error": str(exc), "stage": "verify",
+                   "check": getattr(exc, "check", "") or "",
+                   "results": getattr(exc, "results", {}) or {},
+                   "output_exists": os.path.isdir(output), "output": output,
+                   "log_path": log or ""}, **state))
+        return 1
+
+    # The old copy is settled before anything is said, because saying it can
+    # fail: quitting the wizard does not stop this process, and every write to
+    # its closed pipe used to raise here, before the delete, leaving the
+    # previous copy hidden beside a new one that had passed (found in review,
+    # 22 Sep 2026). emit() now tolerates a closed pipe as well.
+    done = {"type": "done", "results": results, "output": output,
+            "previous_copy": "none", "needs_macos": format_version(declared_minimum(output)) or "",
+            "log_path": log or ""}
+    notes = []
+    if previous:
+        record_outcome(previous, "passed")
+        try:
+            left = discard_previous(previous)
+        except OSError as exc:
+            # Not even renamed for the bin, so it keeps its own name, and its
+            # record says the new copy passed: the next `agent env` offers it
+            # to the owner as exactly that.
+            done.update(previous_copy="aside", previous_path=previous)
+            notes.append(f"Could not remove the copy it replaced, at {previous}: {exc}")
+        else:
+            done["previous_copy"] = "replaced"
+            notes.append("Checks passed. The copy it replaced has been removed.")
+            if left:
+                # Renamed for the bin by then, the next build here finishes the
+                # job (build.sweep_discards); nothing for the owner to do.
+                done["previous_left"] = left
+                notes.append(f"Part of the copy it replaced is left, at {left}")
+    for note in notes:
+        progress(note, 1.0)
+    emit(done)
+    return 0
+
+
+def _after_failed_verify(output, previous, progress, check=""):
+    """Put the Mac back as it was before a build whose copy failed verify.
+
+    -> the error's previous_copy / new_copy / previous_path fields. The failed
+    copy is deleted, not kept beside the old one for diagnosis: what a report
+    needs is the verify message and the test launch's own logs, which live
+    outside the bundle (verify.smoke_launch keeps them when a launch fails),
+    and 1.4 GB left hidden in Applications is a cost the owner cannot see. It
+    can be made again from the same HP Click in a minute.
+
+    Never raises: whatever happens, the wizard is told where the previous copy
+    is. An OSError from a rename once escaped from here, and the wizard, never
+    sent "done" or "error", stayed on "Checking the result" (found in review,
+    22 Sep 2026).
+    """
+    if not previous:
+        return {"previous_copy": "none", "new_copy": "kept"}
+    # Written first, so that if putting it back fails, the next `agent env`
+    # can say the new copy failed, and which check, rather than guess.
+    record_outcome(previous, "failed", check)
+    try:
+        restore_previous(output, previous)
+    except OutputInUseError as exc:
+        # Opened in the seconds since verify's own launch was stopped. Deleting
+        # it would pull its files out from under it, so both stay as they are.
+        reason, detail = "open", str(exc)
+    except Exception as exc:                                       # noqa: BLE001
+        # InstallError says where things stand; anything else is a surprise,
+        # and the old copy is still set aside unless the rename back happened.
+        reason, detail = "error", str(exc)
+    else:
+        progress("The new copy did not pass its checks, so the previous copy has "
+                 "been put back.", 1.0)
+        return {"previous_copy": "restored", "new_copy": "removed"}
+    if not os.path.lexists(previous) and os.path.isdir(output):
+        # Back in place after all: the failure came after the rename.
+        progress(f"The previous copy is back, but: {detail}", 1.0)
+        return {"previous_copy": "restored", "new_copy": "removed"}
+    progress(f"Could not put the previous copy back: {detail}", 1.0)
+    return {"previous_copy": "aside", "previous_path": previous,
+            "new_copy": "kept" if os.path.isdir(output) else "removed",
+            "restore_reason": reason, "restore_error": detail}
+
+
+def _settle_leftover(cmd, backup):
+    """restore-previous / discard-previous: what the owner chose to do with a
+    copy set aside by a build that did not finish (see _previous_copies).
+
+    Only a path named the way build.install_copy names one, and not one a
+    running build still owns, so this can never be pointed at anything else.
+    Held under the folder's lock, like a build, and always answers with
+    "restored", "discarded" or an error.
+    """
+    folder = os.path.dirname(os.path.normpath(backup)) if backup else ""
+    try:
+        with folder_lock(folder):
+            return _settle_locked(cmd, backup, folder)
+    except BuildInProgressError as exc:
+        emit({"type": "error", "stage": "leftover", "backup": backup, "error": str(exc)})
+        return 1
+
+
+def _settle_locked(cmd, backup, folder):
+    match = [item for item in leftovers(folder) if folder
+             and os.path.normpath(item["path"]) == os.path.normpath(backup)]
+    if not backup or not is_set_aside(backup) or not match:
+        emit({"type": "error", "stage": "leftover", "backup": backup,
+              "error": f"{backup or 'That'} is not a copy ClickGraft set aside, or "
+                       f"the build that set it aside is still running."})
+        return 1
+    item = match[0]
+    if cmd == "discard-previous":
+        try:
+            left = discard_previous(item["path"])
+        except OSError as exc:
+            left, why = item["path"], str(exc)
+        else:
+            why = f"some of its files could not be deleted, at {left}"
+        if left:
+            emit({"type": "error", "stage": "leftover", "backup": backup,
+                  "error": f"Could not remove {backup}: {why}."})
+            return 1
+        emit({"type": "discarded", "backup": backup})
+        return 0
+    try:
+        replaced = restore_previous(item["restores_to"], item["path"])
+    except Exception as exc:                                       # noqa: BLE001
+        # OutputInUseError, InstallError and NotTheBuildsCopyError all say
+        # nothing was moved, or that it was moved back; anything else is still
+        # answered, so the wizard never waits on a process that died.
+        emit({"type": "error", "stage": "leftover", "backup": backup,
+              "output": item["restores_to"], "error": str(exc),
+              "backup_exists": os.path.isdir(item["path"])})
+        return 1
+    emit({"type": "restored", "output": item["restores_to"], "removed_copy": replaced})
+    return 0
