@@ -1,12 +1,13 @@
 # What HP changed, and how it was checked
 
-Two removals in HP Click that people ask about. Measured 9 September 2026 by
-diffing HP's own packages, not read from a changelog — HP published neither
-change.
+Two removals in HP Click that people ask about, and the macOS HP's own libraries
+declare. The removals were measured 9 September 2026 by diffing HP's own
+packages, not read from a changelog — HP published neither change.
 
-**This goes stale the moment HP ships past 4.10.42.** Every "last version" claim
-below is bounded by the four builds that could be obtained: 4.8.117, 4.8.118,
-4.10.38, 4.10.42. Re-run the diff before repeating any of it.
+**This goes stale with every HP release.** Every "last version" claim below is
+bounded by the builds that could be obtained: 4.8.117, 4.8.118, 4.10.38 and
+4.10.42, plus the macOS 4.11.31 where a section says so. Re-run the diff before
+repeating any of it.
 
 ## The seven printer entries
 
@@ -20,9 +21,11 @@ them.
 | 4.8.118 | 110 | 138,170 | `9853aa6724b40fc1…` |
 | 4.10.38 | 110 | 142,028 | `1921f8f5c38894bf…` |
 | 4.10.42 | 110 | 142,028 | `1921f8f5c38894bf…` |
+| 4.11.31 | 110 | 142,028 | `1921f8f5c38894bf…` |
 
 Gone: T310 24-in, T320 24-in, T350 24-in, T720 24-in and 36-in, T750 24-in and
-36-in. Five models, seven entries. Nothing added at any boundary.
+36-in. Five models, seven entries. Nothing added at any boundary. The 4.11.31 row
+is the macOS package, read 22 September 2026: byte-identical to 4.10.42's.
 
 **Windows and macOS get byte-identical files** — same sha256 at all three
 versions where both exist. The *signature* beside it does not match across
@@ -96,3 +99,24 @@ is 1763 × 4096 exactly. The `.dmg` for that version 404s, so **macOS 4.10.38
 cannot be obtained from HP at all** — which is why the appeal for a copy exists
 on the site. Kept out of the posts as a tangent; useful if someone is told to
 re-download.
+
+## The macOS HP's own libraries declare
+
+Every version's `Info.plist` says `LSMinimumSystemVersion` 12.0. Libraries
+inside it declare more. Read 22 September 2026 with `vtool -show-build`, both
+slices of each file (they agree), and every copy of OpenSSL in a bundle —
+`lib/`, `Frameworks/` and APPE's — agrees with the others:
+
+| Version | `Info.plist` | `libmagic.1.dylib` | `libcrypto`, `libssl` |
+|---|---|---|---|
+| 4.8.117 | 12.0 | 15.0 | 13.0 |
+| 4.8.118 | 12.0 | 15.0 | 13.0 |
+| 4.10.42 | 12.0 | 15.0 | 15.0 |
+| 4.11.31 | 12.0 | 15.0 | 15.0 |
+
+OpenSSL moved from 13.0 to 15.0 between 4.8.118 and 4.10.42; 4.10.38 can't be
+checked on macOS (above). These are declarations, not a test on an older macOS:
+whether HP's builds actually need 15.0 is unknown, and `clickgraft/macos_floor.py`
+has what is known. ClickGraft counts them all the same, so, with the Homebrew
+bottles it adds, every copy needs macOS 15 from ClickGraft 1.5.9 on. HP's
+download page lists 4.11.31 for macOS 12 to 26 regardless.
