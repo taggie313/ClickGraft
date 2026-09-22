@@ -1,0 +1,44 @@
+name: Source checks (not release approval)
+on:
+  pull_request:
+  push:
+    branches: [main]
+# Read the source, nothing more: these jobs publish nothing and need no secrets.
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - run: python -m pip install pytest
+      # test_site_publication.py runs here as well as on macOS because the site
+      # is published on Linux: this is the only run of its renameat2 exchange.
+      # -rs on every pytest step, so a skipped test is listed, not hidden.
+      - run: >-
+          python -m pytest -q -rs
+          tests/test_download_recovery.py
+          tests/test_manifest_errors.py
+          tests/test_patch_guards.py
+          tests/test_release_gate.py
+          tests/test_site_publication.py
+          tests/test_visitor_classifier.py
+  macos-bridge:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - run: python -m pip install pytest
+      - run: python -m pytest -q -rs tests/test_backend_stream.py tests/test_site_publication.py
+      # A checkout writes icon.svg a fraction of a millisecond after
+      # AppIcon.icns, and a bash that compares mtimes to the sub-second then
+      # regenerates the icon, which needs ImageMagick (seen in a fresh clone,
+      # 22 Sep 2026). The committed icon is the one to build with.
+      - run: touch packaging/AppIcon.icns
+      - run: ./packaging/build_app.sh "$RUNNER_TEMP/clickgraft-build"
+      - run: echo 'Stock HP Click integration fixtures, signing and notarisation are required by the local release gates.'

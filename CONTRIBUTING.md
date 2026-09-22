@@ -174,3 +174,59 @@ habit.
   anything.
 - Comments should record *why*, especially where the reason is a fact about
   macOS that cost someone an afternoon.
+
+## Release gates
+
+Run `python3 packaging/check_release.py` before the release build. It will not
+start without the developer tools and a stock HP Click 4.8.117 in
+`/Applications`. It runs the patch guard and every test, listing skipped cases,
+then builds both Swift architectures in a temporary folder and checks that the
+app ships exactly the files its source record lists. Read every skipped case: a
+case-sensitive filesystem or particular hardware may still need a run of its own.
+
+`build_app.sh` writes that source record into the app: the SHA-256 of every
+file it copies in (`clickgraft/` and `manifests/` whole, `LICENSE`, `NOTICE`
+and the icon) and of those it builds from (the Swift and `build_app.sh`).
+Once the release is built fresh and signed, and its commit tagged, run
+`python3 packaging/check_release.py --artifact dist/ClickGraft.zip`.
+`redeploy.sh` runs it too, on every deploy. It takes the version from the ZIP
+and holds the ZIP to the sources committed at `v<version>`: the tag must build
+that version, the record must equal the tag's sources, and the app must hold
+those files byte for byte and nothing else. Then codesign, the stapled ticket
+and Gatekeeper, on the app taken out of the ZIP. HEAD and the working tree play
+no part, so site-only commits after a release still deploy; but a source that
+changes between the build and the tag gets the ZIP refused, and the fix is to
+build again.
+
+No release up to 1.5.9 has a source record, and the gate refuses those ZIPs in
+one line that says so. To redeploy the site while 1.5.9 is still the download,
+allow that one version on purpose:
+`CLICKGRAFT_ALLOW_LEGACY_ARTIFACT=1.5.9 ./site/deploy/redeploy.sh`, or
+`--allow-legacy-artifact 1.5.9` when running the gate yourself. Its files are
+still checked against `v1.5.9`; only its launcher cannot be tied to the Swift.
+Neither gate signs, tags, uploads or deploys anything.
+
+Dependencies in shipped manifests are pinned to the artifacts checked for 1.5.9.
+Update bottle URLs, bottle and extracted-library SHA-256 values, and Electron's
+SHA-256 together with compatibility tests. A local Homebrew or cached library
+must match the pinned content; matching architecture alone is not sufficient.
+Each output records dependency provenance in `Contents/Resources/clickgraft-build.json`.
+The recorded library hashes identify their source bytes, before load-path
+rewriting and signing change the installed payload.
+
+The command-line build now runs the same verification and recovery workflow as
+the wizard. Use `--accept-printer-loss` only for intentional loss of printer
+support, and `--allow-intel-host` to build for another Mac with launch checks
+explicitly skipped. `--no-preload` makes a diagnostic copy, which never passes
+verification: with a copy already at the output path that copy is put back and
+the diagnostic one removed, and with none the unverified new copy is left in
+place. Build into an empty `--out` to keep one.
+
+Site publication stages and validates complete HTML before an atomic directory
+exchange. The previous site and collector files remain in `.previous-*` under
+the ClickGraft site directory. If publication fails after switching, the helper
+restores the old content; if that also fails it deletes nothing, keeps the
+previous tree and prints the exact `--restore` command. An interrupted or later
+failed healthcheck leaves the previous tree available for operator recovery; it
+is never silently deleted.
+The shared nginx and tunnel are not restarted or reconfigured.

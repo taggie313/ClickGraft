@@ -39,9 +39,18 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # swiftc has no -arch flag, so build each slice and lipo them together.
 echo "--> compiling ClickGraft.swift"
 TMPB="$(mktemp -d)"
+# Once there are two source files, swiftc allows top-level code only in one
+# named main.swift. Given ClickGraft.swift as it is, Swift 6.4 fails with
+# "expressions are not allowed at the top level" (22 Sep 2026), so compile a
+# copy under that name rather than renaming the file everyone knows.
+cp "$HERE/ClickGraft.swift" "$TMPB/main.swift"
+# The module cache goes in the build's own temporary folder, not swiftc's
+# default per-user cache under ~/Library, which Xcode shares: the pass that
+# added this (Sep 2026) built in a sandbox that could not write there, and a
+# fresh cache cannot hold modules another toolchain left behind.
 for arch in arm64 x86_64; do
-  swiftc -O -target "${arch}-apple-macos12.0" \
-         -o "$TMPB/ClickGraft-$arch" "$HERE/ClickGraft.swift" -framework AppKit
+  swiftc -O -target "${arch}-apple-macos12.0" -module-cache-path "$TMPB/module-cache-$arch" \
+         -o "$TMPB/ClickGraft-$arch" "$TMPB/main.swift" "$HERE/BackendTransport.swift" -framework AppKit
 done
 lipo -create -output "$APP/Contents/MacOS/ClickGraft" \
      "$TMPB/ClickGraft-arm64" "$TMPB/ClickGraft-x86_64"
@@ -60,6 +69,16 @@ if [ ! -f "$HERE/AppIcon.icns" ] || [ "$HERE/icon.svg" -nt "$HERE/AppIcon.icns" 
   sh "$HERE/make-icon.sh" >/dev/null
 fi
 cp "$HERE/AppIcon.icns" "$APP/Contents/Resources/"
+
+# Source record: the sha256 of every file the app was copied or built from.
+# check_release.py --artifact compares it with the sources committed at the
+# release tag, so a notarised binary that no longer matches its source is
+# refused before it ships (CLAUDE.md, "Shipping a release"). After the icon,
+# because make-icon.sh may just have rewritten AppIcon.icns. Through GUARD_PY,
+# for the same Xcode licence gate as the patch guard above.
+echo "--> recording the sources"
+( cd "$ROOT" && PYTHONDONTWRITEBYTECODE=1 \
+    "${GUARD_PY[@]}" "$HERE/check_release.py" --record "$APP/Contents/Resources/build-source.json" )
 
 # --- Info.plist ------------------------------------------------------------
 echo "--> writing Info.plist"
