@@ -300,6 +300,9 @@ terminal command in a wizard is a failure of the wizard.
 > ClickGraft looks in Applications. If yours lives somewhere else, move it there
 > and press Check again.
 
+Only when it has looked: if Check again gets no answer, see *Choose — when Check
+again gets no answer*, under *Since 1.5.9*.
+
 **Controls:** `Back` · `Continue` (disabled until a valid choice) · `Check again`
 
 **Unsupported-version block:**
@@ -910,6 +913,8 @@ and if it can't be done, the backend's reason, then:
 > Your previous copy is still safe, set aside where it was.
 
 If the delete fails: **ClickGraft couldn't delete it** and the backend's reason.
+Neither is said without an answer from the backend: see *Put it back, and deleting
+a set-aside copy — without an answer*, under *Since 1.5.9*.
 
 ### This copy needs macOS 15 or later — new screen
 
@@ -1074,6 +1079,181 @@ that passed before the one that failed.
 
 ---
 
+## Since 1.5.9 — answers ClickGraft can't confirm, and a copy that changes under a build
+
+Every string below is new or changed since 1.5.9.
+
+**Why** (review, 22 Sep 2026). 1.5.9 could lose the backend's last line (3 of
+2,000 idle runs, 5 of 2,000 with the CPU oversubscribed, and 200 of 200 when
+that line was 300 KB), and the wizard then waited for ever on "Checking the
+result". The new transport (`packaging/BackendTransport.swift`) always gives one
+final answer, and when it has none to trust, that is an error with
+`stage: "backend"`. Two screens then took that error for an answer: Choose's
+Check again read it as an empty Applications folder and said "No HP Click
+found", and Put it back said "Your previous copy is still safe, set aside where
+it was" when nothing had confirmed it. And a copy swapped at the output path
+between Review and the button was replaced on the strength of a tick given for
+another.
+
+**One name for the backend.** On screen it is always "the part of ClickGraft that
+does the work", as Screen 2's "ClickGraft couldn't start" already said it ("The
+part of ClickGraft that does the work didn't respond.") — never "backend",
+"background task" or "output streams" (see *Words to avoid*).
+
+### ClickGraft couldn't confirm the result — new screen
+
+For `stage: "backend"` from a build: it couldn't be started, it stopped without a
+final message, the message couldn't be read, or it exited with an error after
+giving one. None of these says how far the build got, so this screen claims
+nothing about the copy, the copy it replaces, or the original. Not red: nothing is
+known to have failed.
+
+**Heading:** ClickGraft couldn't confirm the result
+
+> The part of ClickGraft that does the work stopped without saying how the build
+> ended. So ClickGraft can't tell whether the new copy was put in place, or
+> whether a copy that was already there was set aside.
+>
+> Press Check again. ClickGraft looks for anything that was set aside before it
+> makes another copy.
+>
+> ▸ Show detail — *(the reason below, what stderr said last, then the progress
+> log)*
+
+**Controls:** `Send a report` · **`Check again`**
+
+`Check again` starts from Screen 2 and looks for copies set aside afresh — even
+one the person chose to Decide later on earlier — so what comes next is about
+what is there now. The report's outcome: "the part of ClickGraft that does the
+work stopped without a confirmed result; what it installed or set aside is
+unknown".
+
+**The reason**, first line of the detail and of the report's `error:`, then the
+end of what it wrote to stderr (up to 16 KB):
+
+- The part of ClickGraft that does the work couldn't be started: *(macOS's
+  reason)*
+- The part of ClickGraft that does the work stopped without giving an answer
+  (exit status 1). — or "(it was stopped by signal 9)": a signal is said as one
+- The part of ClickGraft that does the work sent an answer ClickGraft couldn't
+  read (exit status 0).
+- The part of ClickGraft that does the work gave its answer, then stopped with
+  an error (exit status 3).
+- The part of ClickGraft that does the work stopped, but something it started
+  was still connected to it 2 seconds later, so ClickGraft can't be sure it heard
+  the whole answer.
+
+### The copy there changed — new screen
+
+For `stage: "replacement_changed"`: the output path no longer holds what Review
+showed. Review's answer carries a token for what was there, `Create the copy`
+passes it back (`--expect-replacing`), and the build checks it before it
+downloads anything and again just before it would replace anything. Something
+outside ClickGraft made the change, so, like *The build refused to replace the
+copy*: orange, and the button to press is `Check again`, not a report. Worded
+from `change` and `during_build`:
+
+**`removed`, since Review** — **HP Click (Apple Silicon) has gone**
+
+> HP Click (Apple Silicon) was in your Applications folder when ClickGraft showed
+> you what it would do, and it has gone since. ClickGraft hasn't made the copy.
+> Nothing has been downloaded or changed.
+
+**`removed`, during the build** — **HP Click (Apple Silicon) has gone**
+
+> HP Click (Apple Silicon) was removed from your Applications folder while the new
+> copy was being made. ClickGraft only does what it showed you, so it hasn't put
+> the new copy there: it has thrown it away.
+
+**`appeared`, since Review** — **HP Click (Apple Silicon) is there now**
+
+> There was no HP Click (Apple Silicon) in your Applications folder when
+> ClickGraft showed you what it would do, and there is one now. ClickGraft won't
+> replace a copy it hasn't shown you, so it has left it alone. Nothing has been
+> downloaded or changed.
+
+**`appeared`, during the build** — **HP Click (Apple Silicon) is there now**
+
+> HP Click (Apple Silicon) appeared in your Applications folder while the new copy
+> was being made. ClickGraft won't replace a copy it hasn't shown you, so it has
+> left it alone, and has thrown the new copy away.
+
+**`changed`, since Review** — **HP Click (Apple Silicon) has changed**
+
+> The HP Click (Apple Silicon) in your Applications folder isn't the one
+> ClickGraft showed you: it has been replaced or changed since. ClickGraft won't
+> replace a copy it hasn't shown you, so it has left it alone. Nothing has been
+> downloaded or changed.
+
+**`changed`, during the build** — **HP Click (Apple Silicon) has changed**
+
+> HP Click (Apple Silicon) was replaced or changed while the new copy was being
+> made, so it isn't the one ClickGraft showed you. ClickGraft won't replace a copy
+> it hasn't shown you, so it has left it alone, and has thrown the new copy away.
+
+**Panel** (orange):
+
+> **Press Check again.** ClickGraft shows you what's there now, and changes
+> nothing until you press Create the copy.
+>
+> **The HP Click (Apple Silicon) there now hasn't been touched.** *(not when it
+> has gone)*
+>
+> **Your original HP Click was not changed.**
+
+**Controls:** `Send a report` · **`Check again`** (Review, afresh)
+
+Reports: "the copy it would replace was removed after Review; nothing was put in
+its place", "a copy appeared at the output path during the build; it was left
+alone", "the copy it would replace changed after Review; it was left alone", with
+", and the new copy was thrown away" when it was during the build.
+
+**`Try again`** on the failure screens now asks what is at the output path first.
+When it is what Review showed, the build starts, as before. When it isn't —
+usually a new copy that failed a check and stayed where there was none — Review
+comes back, because the build would refuse a token given for an empty folder.
+
+### Choose — when Check again gets no answer
+
+Instead of "No HP Click found…", above the list it had (orange):
+
+> **ClickGraft couldn't look again.** The part of ClickGraft that does the work
+> stopped without an answer, so this list is from the last time it looked. Press
+> Check again to try once more.
+>
+> ▸ Show technical detail
+
+("…so nothing is listed." when there was no list to keep.)
+
+### Put it back, and deleting a set-aside copy — without an answer
+
+"Your previous copy is still safe, set aside where it was." now follows **ClickGraft
+couldn't put it back** only when the part of ClickGraft that does the work answered
+*and* said the copy is still there (`backup_exists: true`). With no answer to trust,
+with no word either way, or with the copy gone from there, and for a delete with no
+answer:
+
+> **ClickGraft couldn't confirm what happened**
+> It didn't get a clear answer about your previous copy, so it can't tell whether
+> it was put back. It may be back in place, or still set aside, hidden, in the same
+> folder. Press Check again to see where things stand.
+
+For a delete: "…whether it was deleted. It may be gone, or still set aside,
+hidden, in the same folder." The reason goes in a small box below, not in the
+sentence. One button, `Check again`: the leftover screen behind the alert was
+drawn before the attempt, so it starts again from Screen 2, as above.
+
+### Two more check names
+
+| `check` | said as |
+|---|---|
+| `launcher` | the check that it loads its support files |
+| `verification` | the overall result of the checks |
+
+`launcher` fails a copy whose start-up script doesn't load every support file the
+copy needs (a `--no-preload` build, which is for diagnosis only); `verification`
+is the checks reporting a failure without naming one.
+
 ## Words to avoid
 
 | Don't say | Say |
@@ -1086,6 +1266,8 @@ that passed before the one that failed.
 | Dylib, library | Support file |
 | Code signing | Signing, so macOS will run it |
 | Repack, graft | Make a copy |
+| Backend, background task, agent | The part of ClickGraft that does the work |
+| Output streams, pipe | (don't mention them) |
 
 The product is called ClickGraft; the verb is never "graft".
 

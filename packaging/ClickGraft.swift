@@ -10,7 +10,7 @@
 // and reads one JSON object per line, so the UI cannot drift from the backend.
 //
 // Builds with the Command Line Tools alone:
-//   swiftc -O -o ClickGraft ClickGraft.swift -framework AppKit
+//   ./packaging/build_app.sh
 
 import AppKit
 import Foundation
@@ -127,39 +127,28 @@ final class Agent {
         return p
     }
 
+    /// One request, one reply, waited for. In practice never nil: with no
+    /// reply to trust it is an error with stage "backend" (BackendTransport
+    /// .swift), so check the reply's "type" or the key you need, not only
+    /// whether there is one. 1.5.9 returned nil there; once this returned the
+    /// error instead, Choose's Check again took it for an empty Applications
+    /// folder and said "No HP Click found" (22 Sep 2026 review).
     func once(_ args: [String]) -> [String: Any]? {
-        let p = process(args)
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = Pipe()
-        do { try p.run() } catch { return nil }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
-            if let d = line.data(using: .utf8),
-               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { return o }
-        }
-        return nil
+        let completed = DispatchSemaphore(value: 0)
+        var result: [String: Any] = [:]
+        // Delivered on a global queue: the caller is the main thread, blocked
+        // below, so a reply sent to the main queue would never arrive.
+        BackendStream(process: process(args), singleReply: true,
+                      deliveryQueue: DispatchQueue.global()) { event in
+            result = event
+            completed.signal()
+        }.start()
+        completed.wait()
+        return result
     }
 
     func stream(_ args: [String], onEvent: @escaping ([String: Any]) -> Void) {
-        let p = process(args)
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = Pipe()
-        var buf = Data()
-        out.fileHandleForReading.readabilityHandler = { fh in
-            buf.append(fh.availableData)
-            while let nl = buf.firstIndex(of: 0x0A) {
-                let line = buf.subdata(in: buf.startIndex..<nl)
-                buf.removeSubrange(buf.startIndex...nl)
-                if let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] {
-                    DispatchQueue.main.async { onEvent(o) }
-                }
-            }
-        }
-        p.terminationHandler = { _ in out.fileHandleForReading.readabilityHandler = nil }
-        try? p.run()
+        BackendStream(process: process(args), onEvent: onEvent).start()
     }
 }
 
@@ -412,6 +401,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
     // The leftover at the output path Review is about to build into, if any;
     // the button stays off until it is dealt with.
     var pendingLeftover: [String: Any]?
+    // Why Choose's Check again got no list, for the Choose screen it redraws.
+    var rescanProblem: String?
 
     // MARK: lifecycle
 
@@ -975,11 +966,14 @@ final class Wizard: NSObject, NSApplicationDelegate {
         a.addButton(withTitle: "Delete it")
         a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
-        let r = agent.once(["discard-previous", "--backup", path])
-        if (r?["type"] as? String) != "discarded" {
-            tell("ClickGraft couldn't delete it",
-                 r?["error"] as? String ?? "The part of ClickGraft that does the work "
-                 + "didn't respond. Your previous copy is still where it was.")
+        let r = agent.once(["discard-previous", "--backup", path]) ?? [:]
+        guard (r["type"] as? String) == "discarded" else {
+            if (r["stage"] as? String) != "backend", let why = r["error"] as? String {
+                tell("ClickGraft couldn't delete it", why)
+            } else {
+                unconfirmed(r, whether: "it was deleted",
+                            maybe: "It may be gone, or still set aside, hidden, in the same folder.")
+            }
             return
         }
         finishLeftover()
@@ -987,18 +981,71 @@ final class Wizard: NSObject, NSApplicationDelegate {
 
     /// Put a set-aside copy back, say how it went, then carry on with `then`.
     private func putBack(_ path: String, then: @escaping () -> Void) {
-        let r = agent.once(["restore-previous", "--backup", path])
-        guard (r?["type"] as? String) == "restored" else {
-            tell("ClickGraft couldn't put it back",
-                 (r?["error"] as? String ?? "The part of ClickGraft that does the work "
-                  + "didn't respond.") + "\n\nYour previous copy is still safe, set aside "
-                 + "where it was.")
+        let r = agent.once(["restore-previous", "--backup", path]) ?? [:]
+        guard (r["type"] as? String) == "restored" else {
+            // "Still safe, set aside where it was" only when the answer says
+            // so. Every refusal carries backup_exists (agent._settle_leftover
+            // and _settle_locked); a missing field was read as true until
+            // review (22 Sep 2026), so the two refusals that say nothing was
+            // moved -- another build holds the folder, and "not a copy
+            // ClickGraft set aside" -- claimed it for a path that can hold
+            // nothing, after the copy was deleted in the Finder or put back
+            // from a second window.
+            if (r["stage"] as? String) != "backend", let why = r["error"] as? String,
+               r["backup_exists"] as? Bool == true {
+                tell("ClickGraft couldn't put it back",
+                     why + "\n\nYour previous copy is still safe, set aside where it was.")
+            } else {
+                unconfirmed(r, whether: "it was put back",
+                            maybe: "It may be back in place, or still set aside, hidden, in the "
+                            + "same folder.")
+            }
             return
         }
-        let out = r?["output"] as? String ?? ""
+        let out = r["output"] as? String ?? ""
         tell("Your previous copy is back",
              "It's at \(out), as it was.")
         then()
+    }
+
+    /// No answer ClickGraft can trust about a set-aside copy. Until review
+    /// (22 Sep 2026) this said "Your previous copy is still safe, set aside
+    /// where it was" whatever happened, though the part of ClickGraft that
+    /// does the work may have stopped after moving it. So say it isn't known,
+    /// keep the diagnostic out of the sentence, and look again: the leftover
+    /// screen behind this alert was drawn before the attempt, and may be wrong.
+    private func unconfirmed(_ r: [String: Any], whether: String, maybe: String) {
+        let a = NSAlert()
+        a.messageText = "ClickGraft couldn't confirm what happened"
+        a.informativeText = "It didn't get a clear answer about your previous copy, so it "
+            + "can't tell whether \(whether). \(maybe) Press Check again to see where "
+            + "things stand."
+        let detail = (r["error"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detail.isEmpty {
+            let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 90))
+            tv.string = detail
+            tv.isEditable = false
+            tv.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            tv.textColor = .secondaryLabelColor
+            let sc = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 90))
+            sc.hasVerticalScroller = true
+            sc.documentView = tv
+            a.accessoryView = sc
+        }
+        a.addButton(withTitle: "Check again")
+        a.runModal()
+        checkAgain()
+    }
+
+    /// Start again from Requirements after a result ClickGraft couldn't
+    /// confirm, looking afresh for any copy set aside -- even one put off with
+    /// Decide later earlier on: the run that gave no answer may have set
+    /// another aside since, and what follows has to be about what is there now.
+    @objc func checkAgain() {
+        leftoverDeferred = false
+        afterLeftover = nil
+        showRequirements()
     }
 
     private func tell(_ title: String, _ text: String) {
@@ -1017,7 +1064,20 @@ final class Wizard: NSObject, NSApplicationDelegate {
             UI.body("Pick the HP Click you use now. ClickGraft reads it and leaves it alone."),
         ]
 
-        if candidates.isEmpty {
+        // Said once, for the Check again that just failed.
+        let problem = rescanProblem
+        rescanProblem = nil
+        if let problem = problem {
+            rows.append(UI.panel([
+                UI.point("ClickGraft couldn't look again.",
+                         "The part of ClickGraft that does the work stopped without an "
+                         + "answer, so "
+                         + (candidates.isEmpty ? "nothing is listed. " : "this list is from the "
+                            + "last time it looked. ")
+                         + "Press Check again to try once more."),
+                Disclosure { problem },
+            ], tint: NSColor.systemOrange.withAlphaComponent(0.12)))
+        } else if candidates.isEmpty {
             rows.append(UI.panel([
                 UI.point("No HP Click found in your Applications folder.", ""),
                 UI.small("ClickGraft looks in Applications. If yours lives somewhere else, "
@@ -1166,11 +1226,20 @@ final class Wizard: NSObject, NSApplicationDelegate {
     }
 
     /// Re-read the Applications folder without leaving the Choose screen.
+    ///
+    /// Only an `env` reply is a look at the folder. Anything else is kept
+    /// from the list: in review (22 Sep 2026) a reply that wasn't one emptied
+    /// it, and Choose then said "No HP Click found in your Applications
+    /// folder" of a folder nobody had looked in.
     @objc func rescan() {
-        if let d = agent.once(["env"]) {
+        let d = agent.once(["env"]) ?? [:]
+        if (d["type"] as? String) == "env" {
             candidates = d["candidates"] as? [[String: Any]] ?? []
             outputPath = d["default_output"] as? String ?? outputPath
             outputPerUser = d["output_per_user"] as? Bool ?? outputPerUser
+            rescanProblem = nil
+        } else {
+            rescanProblem = d["error"] as? String ?? ""
         }
         picked = nil
         showChoose()
@@ -1651,7 +1720,29 @@ final class Wizard: NSObject, NSApplicationDelegate {
                     "--out", outputPath]
         if allowIntelHost { args.append("--allow-intel-host") }
         if acceptPrinterLoss { args.append("--accept-printer-loss") }
+        // What Review showed at the output path. The printer-loss tick and the
+        // "Replacing" line were given for that copy; the backend refuses, as
+        // "replacement_changed", if something else is there by now.
+        if let token = plan["replacing_token"] as? String, !token.isEmpty {
+            args += ["--expect-replacing", token]
+        }
         agent.stream(args) { [weak self] ev in self?.handle(ev) }
+    }
+
+    /// Try again after a failure. Straight into another build when the output
+    /// path still holds what Review showed; Review again when it doesn't --
+    /// typically a new copy that failed a check and stayed where there was
+    /// none, which the token Review gave would now be refused for.
+    @objc func tryAgain() {
+        guard let src = picked?["path"] as? String,
+              let fresh = agent.once(["plan", "--source", src, "--out", outputPath])?["plan"]
+                as? [String: Any],
+              let token = fresh["replacing_token"] as? String,
+              token == plan["replacing_token"] as? String else {
+            showReview()
+            return
+        }
+        startBuild()
     }
 
     /// The backend's messages are written for the log. These are written for
@@ -1811,6 +1902,36 @@ final class Wizard: NSObject, NSApplicationDelegate {
     /// those happened.
     private func showFailed(_ ev: [String: Any]) {
         let stage = ev["stage"] as? String ?? ""
+        if stage == "backend" {
+            // No answer to trust (BackendTransport.swift): the build may have
+            // got as far as setting the old copy aside or installing the new
+            // one, or not started. Nothing here can say which, so nothing
+            // here claims it, not even about the original.
+            lastError = ev["error"] as? String ?? ""
+            outcome = "the part of ClickGraft that does the work stopped without a confirmed "
+                + "result; what it installed or set aside is unknown"
+            lastResults = [:]
+            present([
+                UI.title("ClickGraft couldn't confirm the result"),
+                UI.body("The part of ClickGraft that does the work stopped without saying how "
+                        + "the build ended. So ClickGraft can't tell whether the new copy was "
+                        + "put in place, or whether a copy that was already there was set "
+                        + "aside."),
+                UI.body("Press Check again. ClickGraft looks for anything that was set aside "
+                        + "before it makes another copy."),
+                Disclosure(label: "Show detail") { [weak self] in
+                    guard let self = self else { return "" }
+                    return self.lastError
+                        + (self.logBuffer.isEmpty ? "" : "\n\n" + self.logBuffer)
+                },
+            ], buttons: [UI.button("Send a report", self, #selector(sendReport)), UI.spacer(),
+                         UI.button("Check again", self, #selector(checkAgain), primary: true)])
+            return
+        }
+        if stage == "replacement_changed" {
+            showReplacementChanged(ev)
+            return
+        }
         if stage == "in_use" || stage == "printers_lost" {
             showNotReplaced(ev)
             return
@@ -1884,7 +2005,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 UI.small(message),
                 Disclosure(label: "Show detail") { [weak self] in self?.logBuffer ?? "" },
             ]
-            buttons.append(UI.button("Try again", self, #selector(startBuild)))
+            buttons.append(UI.button("Try again", self, #selector(tryAgain)))
             buttons += [UI.spacer(),
                         UI.button("Send a report", self, #selector(sendReport), primary: true)]
         } else if verifyFailed && previous == "aside" {
@@ -1932,7 +2053,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
             ]
             buttons.append(UI.button("Send a report", self, #selector(sendReport)))
             buttons.append(UI.button("Open the copy", self, #selector(revealOutput)))
-            buttons += [UI.spacer(), UI.button("Try again", self, #selector(startBuild))]
+            buttons += [UI.spacer(), UI.button("Try again", self, #selector(tryAgain))]
         } else {
             let previousLine: String
             switch previous {
@@ -1976,7 +2097,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
             // again". Retrying an unwritable folder or an unreadable bundle
             // produces the same failure with no new information, and the button
             // that looks like the answer is the one people press.
-            buttons.append(UI.button("Try again", self, #selector(startBuild)))
+            buttons.append(UI.button("Try again", self, #selector(tryAgain)))
             buttons.append(UI.spacer())
             if previous == "aside" {
                 buttons.append(UI.button("Put it back", self, #selector(putBackAside)))
@@ -2000,6 +2121,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
         "patch_outcomes": "the check of the small fixes",
         "smoke_launch": "the test launch",
         "resealed": "signing it again after the test launch",
+        "launcher": "the check that it loads its support files",
+        "verification": "the overall result of the checks",
     ]
 
     @objc func putBackAside() {
@@ -2053,6 +2176,84 @@ final class Wizard: NSObject, NSApplicationDelegate {
                                 UI.button("Quit", self, #selector(quit), primary: true)])
     }
 
+    /// The copy at the output path isn't the one Review showed (agent.py,
+    /// "replacement_changed"): it has gone, one has appeared, or it was
+    /// replaced or edited -- since Review, or while the copy was being made.
+    /// Something outside ClickGraft did that, so, like the screen below, not
+    /// red and no report as the button to press: the answer is a fresh
+    /// Review. Until the 22 Sep 2026 review this came as a failed build, "The
+    /// copy wasn't finished", with Send a report as the main button.
+    private func showReplacementChanged(_ ev: [String: Any]) {
+        let out = ev["output"] as? String ?? outputPath
+        let name = (out as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+        let change = ev["change"] as? String ?? "changed"
+        let duringBuild = ev["during_build"] as? Bool ?? false
+        let gone = (ev["previous_copy"] as? String) == "gone"
+        logPath = ev["log_path"] as? String ?? logPath
+        lastError = ev["error"] as? String ?? ""
+        lastResults = [:]
+        let when = duringBuild ? "during the build" : "after Review"
+        switch change {
+        case "removed":
+            outcome = "the copy it would replace was removed \(when); nothing was put in its place"
+        case "appeared":
+            outcome = "a copy appeared at the output path \(when); it was left alone"
+        default:
+            outcome = "the copy it would replace changed \(when); it was left alone"
+        }
+        if duringBuild { outcome += ", and the new copy was thrown away" }
+
+        let title: String
+        let body: String
+        let notShown = "ClickGraft won't replace a copy it hasn't shown you, so it has left it alone"
+        switch (change, duringBuild) {
+        case ("removed", false):
+            title = "\(name) has gone"
+            body = "\(name) was in your Applications folder when ClickGraft showed you what it "
+                + "would do, and it has gone since. ClickGraft hasn't made the copy. Nothing "
+                + "has been downloaded or changed."
+        case ("removed", true):
+            title = "\(name) has gone"
+            body = "\(name) was removed from your Applications folder while the new copy was "
+                + "being made. ClickGraft only does what it showed you, so it hasn't put the "
+                + "new copy there: it has thrown it away."
+        case ("appeared", false):
+            title = "\(name) is there now"
+            body = "There was no \(name) in your Applications folder when ClickGraft showed you "
+                + "what it would do, and there is one now. \(notShown). Nothing has been "
+                + "downloaded or changed."
+        case ("appeared", true):
+            title = "\(name) is there now"
+            body = "\(name) appeared in your Applications folder while the new copy was being "
+                + "made. \(notShown), and has thrown the new copy away."
+        case (_, false):
+            title = "\(name) has changed"
+            body = "The \(name) in your Applications folder isn't the one ClickGraft showed "
+                + "you: it has been replaced or changed since. \(notShown). Nothing has been "
+                + "downloaded or changed."
+        default:
+            title = "\(name) has changed"
+            body = "\(name) was replaced or changed while the new copy was being made, so it "
+                + "isn't the one ClickGraft showed you. \(notShown), and has thrown the new "
+                + "copy away."
+        }
+
+        var points: [NSView] = [
+            UI.point("Press Check again.", "ClickGraft shows you what's there now, and "
+                     + "changes nothing until you press Create the copy."),
+        ]
+        if !gone {
+            points.append(UI.point("The \(name) there now hasn't been touched.", ""))
+        }
+        points.append(UI.point("Your original HP Click was not changed.", ""))
+        present([
+            UI.title(title),
+            UI.body(body),
+            UI.panel(points, tint: NSColor.systemOrange.withAlphaComponent(0.12)),
+        ], buttons: [UI.button("Send a report", self, #selector(sendReport)), UI.spacer(),
+                     UI.button("Check again", self, #selector(showReview), primary: true)])
+    }
+
     /// The backend refused because of the copy it would replace: it is open, or
     /// it supports printers the new copy won't and nobody ticked the box. Review
     /// checks both first, so this is what happens when things change after that
@@ -2099,7 +2300,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
         ]
         present(rows, buttons: open
                 ? [UI.button("Back", self, #selector(showReview)), UI.spacer(),
-                   UI.button("Try again", self, #selector(startBuild), primary: true)]
+                   UI.button("Try again", self, #selector(tryAgain), primary: true)]
                 : [UI.spacer(), UI.button("Back", self, #selector(showReview), primary: true)])
     }
 
