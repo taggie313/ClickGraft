@@ -15,5 +15,5 @@
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "recommended",
-  "summary": "Copies now really stop HP Click sending crash reports unencrypted -- copies made by earlier versions still tried to, so make a new one -- and stop HP Click 4.8 and 4.10 writing SNMPv3 printer passwords into its log, using the change HP made in 4.11.31. Review now names the version it is replacing and warns before a new copy would lose printers."
+  "summary": "Copies now use the support libraries built for macOS 15, so they no longer fail to open on macOS 15.0 to 15.3 when Homebrew isn't installed, and ClickGraft says up front that a copy needs macOS 15. Making a new copy keeps the one you have until the new one passes its checks, and puts it back if it doesn't. Signing problems now stop the build instead of passing unnoticed."
 }
