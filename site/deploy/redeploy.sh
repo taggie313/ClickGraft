@@ -2,6 +2,13 @@
 # Push the site's CONTENT to the shared edge host.
 #
 #   ./site/deploy/redeploy.sh
+#   CLICKGRAFT_ALLOW_LEGACY_ARTIFACT=1.5.9 ./site/deploy/redeploy.sh
+#
+# The second form is for a ZIP of 1.5.9 or earlier, built before ZIPs carried a
+# record of their sources. packaging/check_release.py refuses those unless told
+# the one version to let through, so until 1.6.0 ships it is the only way to
+# redeploy at all, page-only changes included. That ZIP's files are still
+# checked against its tag.
 #
 # Content only. ClickGraft no longer owns a container: nginx, the tunnel and the
 # routing belong to edge (CT 136) and are deployed from ~/JoshCode/elusive-edge.
@@ -29,7 +36,18 @@ require_host
 
 REMOTE_DIR="${REMOTE_DIR:-/opt/edge/sites/clickgraft}"
 HEALTH_URL="${HEALTH_URL:-https://clickgraft.elusive.net/}"
-STAGE="/tmp/clickgraft-stage"
+BUILD="$(mktemp -d /tmp/cg-build.XXXXXXXX)"
+DEPLOY_ID="$(basename "$BUILD")"
+STAGE="/tmp/clickgraft-stage-$DEPLOY_ID"
+STAGED=
+cleanup() {
+  rm -rf "$BUILD"
+  # The copy on the PVE node, if this run made one and stopped before the push
+  # that removes it. A failed rsync is exactly when it was being left behind.
+  [ -z "$STAGED" ] || ssh -o BatchMode=yes -o ConnectTimeout=8 "$PVE_HOST" "rm -rf '$STAGE'" \
+    || echo "✗ could not remove $STAGE on $PVE_HOST; remove it by hand" >&2
+}
+trap cleanup EXIT
 
 HERE="$(cd "$(dirname "$0")" && pwd)"          # site/deploy
 SITE="$(cd "$HERE/.." && pwd)"                 # site
@@ -44,8 +62,14 @@ if [ ! -f "$ZIP" ]; then
   exit 1
 fi
 
+# Checks the ZIP against the tag its own version names, v<version>, not HEAD:
+# a page-only commit after a release still deploys, and a ZIP that was not
+# built from the tagged sources does not. A 1.5.9-era ZIP needs the variable
+# shown at the top of this file; the gate's ✗ line names it.
+python3 "$ROOT/packaging/check_release.py" --artifact "$ZIP"
+
 echo "==> staging"
-rm -rf /tmp/cg-build && mkdir -p /tmp/cg-build/html /tmp/cg-build/collector
+mkdir -p "$BUILD/html" "$BUILD/collector"
 
 # Version first, because the download is named after it.
 #
@@ -62,10 +86,12 @@ rm -rf /tmp/cg-build && mkdir -p /tmp/cg-build/html /tmp/cg-build/collector
 # download, a 302 on the old path and a 200 on the new one, and the download
 # counters in summary.sh and clickgraft-watch.sh count 200s on a path. The
 # symlink is one request, one log line, whichever name was asked for.
-VERSION="$(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
+VERSION="$(python3 -c 'import plistlib,sys,zipfile; print(plistlib.loads(zipfile.ZipFile(sys.argv[1]).read("ClickGraft.app/Contents/Info.plist"))["CFBundleShortVersionString"])' "$ZIP")"
+APP_VERSION="$(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
+[ "$VERSION" = "$APP_VERSION" ] || { echo "✗ app and distributed ZIP versions disagree" >&2; exit 1; }
 ZIPNAME="ClickGraft-$VERSION.zip"
-cp "$ZIP"                    "/tmp/cg-build/html/$ZIPNAME"
-ln -s "$ZIPNAME"             /tmp/cg-build/html/ClickGraft.zip
+cp "$ZIP"                    "$BUILD/html/$ZIPNAME"
+ln -s "$ZIPNAME"             "$BUILD/html/ClickGraft.zip"
 
 # The page quotes the download's SHA-256. Substituting it at deploy time from
 # the very file being shipped is the only way that number cannot drift: a hash
@@ -87,25 +113,25 @@ sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
     -e "s|{{VERSION}}|$VERSION|g" \
     -e "s|{{ZIP_NAME}}|$ZIPNAME|g" \
     -e "s|{{UPDATED}}|$UPDATED|g" \
-    "$SITE/index.html" > /tmp/cg-build/html/index.html
+    "$SITE/index.html" > "$BUILD/html/index.html"
 # Both names get a checksum file, naming the file the reader actually has.
-printf '%s  %s\n' "$SHA" "$ZIPNAME" > "/tmp/cg-build/html/$ZIPNAME.sha256"
-printf '%s  %s\n' "$SHA" "$ZIPNAME" > /tmp/cg-build/html/ClickGraft.zip.sha256
+printf '%s  %s\n' "$SHA" "$ZIPNAME" > "$BUILD/html/$ZIPNAME.sha256"
+printf '%s  %s\n' "$SHA" "$ZIPNAME" > "$BUILD/html/ClickGraft.zip.sha256"
 cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple-touch-icon.png" \
-   "$SITE/clickgraft-favicon.ico" /tmp/cg-build/html/
+   "$SITE/clickgraft-favicon.ico" "$BUILD/html/"
 # Keeps crawlers off the download. Cloudflare serves a managed robots.txt of its
 # own and merges this into it; without an origin file there is nothing telling
 # anyone to leave the half-megabyte binary alone.
-cp "$SITE/robots.txt" /tmp/cg-build/html/
+cp "$SITE/robots.txt" "$BUILD/html/"
 # The Spanish page carries no {{...}} placeholders (see site/es/index.html for
 # why) so it is copied rather than substituted.
-cp -R "$SITE/es" /tmp/cg-build/html/
+cp -R "$SITE/es" "$BUILD/html/"
 # Crawlers ask for /sitemap.xml by name and were getting a 404.
-sed -e "s|{{UPDATED_ISO}}|$UPDATED_ISO|g" "$SITE/sitemap.xml" > /tmp/cg-build/html/sitemap.xml
+sed -e "s|{{UPDATED_ISO}}|$UPDATED_ISO|g" "$SITE/sitemap.xml" > "$BUILD/html/sitemap.xml"
 
 # Any surviving placeholder means the page would ship with {{...}} visible.
-if grep -ho '{{[A-Z_]*}}' /tmp/cg-build/html/index.html /tmp/cg-build/html/sitemap.xml \
-     /tmp/cg-build/html/es/index.html | sort -u | grep .; then
+if grep -ho '{{[A-Z_]*}}' "$BUILD/html/index.html" "$BUILD/html/sitemap.xml" \
+     "$BUILD/html/es/index.html" | sort -u | grep .; then
   echo "✗ the placeholders above were not substituted" >&2; exit 1
 fi
 echo "    version $VERSION, updated $UPDATED"
@@ -113,55 +139,99 @@ echo "    sha256 $SHA"
 
 # Advertised version comes from the app itself, never from a hand-edited file.
 sh "$HERE/make-appcast.sh" "$ROOT/dist/ClickGraft.app" \
-   /tmp/cg-build/html/appcast.json "$SHA" "$ZIP"
+   "$BUILD/html/appcast.json" "$SHA" "$ZIP"
 echo "    appcast $(/usr/bin/defaults read "$ROOT/dist/ClickGraft.app/Contents/Info.plist" CFBundleShortVersionString)"
 # The collector script and summary.sh live under the site directory so the code
 # has ONE home: edge mounts the collector directory rather than keeping a second
 # copy, and fetch-stats.sh runs summary.sh from REMOTE_DIR — it prints nothing at
 # all if that file is missing, which reads exactly like "no traffic".
-cp "$HERE/collector/collector.py" /tmp/cg-build/collector/
-cp "$HERE/summary.sh"             /tmp/cg-build/
-printf '%s\n' "$(cd "$ROOT" && git rev-parse --short HEAD)" > /tmp/cg-build/html/.build
+cp "$HERE/collector/collector.py" "$BUILD/collector/"
+cp "$HERE/summary.sh" "$HERE/visitor-classify.awk" "$BUILD/"
+printf '%s\n' "$(cd "$ROOT" && git rev-parse --short HEAD)" > "$BUILD/html/.build"
 
-echo "    site $(du -h /tmp/cg-build/html/index.html | cut -f1), download $(du -h /tmp/cg-build/html/ClickGraft.zip | cut -f1)"
+echo "    site $(du -h "$BUILD/html/index.html" | cut -f1), download $(du -h "$BUILD/html/$ZIPNAME" | cut -f1)"
+
+cp "$HERE/publish_site.py" "$BUILD/publish_site.py"
+# The same check the container will run, here, before anything is uploaded —
+# and through publish_site.py's own main, so a refusal is one ✗ line like every
+# other refusal in this script rather than a Python traceback mid-deploy.
+python3 "$HERE/publish_site.py" --check "$BUILD/html"
 
 echo "==> rsync to ${PVE_HOST}:${STAGE}"
+STAGED=1
 ssh "$PVE_HOST" "mkdir -p '$STAGE'"
-rsync -az --delete /tmp/cg-build/ "$PVE_HOST:$STAGE/"
+rsync -az --delete "$BUILD/" "$PVE_HOST:$STAGE/"
 
 echo "==> push into CT ${CT_ID} (content only)"
 # Unquoted heredoc on purpose: the vars expand here and arrive as literals.
 ssh "$PVE_HOST" bash -s <<EOF
 set -euo pipefail
-pct exec $CT_ID -- mkdir -p '$REMOTE_DIR/html' '$REMOTE_DIR/collector'
-# Empty html/ contents first. tar -x MERGES, so a file deleted locally is never
-# deleted on the server: two oversized icons kept being served for a day after
-# they were replaced. Contents, not the directory — sites/ is bind-mounted into
-# nginx and replacing the directory would leave it on the old inode.
-# -rf, not -f: html/es/ is a directory and plain rm would step over it, leaving
-# a stale Spanish page in place while everything around it was replaced.
-pct exec $CT_ID -- sh -lc 'rm -rf $REMOTE_DIR/html/* 2>/dev/null || true'
-tar -C '$STAGE' -cf - . | pct exec $CT_ID -- tar -C '$REMOTE_DIR' -xf -
-pct exec $CT_ID -- sh -lc 'chmod +x $REMOTE_DIR/summary.sh'
+# Until publish_site.py starts, .incoming-$DEPLOY_ID is only an upload, and goes
+# if the upload fails. After that it is publish_site.py's: it removes it when it
+# refuses or puts the old site back, and keeps it when it may hold the only
+# copy of the previous site, which nothing here may delete.
+handed_over=
+cleanup() {
+  rm -rf '$STAGE'
+  [ -n "\$handed_over" ] || pct exec $CT_ID -- rm -rf '$REMOTE_DIR/.incoming-$DEPLOY_ID'
+}
+trap cleanup EXIT
+pct exec $CT_ID -- mkdir -p '$REMOTE_DIR/.incoming-$DEPLOY_ID'
+tar -C '$STAGE' -cf - . | pct exec $CT_ID -- tar -C '$REMOTE_DIR/.incoming-$DEPLOY_ID' -xf -
+handed_over=1
+pct exec $CT_ID -- python3 '$REMOTE_DIR/.incoming-$DEPLOY_ID/publish_site.py' \
+  '$REMOTE_DIR/.incoming-$DEPLOY_ID' '$REMOTE_DIR'
 # The collector is a long-running python process: replacing the file on disk
 # does not reload the code. Its DIRECTORY is mounted, so a restart is enough —
 # no --force-recreate, and nothing else in the shared stack is touched.
 pct exec $CT_ID -- sh -lc 'cd /opt/edge && docker compose restart clickgraft-report'
 EOF
+STAGED=
 
 echo "==> verify inside the CT"
 # Through edge's nginx with an explicit Host: one nginx serves several sites and
-# picks the server block by name, so a request without it proves nothing.
-# Captured, not piped into grep. `cmd | grep -q` under `set -o pipefail` is a
-# false-negative generator: grep exits the moment it matches, curl/wget then
-# dies on EPIPE, and pipefail reports the whole pipeline as failed. It passes
-# while the page is small enough to fit the pipe buffer and starts "failing"
-# the day the page grows — which is exactly how it behaved.
-PAGE="$(ssh "$PVE_HOST" "pct exec $CT_ID -- docker exec edge-nginx-1 wget -qO- --header='Host: clickgraft.elusive.net' http://localhost/")"
-case "$PAGE" in
-  *ClickGraft*) echo "✓ edge is serving the page" ;;
-  *) echo "✗ edge is not serving the page" >&2; exit 1 ;;
-esac
+# picks the server block by name, so a request without it proves nothing. From
+# inside the CT there is no CF-Connecting-IP, so nginx leaves these requests out
+# of the access log and the ZIP fetched below is not counted as a download.
+#
+# What was just published, not merely "a page". Until 22 Sep 2026 this looked
+# for the word ClickGraft, which the page it replaced contains too, so an nginx
+# still serving the old html/ would have passed. publish_site.py switches html/
+# by name, which edge sees only because it mounts the whole sites/ directory.
+#
+# Hashes rather than captures, and never `| grep -q`: under pipefail grep exits
+# at the first match, wget dies on EPIPE and the pipeline "fails", which is how
+# this check once started failing the day the page grew past a pipe buffer.
+served() {
+  ssh "$PVE_HOST" "pct exec $CT_ID -- docker exec edge-nginx-1 wget -qO- --header='Host: clickgraft.elusive.net' 'http://localhost/$1'"
+}
+sha_of() { shasum -a 256 | cut -d' ' -f1; }
+# "version sha256" from an appcast on stdin, or nothing if it cannot be read.
+offered() {
+  python3 -c 'import json, sys
+try:
+    appcast = json.load(sys.stdin)
+    print(appcast["version"], appcast["sha256"])
+except Exception:
+    pass'
+}
+if [ "$(served '' | sha_of || true)" != "$(sha_of < "$BUILD/html/index.html")" ]; then
+  echo "✗ edge is not serving the page just published." >&2
+  echo "  publish_site.py switched $REMOTE_DIR/html. nginx sees that only while edge" >&2
+  echo "  mounts the whole sites/ directory; mounting html/ itself leaves it on the" >&2
+  echo "  old one. The site it replaced is the newest $REMOTE_DIR/.previous-*." >&2
+  exit 1
+fi
+echo "✓ edge is serving the page just published"
+got="$(served appcast.json | offered || true)"
+[ "$got" = "$VERSION $SHA" ] \
+  || { echo "✗ edge's appcast offers ${got:-nothing readable}, not $VERSION $SHA" >&2; exit 1; }
+echo "✓ edge's appcast offers $VERSION, with this download's sha256"
+for name in "$ZIPNAME" ClickGraft.zip; do
+  got="$(served "$name" | sha_of || true)"
+  [ "$got" = "$SHA" ] || { echo "✗ edge serves $name with sha256 $got, not $SHA" >&2; exit 1; }
+done
+echo "✓ edge serves $ZIPNAME and ClickGraft.zip, both with that sha256"
 
 echo "==> verify ${HEALTH_URL}"
 sleep 4
@@ -169,18 +239,7 @@ sleep 4
 # the HEAD on the zip was being counted as a download on every deploy.
 CHECK=(-H "X-ClickGraft-Check: 1")
 LIVE="$(curl -fsS --max-time 20 "${CHECK[@]}" "$HEALTH_URL" || true)"
-if [ -n "$LIVE" ] && [ "${LIVE#*ClickGraft}" != "$LIVE" ]; then
-  echo "✓ page is live"
-  code=$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 30 "${CHECK[@]}" "${HEALTH_URL}ClickGraft.zip")
-  [ "$code" = 200 ] && echo "✓ download reachable" || { echo "✗ ClickGraft.zip returned HTTP $code" >&2; exit 1; }
-  # Check every endpoint a user's Mac touches, not just the two obvious ones.
-  # A deploy once reported success while /report returned 404, and the first we
-  # knew of it was a user whose bug report vanished.
-  echo
-  # RELEASE_PENDING: on a release, the GitHub release is created after this
-  # deploy (CLAUDE.md step 7), so its absence here is the next step, not a fault.
-  BASE="${HEALTH_URL%/}" RELEASE_PENDING=1 sh "$HERE/healthcheck.sh"
-else
+if [ -z "$LIVE" ]; then
   echo "! ${HEALTH_URL} did not answer."
   echo "  edge is serving correctly, so this is DNS or the tunnel. Check that"
   echo "  clickgraft.elusive.net CNAMEs to edge's tunnel"
@@ -189,6 +248,28 @@ else
   echo "  the record points at a tunnel that no longer exists."
   exit 2
 fi
+# The page and the appcast pass through Cloudflare uncached (cf-cache-status
+# DYNAMIC, 22 Sep 2026), so both must already be the ones edge just served.
+case "$LIVE" in
+  *"$SHA"*) echo "✓ page is live, quoting this download's sha256" ;;
+  *) echo "✗ ${HEALTH_URL} answers, but its page does not quote $SHA." >&2
+     echo "  edge serves the new page, so something between Cloudflare and edge is" >&2
+     echo "  serving another copy." >&2
+     exit 1 ;;
+esac
+got="$(curl -fsS --max-time 20 "${CHECK[@]}" "${HEALTH_URL}appcast.json" | offered || true)"
+[ "$got" = "$VERSION $SHA" ] \
+  || { echo "✗ the public appcast offers ${got:-nothing readable}, not $VERSION $SHA" >&2; exit 1; }
+echo "✓ the public appcast offers $VERSION"
+code=$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 30 "${CHECK[@]}" "${HEALTH_URL}ClickGraft.zip")
+[ "$code" = 200 ] && echo "✓ download reachable" || { echo "✗ ClickGraft.zip returned HTTP $code" >&2; exit 1; }
+# Check every endpoint a user's Mac touches, not just the two obvious ones.
+# A deploy once reported success while /report returned 404, and the first we
+# knew of it was a user whose bug report vanished.
+echo
+# RELEASE_PENDING: on a release, the GitHub release is created after this
+# deploy (CLAUDE.md step 7), so its absence here is the next step, not a fault.
+BASE="${HEALTH_URL%/}" RELEASE_PENDING=1 sh "$HERE/healthcheck.sh"
 
 
 # The watcher is a systemd unit on the CT, not a container, so nothing else

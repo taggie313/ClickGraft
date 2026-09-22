@@ -17,7 +17,7 @@ PVE_HOST="${PVE_HOST:?set PVE_HOST in site/deploy/deploy.env}"
 # shared edge host took the site over. redeploy.sh sources this file, so a stale
 # default here would be a stale default there too.
 CT_ID="${CT_ID:-136}"
-REMOTE_DIR="${REMOTE_DIR:-/opt/clickgraft}"
+REMOTE_DIR="${REMOTE_DIR:-/opt/edge/sites/clickgraft}"
 
 die() { printf '✗ %s\n' "$*" >&2; exit 1; }
 

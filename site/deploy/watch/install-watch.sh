@@ -46,12 +46,14 @@ CONF_B64="$(printf 'NTFY_URL=%s\nNTFY_TOPIC=%s\nNTFY_USER=%s\nNTFY_PASS=%s\nLOG=
               "$NTFY_URL" "$NTFY_TOPIC" "$NTFY_USER" "$NTFY_PASS" "$WATCH_LOG" "$SUMMARY_PATH" \
               "${EXCLUDE_PREFIX:-}" "$REPORTS_PATH" | base64 | tr -d '\n')"
 
+CLASSIFY_B64="$(base64 < "$HERE/../visitor-classify.awk" | tr -d '\n')"
 echo "==> installing into CT ${CT_ID}"
 ct "
 set -eu
 umask 077
 echo '$CONF_B64'   | base64 -d > /etc/clickgraft-watch.conf
 umask 022
+echo '$CLASSIFY_B64' | base64 -d > /usr/local/bin/visitor-classify.awk
 echo '$SCRIPT_B64' | base64 -d > /usr/local/bin/clickgraft-watch.sh
 chmod 0755 /usr/local/bin/clickgraft-watch.sh
 echo '$UNIT_B64'   | base64 -d > /etc/systemd/system/clickgraft-watch.service

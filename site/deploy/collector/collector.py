@@ -8,6 +8,10 @@ whole attack surface is "someone fills a disk", which nginx caps.
 The user has already read the exact text before their copy of ClickGraft sends
 it — see sendReport() in ClickGraft.swift. Nothing arrives here that was not
 shown to a person first.
+
+Being public, this endpoint cannot verify that: anyone can POST to it. So it
+treats every request as untrusted input, and scrubs what it is given on arrival
+(below) rather than trusting the client to have done it.
 """
 import datetime
 import http.server
