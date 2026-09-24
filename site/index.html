@@ -271,23 +271,26 @@ left as HP shipped it.</p>
 <div class="tablewrap">
 <table>
   <thead>
-    <tr><th>Measured on an M-series Mac</th><th>Before</th><th>After</th></tr>
+    <tr><th>Measured on an M-series Mac, July 2026</th><th>Before</th><th>After</th></tr>
   </thead>
   <tbody>
     <tr><td>Time to finish starting up</td>  <td class="was">57.1 s</td> <td class="win">5.0 s</td></tr>
     <tr><td>Freezes while sitting idle</td>  <td class="was">17</td>     <td class="win">0</td></tr>
     <tr><td>Time frozen while idle</td>      <td class="was">9.0 s</td>  <td class="win">0 ms</td></tr>
-    <tr><td>Delay after a click</td>         <td class="was">298 ms</td> <td class="win">2.5 ms</td></tr>
+    <tr><td>Delay after a click, at its worst</td> <td class="was">298 ms</td> <td class="win">2.5 ms</td></tr>
   </tbody>
 </table>
 </div>
 
 <p style="font-size:.9rem;color:var(--muted)">Median of three runs each, stock
-HP&nbsp;Click 4.8.117 against the ClickGraft copy, automatic updates off on both
-so neither could pull a download mid-test. The bottom three rows are the "I
-clicked and nothing happened" problem. Under Rosetta the app isn't slow all the
-way through. It stops dead seventeen times while you aren't even using it.
-Method and raw numbers are <a href="https://github.com/taggie313/ClickGraft/tree/main/benchmarks">in
+HP&nbsp;Click 4.8.117 against a ClickGraft copy, automatic updates off on both so
+neither could pull a download mid-test. Startup ranged from 54 to 109&nbsp;s across
+those three Intel runs, and that spread is itself the symptom. The last row is the
+worst one click in twenty, not the usual one. The bottom three rows are the "I
+clicked and nothing happened" problem: under Rosetta the app isn't slow all the way
+through, it stops dead seventeen times while you aren't even using it. The copy has
+changed since July and these numbers haven't been taken again; method and raw
+numbers are <a href="https://github.com/taggie313/ClickGraft/tree/main/benchmarks">in
 the repository</a>.</p>
 
 <h2>What it does to your Mac</h2>

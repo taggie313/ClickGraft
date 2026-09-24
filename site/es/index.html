@@ -91,6 +91,17 @@ header.wrap { padding-top: clamp(3.5rem, 9vw, 6rem); }
 .headline .facts li:last-child { padding-bottom: 0; }
 .panel > :last-child { margin-bottom: 0; }
 .panel p { font-size: .95rem; }
+/* Numbers table, copied from the English page's styles along with the section
+   it serves. Same reason the rest of this file duplicates them: the site is
+   self-contained, with no stylesheet to share. */
+table { border-collapse: collapse; width: 100%; font-size: .95rem; margin: 0 0 .8rem; }
+th, td { text-align: right; padding: .58em .3em; border-bottom: 1px solid var(--rule); }
+th:first-child, td:first-child { text-align: left; color: var(--muted); font-weight: 400; }
+thead th { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em;
+           color: var(--faint); font-weight: 600; border-bottom-width: 1.5px; }
+td.win { font-weight: 660; color: var(--accent); font-variant-numeric: tabular-nums; }
+td.was { color: var(--muted); font-variant-numeric: tabular-nums; }
+.tablewrap { overflow-x: auto; }
 .facts { list-style: none; padding: 0; margin: 1.2rem 0; }
 .facts li { padding: .55rem 0 .55rem 1.5rem; position: relative; font-size: .97rem; }
 .facts li::before { content: ""; position: absolute; left: 0; top: 1.02em;
@@ -199,6 +210,35 @@ Rosetta: hizo su copia, y esa copia se abrió con normalidad.</p>
 cada cambio que hace y por qué, y cada archivo que descarga junto con la huella
 con la que lo verifica. No ocurre nada hasta que pulsas el botón.</p>
 
+<h2>La diferencia, en números</h2>
+
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr><th>Medido en un Mac de la serie M, julio de 2026</th><th>Antes</th><th>Después</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Tiempo en terminar de arrancar</td>    <td class="was">57,1&nbsp;s</td> <td class="win">5,0&nbsp;s</td></tr>
+    <tr><td>Bloqueos sin tocar nada</td>           <td class="was">17</td>        <td class="win">0</td></tr>
+    <tr><td>Tiempo bloqueado sin tocar nada</td>   <td class="was">9,0&nbsp;s</td>  <td class="win">0&nbsp;ms</td></tr>
+    <tr><td>Retardo al hacer clic, en el peor caso</td> <td class="was">298&nbsp;ms</td> <td class="win">2,5&nbsp;ms</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p style="font-size:.9rem;color:var(--muted)">Mediana de tres ejecuciones con
+cada una: el HP&nbsp;Click 4.8.117 original frente a una copia de ClickGraft, con
+las actualizaciones automáticas desactivadas en los dos para que ninguno se
+pusiera a descargar nada a mitad de la prueba. El arranque fue de entre 54 y
+109&nbsp;s en esas tres ejecuciones con Intel, y esa variación es en sí misma el
+síntoma. La última fila es el peor clic de cada veinte, no el habitual. Las tres
+últimas filas son el problema de &laquo;he hecho clic y no ha pasado nada&raquo;:
+con Rosetta la aplicación no va lenta todo el rato. Se queda colgada diecisiete
+veces mientras ni siquiera la estás usando. La copia ha cambiado desde julio y
+estas mediciones no se han repetido; el método y los datos en bruto están
+<a href="https://github.com/taggie313/ClickGraft/tree/main/benchmarks">en el
+repositorio</a> (en inglés).</p>
+
 <h2>Qué necesitas</h2>
 
 <ul class="facts">
@@ -265,7 +305,7 @@ con la que lo verifica. No ocurre nada hasta que pulsas el botón.</p>
 <h2>Más detalle, en inglés</h2>
 
 <p>Esta página es un resumen. La <a href="../">página completa en inglés</a>
-incluye las mediciones de antes y después, cómo verificar la descarga con
+incluye cómo verificar la descarga con
 <span class="mono">spctl</span> y con la huella SHA-256, la tabla de versiones de
 HP con enlaces de descarga directos, y cómo ponerse en contacto.</p>
 
