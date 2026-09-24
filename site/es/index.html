@@ -71,6 +71,10 @@ header.wrap { padding-top: clamp(3.5rem, 9vw, 6rem); }
 .alt { color: var(--muted); text-decoration: none; font-weight: 550; font-size: .95rem; }
 .alt:hover { color: var(--accent); }
 .disclaim { font-size: .84rem; color: var(--faint); margin: 1.2rem 0 0; }
+.meta { font-size: .84rem; color: var(--muted); margin: 1.15rem 0 0;
+        font-variant-numeric: tabular-nums; }
+.meta a { color: var(--muted); }
+.meta a:hover { color: var(--accent); }
 .panel { background: var(--panel); border: 1px solid var(--rule);
   border-radius: 11px; padding: 1.15rem 1.3rem; margin: 1.4rem 0; }
 .panel.good { background: var(--good); border-color: transparent; }
@@ -139,12 +143,16 @@ footer p { margin: 0 0 .7em; }
      chips de la serie M).</p>
 
   <div class="cta">
-    <a class="btn" href="../ClickGraft.zip" download>
-      Descargar ClickGraft
+    <a class="btn" href="../{{ZIP_NAME}}" download>
+      Descargar ClickGraft {{VERSION}}
       <span class="btn-sub">para macOS&nbsp;15 o posterior con Apple Silicon &middot; gratis</span>
     </a>
     <a class="alt" href="https://github.com/taggie313/ClickGraft">Código en GitHub &rarr;</a>
   </div>
+
+  <p class="meta">Versión {{VERSION}} &middot; actualizada el {{UPDATED_ES}} &middot;
+     <a href="https://github.com/taggie313/ClickGraft/releases">qué ha cambiado</a>
+     (en inglés)</p>
 
   <p class="disclaim">Firmado y notarizado por Apple, así que se abre con
      normalidad. Software libre con licencia MIT. Sin relación con
@@ -194,15 +202,21 @@ con la que lo verifica. No ocurre nada hasta que pulsas el botón.</p>
 <h2>Qué necesitas</h2>
 
 <ul class="facts">
-  <li><b>Un Mac con Apple Silicon.</b> <span>Cualquier chip de la serie M. En un
-      Mac Intel no hay nada que arreglar.</span></li>
+  <li><b>Un Mac con Apple Silicon.</b> <span>Cualquier chip de la serie M: es el
+      Mac al que va destinada la copia. Un Mac Intel sí puede hacer una copia para
+      un Mac con Apple&nbsp;Silicon &mdash; marca la casilla que ofrece ClickGraft
+      &mdash;, pero no puede probar a abrirla, así que ábrela en el Mac para el que
+      la has hecho.</span></li>
   <li><b>macOS&nbsp;15 o posterior.</b> <span>Algunos archivos que HP incluye dentro
       de HP&nbsp;Click, y los archivos de apoyo que añade ClickGraft, están hechos
       para macOS&nbsp;15 en adelante, así que la copia también lo necesita. En un Mac
-      más antiguo, ClickGraft lo dice antes de descargar nada. HP publica la
-      4.11.31, su propia versión para Apple&nbsp;Silicon, para macOS&nbsp;12 a 26; si
-      imprimes en una de las cinco impresoras de abajo, esa no es una opción, y la
-      copia necesita macOS&nbsp;15.</span></li>
+      más antiguo, ClickGraft lo dice antes de descargar nada. Con macOS&nbsp;12, 13
+      o 14, instala en su lugar la versión de HP para Apple&nbsp;Silicon: HP publica
+      la 4.11.31 para macOS&nbsp;12 a 26. Si imprimes en una de las cinco impresoras
+      de abajo, la 4.11.31 tampoco las tiene, así que hoy no hay ninguna versión a
+      la que pasar: quédate con la 4.8.117 que ya tienes, que ahí sigue funcionando
+      igual que ahora, y vuelve a ClickGraft si ese Mac pasa a
+      macOS&nbsp;15.</span></li>
   <li><b>HP Click 4.10.42, 4.8.118 o 4.8.117, ya instalado.</b> <span>ClickGraft
       no incluye software de HP y no puede conseguirlo por ti.</span></li>
   <li><b>Las Herramientas de Línea de Comandos de Apple.</b> <span>Gratuitas, de
@@ -215,7 +229,7 @@ con la que lo verifica. No ocurre nada hasta que pulsas el botón.</p>
 <h2>Instalación</h2>
 
 <ol class="steps">
-  <li>Descarga el archivo y descomprímelo.</li>
+  <li>Descarga <span class="mono">{{ZIP_NAME}}</span> y descomprímelo.</li>
   <li>Arrastra <strong>ClickGraft.app</strong> donde quieras. Aplicaciones está
       bien.</li>
   <li>Haz doble clic y sigue las seis pantallas.</li>
@@ -229,8 +243,16 @@ con la que lo verifica. No ocurre nada hasta que pulsas el botón.</p>
   <p><strong>DesignJet T310 &middot; T320 &middot; T350 &middot; T720 &middot;
   T750</strong></p>
   <p>Si tienes una de ellas, <strong>instala la 4.8.117 y aplica el injerto sobre
-  esa</strong>. ClickGraft no puede arreglarlo: HP&nbsp;Click comprueba esa lista
-  contra su propia firma al arrancar y se niega a ejecutarse si no coincide.</p>
+  esa</strong>. En la página de descargas de HP solo aparece si eliges
+  macOS&nbsp;11 o anterior, así que estos son los enlaces directos al servidor de
+  HP:
+  <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.8.117.dmg">el
+  instalador .dmg</a> o
+  <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.8.117.zip">la
+  aplicación en .zip</a> (descomprímela y arrástrala a Aplicaciones). ClickGraft no
+  puede devolver esas impresoras a una versión posterior: HP&nbsp;Click comprueba
+  esa lista contra su propia firma al arrancar y se niega a ejecutarse si no
+  coincide.</p>
 </div>
 
 <div class="panel warn">
@@ -267,9 +289,19 @@ días.</p>
 <footer class="wrap">
   <p><strong>Qué registra este sitio.</strong> Sin cookies, sin scripts, sin
   servicio de analítica, nada se comparte con nadie. Tu dirección se recorta
-  antes de anotarla. Los informes que envías desde la aplicación se borran a los
-  90 días. El detalle completo está
+  antes de anotarla. El detalle completo está
   <a href="../#privacidad">en la página en inglés</a>.</p>
+
+  <p><strong>Qué contiene un informe.</strong> No se envía ningún informe si no
+  pulsas el botón, y el texto exacto está en pantalla antes de hacerlo. Aquí llega
+  ese texto y un código de país de dos letras que añade Cloudflare, nunca tu
+  dirección; las rutas de tu carpeta de usuario se eliminan en tu Mac y otra vez al
+  llegar, así que el nombre de tu cuenta no viaja con él. La casilla del correo es
+  opcional, empieza vacía y solo se usa para responderte sobre ese informe. Los
+  informes se borran 90 días después de llegar; si quieres que el tuyo se borre
+  antes, o saber qué contenía, escribe a
+  <a href="mailto:clickgraft@elusive.net">clickgraft@elusive.net</a> e indica
+  aproximadamente cuándo lo enviaste.</p>
 
   <p><a href="https://github.com/taggie313/ClickGraft">GitHub</a> &middot;
      <a href="mailto:clickgraft@elusive.net">clickgraft@elusive.net</a> &middot;

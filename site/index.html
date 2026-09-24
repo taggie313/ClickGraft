@@ -300,6 +300,12 @@ the repository</a>.</p>
       and settings carry over.</span></li>
   <li><b>To undo it, drag the new app to the Trash.</b> <span>There's no
       uninstaller because there's nothing else to remove.</span></li>
+  <li><b>The copy never asks HP for updates.</b> <span>Your original asks every
+      time it starts, and downloads the whole application &mdash; around
+      570&nbsp;MB &mdash; if HP's feed names something newer. A copy of 4.8.117
+      stays 4.8.117 on its own, so if you print to one of the five printers HP
+      dropped, &ldquo;don't update&rdquo; isn't something you have to keep
+      remembering.</span></li>
   <li><b>No HP software is distributed.</b> <span>ClickGraft contains none of
       HP's code. It works on the copy of HP Click you installed
       yourself.</span></li>
@@ -313,14 +319,19 @@ button.</p>
 <h2>What you need</h2>
 
 <ul class="facts">
-  <li><b>A Mac with Apple Silicon.</b> <span>Any M-series processor. On an Intel
-      Mac there's nothing to fix.</span></li>
+  <li><b>A Mac with Apple Silicon.</b> <span>Any M-series processor: that's the
+      Mac the copy is for. An Intel Mac can make a copy for an Apple&nbsp;Silicon
+      Mac &mdash; tick the box ClickGraft offers &mdash; but it can't test-launch
+      it, so open the copy on the Mac it was made for.</span></li>
   <li><b>macOS&nbsp;15 or later.</b> <span>Files HP ships inside HP&nbsp;Click, and
       the support files ClickGraft adds, are built for macOS&nbsp;15 and later, so
       the copy needs it too. On an older Mac, ClickGraft says so before it
-      downloads anything. HP lists 4.11.31, its own Apple&nbsp;Silicon version, for
-      macOS&nbsp;12 to 26; if you print to one of the five printers below, that isn't
-      an option, and the copy needs macOS&nbsp;15.</span></li>
+      downloads anything. On macOS&nbsp;12, 13 or 14, install HP's own
+      Apple&nbsp;Silicon version instead: HP lists 4.11.31 for macOS&nbsp;12 to 26.
+      If you print to one of the five printers below, 4.11.31 doesn't have them
+      either, so today there is nothing to move to: keep the 4.8.117 you have,
+      which goes on working there as it does now, and come back if that Mac moves
+      to macOS&nbsp;15.</span></li>
   <li><b>HP Click 4.10.42, 4.8.118 or 4.8.117, already installed.</b> <span>ClickGraft ships no HP
       software and can't get it for you.</span></li>
   <li><b>Apple's Command Line Tools.</b> <span>Free, from Apple. Most Macs used
@@ -343,6 +354,16 @@ right-clicking to open it and no warning about an unidentified developer. macOS
 asks once whether you meant to open something you downloaded, and the first
 launch takes a few extra seconds while it checks with Apple. Both happen once and
 then stop.</p>
+
+<div class="panel">
+  <h3>If you already have a copy, make it again</h3>
+  <p>A copy carries the fixes of the ClickGraft that made it, and two of them are
+  reason enough to make a new one: copies made before 1.5.8 still tried to send
+  HP's crash reports unencrypted, and copies made before 1.5.9 can fail to open on
+  macOS&nbsp;15.0 to 15.3. Open ClickGraft {{VERSION}} and make the copy again.
+  Since 1.5.9 the copy you have is kept until the new one has passed every check,
+  and put back if it hasn't.</p>
+</div>
 
 <div class="panel warn">
   <h3>Don't run both apps at once</h3>
@@ -382,6 +403,11 @@ fingerprint is published on the
 which is a genuinely independent place to compare it against.</p>
 
 <h2 id="versions">Which versions work</h2>
+
+<p><strong>To see which one you have,</strong> open your Applications folder,
+click HP&nbsp;Click once and press &#8984;I. The <em>Version</em> line is the
+number the rest of this page is about. ClickGraft reads that same line, and lists
+it for every HP&nbsp;Click it finds, including the ones it can't work with.</p>
 
 <p><strong>HP Click 4.11.31 doesn't need ClickGraft.</strong> HP published it on
 17 September 2026, and it is built for Apple&nbsp;Silicon: every part of it runs
@@ -457,14 +483,15 @@ in 4.8.118, so read the next paragraph before you pick.</p>
 <strong>4.8.117</strong> and in nothing since:</p>
 <p><strong>DesignJet T310 &middot; T320 &middot; T350 &middot; T720 &middot;
 T750</strong></p>
-<p>The list went from 117 models to 110 in <strong>4.8.118</strong>, and 4.10.38,
-4.10.42 and 4.11.31 carry the same shortened list. So the version to stay on is 4.8.117, not
-4.8.118 &mdash; an earlier version of this page said either would do, which was
-wrong.</p>
+<p>The list went from 117 entries to 110 in <strong>4.8.118</strong> &mdash; HP names
+each carriage width separately, so those seven entries are these five plotters
+&mdash; and 4.10.38, 4.10.42 and 4.11.31 carry the same shortened list. So the
+version to stay on is 4.8.117, not 4.8.118 &mdash; an earlier version of this page
+said either would do, which was wrong.</p>
 <p>If you own one of these, <strong>install 4.8.117 and graft that</strong>. Do not
 update, and if you already have, 4.8.117 is still on HP's server using the links
 above.</p>
-<p>ClickGraft cannot fix this one, and we tried. Putting the seven models back is a
+<p>ClickGraft cannot fix this one, and we tried. Putting those seven entries back is a
 one-line change to a file inside the app, and the result is an app that will not
 open at all: HP&nbsp;Click checks that list against its own signature at startup and
 refuses to run when it doesn't match, with <em>&ldquo;Cannot verify the integrity of
@@ -510,9 +537,10 @@ that attached and it gets sorted faster.</p>
 <p>ClickGraft distributes no HP code, and it changes nothing about what HP Click
 is allowed to do. Licensing, supplies, features, any restriction HP put in the
 software: all untouched. It swaps one downloaded component so the
-Apple&nbsp;Silicon code HP already wrote can run natively, and it repairs a bug
-in HP's own files that throws an error every time the app starts, on Intel Macs
-too.</p>
+Apple&nbsp;Silicon code HP already wrote can run natively, and on 4.8.117 and
+4.8.118 it repairs a bug in HP's own files that throws an error every time the app
+starts, on Intel Macs too. 4.10.42 stopped loading the file with that bug, so
+there is nothing to repair there and ClickGraft leaves it alone.</p>
 
 <p>Keeping the scope that narrow is the point, and
 <a href="https://github.com/taggie313/ClickGraft/blob/main/CONTRIBUTING.md#scope--please-read-before-opening-a-pr">contributions
@@ -586,9 +614,10 @@ I've never touched is if someone says so.</p>
   <p><strong>The one thing the app does on its own.</strong> When ClickGraft
   opens, it asks this server whether a newer version exists &mdash; that's how it
   can tell you about a fix. That request lands in the same access log as any
-  other visit: the version you're running and your shortened address, nothing
-  else. There's no account, no identifier, and nothing that ties one launch to
-  another. It is the only thing ClickGraft sends without you pressing
+  other visit: your shortened address, and the line your Mac sends with every
+  request, which here names ClickGraft's version and roughly which macOS you're
+  on. Nothing else. There's no account, no identifier, and nothing that ties one
+  launch to another. It is the only thing ClickGraft sends without you pressing
   something.</p>
 
   <p><a href="https://github.com/taggie313/ClickGraft">GitHub</a> &middot;

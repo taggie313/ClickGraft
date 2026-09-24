@@ -108,6 +108,14 @@ SHA="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
 UPDATED="$(date -r "$ZIP" '+%-d %B %Y')"
 # ISO form of the same date for the sitemap, so the two can never disagree.
 UPDATED_ISO="$(date -r "$ZIP" '+%Y-%m-%d')"
+# Spanish form of the same date, for /es/. Built from the month number rather
+# than a locale, because the CT and this Mac need not have an es_ES locale
+# installed and a missing one silently yields English month names.
+# cut, not a shell array: arrays index from 0 in bash and from 1 in zsh, and a
+# script read in the wrong shell would silently name the month before.
+ES_MONTH="$(echo 'enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre' \
+            | cut -d' ' -f"$(( 10#$(date -r "$ZIP" '+%m') ))")"
+UPDATED_ES="$(date -r "$ZIP" '+%-d') de $ES_MONTH de $(date -r "$ZIP" '+%Y')"
 
 sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
     -e "s|{{VERSION}}|$VERSION|g" \
@@ -123,9 +131,16 @@ cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple
 # own and merges this into it; without an origin file there is nothing telling
 # anyone to leave the half-megabyte binary alone.
 cp "$SITE/robots.txt" "$BUILD/html/"
-# The Spanish page carries no {{...}} placeholders (see site/es/index.html for
-# why) so it is copied rather than substituted.
-cp -R "$SITE/es" "$BUILD/html/"
+# The Spanish page now carries the same version, download name and date as the
+# English one (24 Sep 2026: a Spanish reader could not tell which build the
+# button handed them), so it goes through the same substitution. The guard
+# below covers it, and caught exactly this when the placeholders were added.
+mkdir -p "$BUILD/html/es"
+sed -e "s|{{VERSION}}|$VERSION|g" \
+    -e "s|{{ZIP_NAME}}|$ZIPNAME|g" \
+    -e "s|{{UPDATED_ES}}|$UPDATED_ES|g" \
+    -e "s|{{UPDATED_ISO}}|$UPDATED_ISO|g" \
+    "$SITE/es/index.html" > "$BUILD/html/es/index.html"
 # Crawlers ask for /sitemap.xml by name and were getting a 404.
 sed -e "s|{{UPDATED_ISO}}|$UPDATED_ISO|g" "$SITE/sitemap.xml" > "$BUILD/html/sitemap.xml"
 
