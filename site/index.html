@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ClickGraft — make HP Click run properly on your Mac</title>
-<meta name="description" content="Until 4.11.31, HP shipped HP Click for Mac as an Intel app, so it crawls under Rosetta. ClickGraft makes a copy of your installation and puts the Apple Silicon engine into the copy. Free and open source.">
+<meta name="description" content="Which version of HP Click to run for your printer and your Mac, where to get the builds HP no longer serves, and what HP changed and when. Includes ClickGraft, which makes an Apple Silicon copy of HP Click. Measured from HP's own builds. Free and open source.">
 
 <meta property="og:title" content="ClickGraft">
-<meta property="og:description" content="Make HP Click run properly on your Mac. Free and open source.">
+<meta property="og:description" content="Versions, fixes and answers for HP Click on a Mac — including ClickGraft itself. Free and open source.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://clickgraft.elusive.net/">
 <meta property="og:image" content="https://clickgraft.elusive.net/clickgraft-og.jpg">
@@ -200,20 +200,6 @@ footer p { margin: 0 0 .7em; }
     <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.31.dmg">Download
     the installer from HP</a> (about 710&nbsp;MB). On HP's download page it's listed for
     macOS&nbsp;12 to 26; on macOS&nbsp;27, choose 26.</p>
-    <h3>ClickGraft is still for</h3>
-    <ul class="facts">
-      <li><b>The DesignJet T310, T320, T350, T720 and T750.</b> <span>HP dropped
-          them after 4.8.117, and 4.11.31 doesn't have them either. 4.8.117 is an
-          Intel app; ClickGraft's copy of it runs natively on macOS&nbsp;15 and
-          later, including on Macs without Rosetta.</span></li>
-      <li><b>Staying on 4.10.42 or 4.8.118 for now.</b> <span>ClickGraft still
-          makes those run at full speed. <a href="#versions">Versions and
-          downloads</a>.</span></li>
-    </ul>
-    <p class="disclaim">If your Mac can't run macOS&nbsp;12, ClickGraft is not for you
-       and you don't need it &mdash; but HP's page will still hand you a build that
-       won't start. <a href="#oldmacos">Which HP&nbsp;Click runs on an older
-       Mac</a>.</p>
   </section>
 
   <p class="lede">Until September 2026, HP Click for Mac was an Intel app. On a
@@ -232,6 +218,11 @@ footer p { margin: 0 0 .7em; }
   <p class="meta">Version {{VERSION}} &middot; last updated {{UPDATED}} &middot;
      <a href="https://github.com/taggie313/ClickGraft/releases">what changed</a></p>
 
+  <p class="disclaim"><strong>Not sure this is what you need?</strong> Since HP shipped
+     an Apple&nbsp;Silicon build of its own, the download above is the right answer for
+     some people and the wrong one for others.
+     <a href="#start">Start with your situation &rarr;</a></p>
+
   <p class="disclaim">Signed and notarized by Apple, so it opens normally.
      Open source under the MIT licence. Not affiliated with, endorsed by, or
      supported by HP&nbsp;Inc.</p>
@@ -239,7 +230,80 @@ footer p { margin: 0 0 .7em; }
 
 <main class="wrap">
 
-<h2>Why HP Click is slow</h2>
+<h2 id="start">Not sure this is what you need? Start with your situation</h2>
+
+<p>ClickGraft began as one tool for one problem, and that problem is now mostly
+HP's to have solved &mdash; it did, in September 2026. What is left is a set of
+different situations with different answers, and only two of them are a download
+from this page. Find yours.</p>
+
+<ul class="facts">
+  <li><b>An Apple&nbsp;Silicon Mac, and 4.11.31 lists your printer.</b>
+      <span>Install HP's own 4.11.31 and stop here. You need nothing from this site.
+      <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.31.dmg">HP's
+      installer</a>, and <a href="#pick">how to check your printer is in it</a>.</span></li>
+
+  <li><b>You print to a DesignJet T310, T320, T350, T720 or T750.</b>
+      <span>Only HP&nbsp;Click 4.8.117 lists these, and nothing HP has shipped since
+      does. On an Apple&nbsp;Silicon Mac, install 4.8.117 and make a ClickGraft copy of
+      it. <a href="#printers">The five printers</a>.</span></li>
+
+  <li><b>An Apple&nbsp;Silicon Mac, staying on 4.10.42 or 4.8.118.</b>
+      <span>This is what ClickGraft is for: it makes a copy that runs at full speed
+      without Rosetta. The download is above, and
+      <a href="#what">here is what it does</a>.</span></li>
+
+  <li><b>An Intel Mac.</b> <span>You don't need ClickGraft and it won't run on your
+      Mac. HP&nbsp;Click is an Intel app, so on an Intel Mac it already runs natively
+      &mdash; the problem the graft solves isn't one you have. What you may still need
+      is <a href="#pick">the right version for your printer</a>.</span></li>
+
+  <li><b>A Mac that can't run macOS&nbsp;12.</b> <span>HP's download page will hand you
+      a build that cannot start. There are older ones that do, and HP still serves
+      them. <a href="#oldmacos">Which HP&nbsp;Click runs on an older Mac</a>.</span></li>
+
+  <li><b>HP won't give you the version you need.</b> <span>Two of the versions in this
+      story were never on HP's download page, and one was removed from it. They are all
+      still on HP's servers. <a href="#versions">Versions and direct
+      downloads</a>.</span></li>
+
+  <li><b>Something is broken and you want to know why.</b> <span>Several of the
+      confusing things about HP&nbsp;Click on a Mac turned out to have specific causes,
+      and they are written down here rather than guessed at.
+      <a href="#cant">What this project can and can't fix</a>.</span></li>
+</ul>
+
+<h2 id="history">What ClickGraft used to do, and what this page is now</h2>
+
+<p><strong>Until September 2026 there was one problem and one answer.</strong>
+HP&nbsp;Click for Mac was an Intel application. On an Apple&nbsp;Silicon Mac it ran
+through Rosetta and it crawled &mdash; nearly a minute to finish starting, and it froze
+if you touched it while it worked. ClickGraft existed to fix exactly that: it made a
+copy of your HP&nbsp;Click and put the Apple&nbsp;Silicon engine HP already builds into
+the copy. That was the whole project, and the numbers below are what it bought.</p>
+
+<p><strong>Then HP shipped 4.11.31, and most of that job ended.</strong> On
+17&nbsp;September 2026 HP published an HP&nbsp;Click built for Apple&nbsp;Silicon
+itself. If it supports your printer, it is a better answer than anything this project
+can make, and the honest thing to say is: install it and go. This page says so at the
+top, and the app says so too when it finds one.</p>
+
+<p><strong>What did not end is everyone HP left behind.</strong> HP removed five
+DesignJet models from HP&nbsp;Click's supported list in 4.8.118 and has not put them
+back. It moved HP&nbsp;Click's minimum macOS from 10.10 to 12.0 somewhere in the 4.7
+releases, so anyone on an older Mac is offered a build that cannot start. It published
+one version only as an auto-update, removed another from its download page, and left a
+third as a broken file on its own server. None of those are graft problems, and all of
+them are somebody's actual Monday morning.</p>
+
+<p>So this page changed shape. It is still where ClickGraft is published, and the graft
+still does what it always did for the people it applies to. But most of what follows is
+now the other thing: which version you should run, where to get it when HP won't serve
+it, what HP changed and when, and which of it can be fixed and which cannot. All of it
+is measured from HP's own builds rather than repeated from anywhere, and where something
+has only been read and not tested, it says so.</p>
+
+<h2 id="what">Why HP Click is slow</h2>
 
 <p>In 2020 Apple started putting its own processors in Macs instead of Intel's.
 They're called Apple&nbsp;Silicon: the M-series chips, M1 through M5 and
@@ -409,6 +473,56 @@ fingerprint is published on the
 <a href="https://github.com/taggie313/ClickGraft/releases">GitHub release</a>,
 which is a genuinely independent place to compare it against.</p>
 
+<h2 id="pick">Which HP Click you should run</h2>
+
+<p>Every row below was worked out from HP's own builds &mdash; the printer lists were
+opened and counted, and the minimum macOS is what each build declares about itself.
+ClickGraft answers the same question about your actual Mac when you run it, from the
+same measurements, so the two cannot disagree.</p>
+
+<div class="tablewrap">
+<table class="versions">
+<thead><tr><th>If this is you</th><th>Run</th><th>Needs macOS</th><th>And</th></tr></thead>
+<tbody>
+<tr><td>You print to a DesignJet <strong>T310, T320, T350, T720 or T750</strong></td>
+    <td><strong>4.8.117</strong></td>
+    <td>12 or later</td>
+    <td>The only release that lists them. On an Apple&nbsp;Silicon Mac, make a
+        ClickGraft copy of it.</td></tr>
+<tr><td>Any other DesignJet HP still supports, <strong>Apple&nbsp;Silicon Mac</strong></td>
+    <td><strong>4.11.31</strong></td>
+    <td>12 or later</td>
+    <td>HP built it for Apple&nbsp;Silicon. No copy needed, and no Rosetta.</td></tr>
+<tr><td>Any other DesignJet HP still supports, <strong>Intel Mac</strong></td>
+    <td><strong>4.11.31</strong></td>
+    <td>12 or later</td>
+    <td>It runs natively on an Intel Mac as it is. ClickGraft is neither needed nor
+        able to run there.</td></tr>
+<tr><td>A Mac that <strong>can't run macOS&nbsp;12</strong></td>
+    <td><strong>4.6.47</strong></td>
+    <td>10.10 declared, 10.12 in practice</td>
+    <td>Newest build below the floor. Not from HP's download page &mdash;
+        <a href="#oldmacos">see below</a>.</td></tr>
+<tr><td>One of the five printers <em>and</em> a Mac below macOS&nbsp;12</td>
+    <td><span class="none">nothing</span></td>
+    <td>&mdash;</td>
+    <td>There is no release that does both. <a href="#oldmacos">Why, and what is
+        left</a>.</td></tr>
+<tr><td>A printer that is <strong>not on HP's list at all</strong></td>
+    <td><span class="none">nothing</span></td>
+    <td>&mdash;</td>
+    <td>No HP&nbsp;Click lists it, and the list cannot be added to.
+        <a href="#cant">What that means</a>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p class="disclaim">&ldquo;Needs macOS&rdquo; is the minimum each build declares, which is
+what macOS enforces when you open it. The libraries inside ask for more in every case
+&mdash; 15.0 in 4.8.117 and 4.11.31, 10.12 in 4.6.47 &mdash; and whether they really
+need it has never been tested, so the declared figure is the one used here and the other
+is recorded rather than acted on.</p>
+
 <h2 id="versions">Which versions work</h2>
 
 <p><strong>To see which one you have,</strong> open your Applications folder,
@@ -485,7 +599,7 @@ concerned they are interchangeable &mdash; but HP changed which printers it supp
 in 4.8.118, so read the next paragraph before you pick.</p>
 
 <div class="panel warn">
-<h3>4.8.118 drops five printers. Check yours first.</h3>
+<h3 id="printers">4.8.118 drops five printers. Check yours first.</h3>
 <p>HP removed these models from HP&nbsp;Click's supported-printer list. They work in
 <strong>4.8.117</strong> and in nothing since:</p>
 <p><strong>DesignJet T310 &middot; T320 &middot; T350 &middot; T720 &middot;
@@ -613,6 +727,44 @@ turnaround is a priority rather than an afterthought.</p>
 app will write a description of your version for you.
 <a href="https://github.com/taggie313/ClickGraft/issues">Open an issue</a> with
 that attached and it gets sorted faster.</p>
+
+<h2 id="cant">What this project can and can't fix</h2>
+
+<p>The useful half of a clearinghouse is knowing which problems have an answer. These
+do not, and each was established rather than assumed.</p>
+
+<ul class="facts">
+  <li><b>Putting the five printers back into a newer HP&nbsp;Click.</b> <span>It is a
+      one-line change to a file inside the app, and the result will not open at all:
+      HP&nbsp;Click checks that list against its own signature at startup. Tested
+      directly, on two builds identical but for that one file.
+      <a href="#printers">Details</a>.</span></li>
+
+  <li><b>Making HP&nbsp;Click support a printer HP does not list.</b> <span>Which
+      printers HP&nbsp;Click accepts is a decision HP made and recorded inside the app,
+      behind the same signature check. It is not a statement about your hardware &mdash;
+      the five printers above work perfectly well and simply stopped being listed
+      &mdash; but it is not something a patch can change.</span></li>
+
+  <li><b>Making an old HP&nbsp;Click run on Apple&nbsp;Silicon.</b> <span>Everything
+      before 4.8.117 is built on Electron&nbsp;8, which has no Apple&nbsp;Silicon build
+      at all, and HP's own printing add-ons in those versions are Intel-only. A newer
+      engine cannot be dropped in either: those add-ons are compiled against the exact
+      runtime they shipped with, and HP does not publish their source. ClickGraft works
+      by switching on arm64 code HP already built, and in those versions there is
+      none.</span></li>
+
+  <li><b>Helping anyone below macOS&nbsp;15 with the tool itself.</b> <span>ClickGraft
+      needs macOS&nbsp;15 to run. If your Mac is older than that, the answer is a
+      version of HP&nbsp;Click rather than a copy of one, which is what
+      <a href="#pick">the table above</a> and <a href="#oldmacos">the older-Mac
+      section</a> are for.</span></li>
+</ul>
+
+<p class="disclaim">And one honest gap: no HP&nbsp;Click below 12.0 has been opened on a
+Mac old enough to need it, because nobody working on this has one. Those rows rest on
+what the builds declare and on reading their libraries, not on a test.
+<a href="#contact">Tell us if you try it</a> and that will stop being true.</p>
 
 <h2>Is this allowed?</h2>
 
