@@ -1,12 +1,14 @@
 {
- "$comment": "Measured by packaging/measure_capabilities.py from stock HP Click bundles. Do not hand-edit: re-run the script and commit its diff. declared_floor is what HP's Info.plist claims; measured_floor is the highest minimum any Mach-O inside declares, and the two disagree in both directions -- the old builds understate by two minors, 4.8.117 and later by three majors.",
+ "$comment": "Measured by packaging/measure_capabilities.py from stock HP Click bundles. Do not hand-edit: re-run the script and commit its diff. declared_floor is what HP's Info.plist claims; measured_floor is the highest minimum any Mach-O inside declares, and the two disagree in both directions -- the old builds understate by two minors, 4.8.117 and later by three majors. Whether HP still serves a version is deliberately NOT here: it is a fact about HP's server today, and this tree is compared against the sources a tag committed.",
  "reference_version": "4.8.117",
  "versions": [
   {
    "version": "3.7.83",
+   "floor_tested": false,
    "declared_floor": "10.10.0",
    "measured_floor": "10.12",
    "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/ICUConverter.framework/Versions/64.2/ICUConverter",
+   "measured_floor_tied": 30,
    "unreadable_macho": 0,
    "exe_archs": [
     "x86_64"
@@ -41,14 +43,15 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": false,
    "asar_integrity": false,
-   "measured_from": "/Users/taggie/JoshCode/HPClickRepack-local/packages/extracted/HPClick-3.7.83/HP Click.app",
-   "hp_still_serves": true
+   "measured_from": "HPClick-3.7.83/HP Click.app"
   },
   {
    "version": "4.4.59",
+   "floor_tested": false,
    "declared_floor": "10.10.0",
    "measured_floor": "10.12",
    "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/ICUConverter.framework/Versions/64.2/ICUConverter",
+   "measured_floor_tied": 30,
    "unreadable_macho": 0,
    "exe_archs": [
     "x86_64"
@@ -81,14 +84,15 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": false,
    "asar_integrity": false,
-   "measured_from": "/Users/taggie/JoshCode/HPClickRepack-local/packages/extracted/HPClick-4.4.59/HP Click.app",
-   "hp_still_serves": true
+   "measured_from": "HPClick-4.4.59/HP Click.app"
   },
   {
    "version": "4.5.21",
+   "floor_tested": false,
    "declared_floor": "10.10.0",
    "measured_floor": "10.12",
    "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/ICUConverter.framework/Versions/64.2/ICUConverter",
+   "measured_floor_tied": 30,
    "unreadable_macho": 0,
    "exe_archs": [
     "x86_64"
@@ -121,14 +125,15 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": false,
    "asar_integrity": false,
-   "measured_from": "/Users/taggie/JoshCode/HPClickRepack-local/packages/extracted/HPClick-4.5.21/HP Click.app",
-   "hp_still_serves": true
+   "measured_from": "HPClick-4.5.21/HP Click.app"
   },
   {
    "version": "4.6.47",
+   "floor_tested": false,
    "declared_floor": "10.10.0",
    "measured_floor": "10.12",
    "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/ICUConverter.framework/Versions/64.2/ICUConverter",
+   "measured_floor_tied": 30,
    "unreadable_macho": 0,
    "exe_archs": [
     "x86_64"
@@ -161,14 +166,15 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": false,
    "asar_integrity": false,
-   "measured_from": "/Users/taggie/JoshCode/HPClickRepack-local/packages/extracted/HPClick-4.6.47/HP Click.app",
-   "hp_still_serves": true
+   "measured_from": "HPClick-4.6.47/HP Click.app"
   },
   {
    "version": "4.8.117",
+   "floor_tested": false,
    "declared_floor": "12.0",
    "measured_floor": "15.0",
    "measured_floor_from": "Contents/Resources/app/appData/macx/lib/libmagic.1.dylib",
+   "measured_floor_tied": 1,
    "unreadable_macho": 0,
    "exe_archs": [
     "x86_64"
@@ -191,14 +197,15 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": true,
    "asar_integrity": true,
-   "measured_from": "/Applications/4.8.117 HP Click.app",
-   "hp_still_serves": true
+   "measured_from": "Applications/4.8.117 HP Click.app"
   },
   {
    "version": "4.8.118",
+   "floor_tested": false,
    "declared_floor": "12.0",
    "measured_floor": "15.0",
    "measured_floor_from": "Contents/Resources/app/appData/macx/lib/libmagic.1.dylib",
+   "measured_floor_tied": 1,
    "unreadable_macho": 0,
    "exe_archs": [
     "x86_64"
@@ -229,14 +236,15 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": true,
    "asar_integrity": true,
-   "measured_from": "/Applications/4.8.118 HP Click.app",
-   "hp_still_serves": true
+   "measured_from": "Applications/4.8.118 HP Click.app"
   },
   {
    "version": "4.10.42",
+   "floor_tested": false,
    "declared_floor": "12.0",
    "measured_floor": "15.0",
    "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/libcrypto.3.dylib",
+   "measured_floor_tied": 11,
    "unreadable_macho": 0,
    "exe_archs": [
     "x86_64"
@@ -267,14 +275,15 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": true,
    "asar_integrity": true,
-   "measured_from": "/Applications/HP Click.app",
-   "hp_still_serves": true
+   "measured_from": "Applications/HP Click.app"
   },
   {
    "version": "4.11.31",
+   "floor_tested": false,
    "declared_floor": "12.0",
    "measured_floor": "15.0",
    "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/libcrypto.3.dylib",
+   "measured_floor_tied": 11,
    "unreadable_macho": 0,
    "exe_archs": [
     "arm64",
@@ -306,11 +315,7 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": true,
    "asar_integrity": true,
-   "measured_from": "/Applications/4.11.31 HP Click.app",
-   "hp_still_serves": true
+   "measured_from": "Applications/4.11.31 HP Click.app"
   }
- ],
- "$skipped": [
-  "/Applications/4.8.117 HP Click (Apple Silicon).app: ValueError: /Applications/4.8.117 HP Click (Apple Silicon).app is a ClickGraft output (arm64-only executable), not a stock bundle"
  ]
 }

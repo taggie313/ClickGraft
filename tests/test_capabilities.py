@@ -227,3 +227,50 @@ def test_macos_accepts_a_string_or_a_short_tuple():
     assert C.runs_on(row, (12, 0)) is True
     assert C.runs_on(row, (12, 0, 0)) is True
     assert C.runs_on(row, "11.7") is False
+
+
+def test_you_do_not_graft_a_graft():
+    """A finished copy answers "graftable" to every signal blockers() reads.
+
+    Its Electron is the replacement and its addons carry arm64, so the only thing
+    that distinguishes it is is_stock -- and until 26 Sep 2026 this returned True
+    for a copy that was already built.
+    """
+    graft = {"is_stock": False, "blockers": [], "electron": "39.8.4", "hp_native": False}
+    stock = {"is_stock": True, "blockers": [], "electron": "39.8.4", "hp_native": False}
+    assert C.graftable_version(graft) is False
+    assert C.graftable_version(stock) is True
+
+
+def test_the_shipped_table_stores_nothing_network_derived():
+    """clickgraft/ is compared against the sources a tag committed.
+
+    A stored "does HP still serve this" would turn re-checking it into
+    invalidating a release, which is what CLAUDE.md step 4 is about and what a
+    stale printers-4.8.117.json in this same directory already cost once.
+    """
+    for row in RECORDED:
+        assert "hp_still_serves" not in row, row["version"]
+    assert C.availability.__doc__ and "never recorded" in C.availability.__doc__
+
+
+def test_no_floor_has_been_tested_and_the_table_says_so():
+    for row in RECORDED:
+        assert row["floor_tested"] is False, row["version"]
+    for row in C.table():
+        assert row["floor_tested"] is False
+
+
+def test_the_tie_count_is_recorded_because_one_filename_misleads():
+    """Thirty files tie at 10.12 in the old builds; naming one reads as though
+    a single library were the obstacle."""
+    by_version = {r["version"]: r for r in RECORDED}
+    if "4.6.47" in by_version:
+        assert by_version["4.6.47"]["measured_floor_tied"] > 1
+    for row in RECORDED:
+        assert row["measured_floor_tied"] >= 1, row["version"]
+
+
+def test_recommend_does_not_touch_the_network_unless_asked():
+    got = C.recommend(printer="T730", macos="10.14")
+    assert got["obtainable"] is None, "the default must not reach for the network"

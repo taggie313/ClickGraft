@@ -35,44 +35,23 @@ from clickgraft import graftable, macos_floor                      # noqa: E402
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "clickgraft", "data", "capabilities.json")
 
-# HP publishes these at a path no HP page links to; a version that 404s here is
-# recorded as unobtainable rather than left blank, because "HP still has it" is
-# the difference between advice someone can act on and a dead end.
-HP_DARWIN = "https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-%s.zip"
-
-
 def _measured_floor(app):
-    """(version string, the file that set it, count of unreadable Mach-Os)."""
+    """(version string, the file that set it, how many tie, unreadable count).
+
+    bundle_minimums() breaks ties by path, so the named file is stable across
+    runs -- but thirty files tie at 10.12 in the old builds and eleven at 15.0 in
+    4.10.42, so the count goes in the row: one filename reads as though one
+    library were the obstacle.
+    """
     found, unreadable = macos_floor.bundle_minimums(app)
     if not found:
-        return None, None, len(unreadable)
+        return None, None, 0, len(unreadable)
     rel, version = found[0]
-    return macos_floor.format_version(version), rel, len(unreadable)
+    tied = sum(1 for _, v in found if v == version)
+    return macos_floor.format_version(version), rel, tied, len(unreadable)
 
 
-def _obtainable(version, timeout=30):
-    """True/False for "HP still serves this", or None when the check itself failed.
-
-    None and False are different answers and the table keeps them apart: a
-    timeout on a hotel connection must not be recorded as HP having deleted a
-    build.
-    """
-    try:
-        r = subprocess.run(
-            ["curl", "-4", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-             "-r", "0-0", "--max-time", str(timeout), HP_DARWIN % version],
-            capture_output=True, text=True, timeout=timeout + 10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    code = r.stdout.strip()
-    if code in ("200", "206"):
-        return True
-    if code == "404":
-        return False
-    return None
-
-
-def measure(app, reference_names, check_hp=True):
+def measure(app, reference_names):
     with open(os.path.join(app, "Contents", "Info.plist"), "rb") as f:
         info = plistlib.load(f)
     version = info.get("CFBundleShortVersionString")
@@ -94,13 +73,18 @@ def measure(app, reference_names, check_hp=True):
             addons[name] = sorted(get_archs(path))
 
     names = graftable._listed(app)
-    floor, floor_from, unreadable = _measured_floor(app)
+    floor, floor_from, tied, unreadable = _measured_floor(app)
 
     row = {
         "version": version,
+        # No build in this project has been launched on a Mac at its floor. False
+        # everywhere is the point: it keeps the untested claim visible to table()
+        # and to the site instead of only to whoever reads a docstring.
+        "floor_tested": False,
         "declared_floor": str(info.get("LSMinimumSystemVersion") or ""),
         "measured_floor": floor,
         "measured_floor_from": floor_from,
+        "measured_floor_tied": tied,
         "unreadable_macho": unreadable,
         "exe_archs": exe_archs,
         "addon_archs": addons,
@@ -115,10 +99,11 @@ def measure(app, reference_names, check_hp=True):
         "third_party_whitelist": os.path.isfile(
             os.path.join(app, "Contents", "Resources", "ThirdPartyWhitelist.xml")),
         "asar_integrity": "ElectronAsarIntegrity" in info,
-        "measured_from": app,
+        # The last two components only. A full path would put the maintainer's
+        # home directory into a file that ships in a public repository, and
+        # "which copy was this" needs no more than the folder and the bundle.
+        "measured_from": "/".join(os.path.normpath(app).split(os.sep)[-2:]),
     }
-    if check_hp and version:
-        row["hp_still_serves"] = _obtainable(version)
     return row
 
 
@@ -126,8 +111,6 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("bundles", nargs="+", help="stock HP Click.app bundles to measure")
     ap.add_argument("--out", default=DATA)
-    ap.add_argument("--no-network", action="store_true",
-                    help="skip the 'HP still serves this' check")
     args = ap.parse_args(argv)
 
     reference = os.path.join(os.path.dirname(DATA), f"printers-{graftable.REFERENCE_VERSION}.json")
@@ -136,7 +119,7 @@ def main(argv=None):
     rows, failed = [], []
     for app in args.bundles:
         try:
-            row = measure(app, reference_names, check_hp=not args.no_network)
+            row = measure(app, reference_names)
         except Exception as e:                                      # noqa: BLE001
             failed.append(f"{app}: {type(e).__name__}: {e}")
             print(f"  skipped {app}\n    {type(e).__name__}: {e}", file=sys.stderr)
@@ -154,7 +137,9 @@ def main(argv=None):
             "Do not hand-edit: re-run the script and commit its diff. "
             "declared_floor is what HP's Info.plist claims; measured_floor is the highest "
             "minimum any Mach-O inside declares, and the two disagree in both directions -- "
-            "the old builds understate by two minors, 4.8.117 and later by three majors."),
+            "the old builds understate by two minors, 4.8.117 and later by three majors. "
+            "Whether HP still serves a version is deliberately NOT here: it is a fact about "
+            "HP's server today, and this tree is compared against the sources a tag committed."),
         "reference_version": graftable.REFERENCE_VERSION,
         "versions": rows,
     }

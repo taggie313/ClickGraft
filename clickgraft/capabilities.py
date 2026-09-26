@@ -69,6 +69,34 @@ def _load():
         return {"versions": [], "reference_version": graftable.REFERENCE_VERSION}
 
 
+def availability(version, timeout=20):
+    """Does HP still serve this version? True, False, or None if the check failed.
+
+    Asked over the network, never recorded. Whether HP still serves a build is a
+    fact about HP's server today, not about the build -- and clickgraft/ is one of
+    the trees packaging/check_release.py compares against the sources a tag
+    committed, so a stored answer turns "re-check availability" into "invalidate
+    the release". A stale printers-4.8.117.json in that same directory is what
+    put the data files inside the gate in the first place.
+
+    None and False stay apart: a timeout must not be read as HP having deleted a
+    build.
+    """
+    import subprocess
+    url = ("https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/"
+           f"HPClick-{version}.zip")
+    try:
+        r = subprocess.run(["curl", "-4", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                            "-r", "0-0", "--max-time", str(timeout), url],
+                           capture_output=True, text=True, timeout=timeout + 10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    code = r.stdout.strip()
+    if code in ("200", "206"):
+        return True
+    return False if code == "404" else None
+
+
 def recorded(version=None):
     """The measured table, or one version's row, or None if not recorded.
 
@@ -220,6 +248,11 @@ def graftable_version(cap):
     there was nothing to read. A version HP already ships natively needs no
     graft, and says so as False with hp_native True beside it.
     """
+    if cap.get("is_stock") is False:
+        # Already grafted. Its Electron is the replacement and its addons carry
+        # arm64, so every signal blockers() reads says "graftable" -- which is
+        # how this reported True for a finished copy until 26 Sep 2026.
+        return False
     if cap.get("hp_native"):
         return False
     blockers = cap.get("blockers")
@@ -317,7 +350,7 @@ def _no_answer(printer, macos, rows, blocked):
     return f"{printer} is listed only by releases ruled out for this Mac"
 
 
-def recommend(printer=None, macos=None, apple_silicon=None):
+def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
     """Which HP Click this person should run, and what it costs them.
 
     Returns a dict:
@@ -388,7 +421,7 @@ def recommend(printer=None, macos=None, apple_silicon=None):
         "why": why,
         "needs_graft": graft,
         "needs_rosetta": bool(translated) and not graft,
-        "obtainable": best.get("hp_still_serves"),
+        "obtainable": availability(best["version"]) if check_hp else None,
         "blocked": blocked,
         "alternatives": [r["version"] for r in fits[1:]],
     }
@@ -407,6 +440,6 @@ def table():
             "printers": row.get("printer_count"),
             "graftable": graftable_version(row),
             "hp_native": row.get("hp_native"),
-            "hp_still_serves": row.get("hp_still_serves"),
+            "floor_tested": row.get("floor_tested", False),
         })
     return out

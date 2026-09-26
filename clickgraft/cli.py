@@ -191,7 +191,8 @@ def cmd_capabilities(args):
         return
 
     if args.printer or args.macos:
-        got = capabilities.recommend(printer=args.printer, macos=args.macos)
+        got = capabilities.recommend(printer=args.printer, macos=args.macos,
+                                     check_hp=args.check_hp)
         if got["version"]:
             print(f"[+] Run HP Click {got['version']}")
             print(f"    {got['why']}")
@@ -280,6 +281,8 @@ def main():
     cap_p.add_argument("--app", help="Describe one bundle instead of the recorded table")
     cap_p.add_argument("--printer", help="Printer model, e.g. T730, to get a recommendation")
     cap_p.add_argument("--macos", help="macOS version to assume, e.g. 10.14 (default: this Mac)")
+    cap_p.add_argument("--check-hp", action="store_true",
+                       help="ask HP whether it still serves the recommended version")
 
     subparsers.add_parser("gui", help="Open the ClickGraft app")
 
