@@ -343,6 +343,26 @@ Recognised by the main executable and the Electron framework both carrying arm64
 alongside x86_64; a ClickGraft copy has arm64 alone. The printer sentence is
 computed from the app's own list against 4.8.117's and left out when it is empty.
 
+**The printer sentence, when HP Click has printers configured** *(since the
+capability matrix)*. The list above is eight models long and left the reader to
+work out whether one of them was theirs. HP Click keeps the printers it is set up
+for in its own `printers.json`, so the wizard can say it. Their printer is not
+listed by the build they have:
+
+> Except for your printer. The DesignJet T750 36-in isn't listed by HP Click
+> 4.11.31, so keep HP Click 4.8.117 — which does list it — and make a ClickGraft
+> copy of it.
+
+Their printer is fine:
+
+> Your DesignJet T1600dr is listed by HP Click 4.11.31, so there is nothing you
+> need from ClickGraft.
+
+Read through `printerinfo.collect()`, whose allowlist is why this is safe:
+`productName` is a model, not a serial, an address, or a name the user typed. It
+never leaves the Mac — it decides what this sentence says. With no printer
+configured, the eight-model sentence above is shown unchanged.
+
 **Too-old block** — shown instead of the report offer, because no report or update
 can help:
 
@@ -359,6 +379,34 @@ can help:
 The printer sentence is computed from their app against 4.8.117's list; if a
 printer would be lost it is named instead, and if the list can't be read the
 sentence is left out.
+
+**Which version it sends them to** *(since the capability matrix)*. This was
+always 4.8.117, the oldest ClickGraft supports. That is right for a plotter only
+4.8.117 lists, and needlessly roundabout for a shop whose printer HP's own
+4.11.31 drives natively — they were told to fetch an older HP Click and make a
+copy when they needed neither. The version is now chosen for the printers this Mac
+is configured for, and the sentence about a copy follows it:
+
+> **HP Click 4.6.47 can't be made native, by any version of ClickGraft.**
+> ClickGraft works by switching on the Apple Silicon code HP already builds into
+> its app, and this version has none. A report or an update won't change that. A
+> newer HP Click will: 4.11.31 is still free on HP's servers, and HP builds it for
+> Apple Silicon itself, so you won't need a copy at all. It lists your DesignJet
+> T1600dr.
+
+When no released HP Click lists one of their printers, it is named rather than
+dropped:
+
+> One thing it cannot do: it doesn't list the DesignJet T750 36-in, and no
+> released HP Click does.
+
+Without a configured printer, or without the recorded table, both panels keep the
+wording above them exactly as it was.
+
+**What is not claimed.** No HP Click below 12.0 has been launched on a Mac at its
+floor by this project, so no panel says a version will run — only that HP lists it
+and what it accepts. `floor_tested` is recorded as false in every row of the table
+for that reason.
 
 **Note:** show unsupported apps rather than hiding them. Someone who sees only
 one of their three HP Clicks assumes the tool is broken. Showing them greyed with

@@ -87,7 +87,9 @@ from clickgraft.macos_floor import (MacOSTooOldError, declared_minimum, floor_re
                                     too_old_message)
 from clickgraft.macho import get_archs
 from clickgraft.manifest import ManifestManager
+from clickgraft import capabilities
 from clickgraft.printerinfo import as_text as printer_text
+from clickgraft.printerinfo import collect as printer_facts
 from clickgraft.probe import probe_app_bundle
 from clickgraft.verify import VerifyError, processes_inside, verify_app_bundle
 
@@ -245,6 +247,64 @@ def environment(mm):
     }
 
 
+def configured_printers(config=None):
+    """The models this Mac's HP Click is set up for, newest config wins.
+
+    HP Click keeps them in its own printers.json, so the wizard can answer "does
+    the version I am sending you to actually drive your plotter" without asking.
+    Read through printerinfo.collect(), whose allowlist is the reason this is
+    safe: productName is a model, not a serial, an address or a display name the
+    user typed. Nothing here leaves the Mac -- it decides what a panel says.
+    """
+    facts = printer_facts(config)
+    if not facts.get("available"):
+        return []
+    out = []
+    for printer in facts.get("printers") or []:
+        name = printer.get("productName")
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def capability_advice(path, this_mac=None, config=None):
+    """Which HP Click this Mac should run instead of the one at `path`.
+
+    The old answer to "this cannot be grafted" was the reference version and the
+    printers moving to it would cost. That is the right answer for a shop whose
+    plotter 4.8.117 lists, and the wrong one for a 4.11.31 owner with a T750,
+    who was told a version number with no way to tell whether it drives their
+    printer. So the recommendation is now made against the printers this Mac is
+    configured for.
+
+    None when there is no table to reason from, so a caller can leave its panel
+    exactly as it was.
+    """
+    if not capabilities.recorded():
+        return None
+    printers = configured_printers(config)
+    got = capabilities.recommend(printer=printers, macos=this_mac)
+    if not got.get("version"):
+        return {
+            "recommend": None,
+            "why": got["why"],
+            "needs_graft": None,
+            "printers": printers,
+            "unlisted": got.get("unlisted") or [],
+            "floor_tested": False,
+        }
+    return {
+        "recommend": got["version"],
+        "why": got["why"],
+        "needs_graft": got["needs_graft"],
+        "printers": printers,
+        "unlisted": got.get("unlisted") or [],
+        # No build in this project has been launched on a Mac at its floor, and a
+        # panel that implies otherwise would be the tool overclaiming.
+        "floor_tested": False,
+    }
+
+
 def candidates(mm):
     """Every HP Click bundle found, with enough detail for the user to choose.
 
@@ -312,6 +372,13 @@ def candidates(mm):
             entry["blockers"] = blocked
             entry["reference_version"] = graftable.REFERENCE_VERSION
             entry["printers_lost"] = graftable.printers_lost_by_moving(path)
+        # Both panels above name a version and leave the user to work out whether
+        # it drives their plotter. The advice answers that from the printers this
+        # Mac is configured for; absent, it is omitted and the panel is unchanged.
+        if reason in ("hp_native", "cannot_graft"):
+            advice = capability_advice(path)
+            if advice:
+                entry["advice"] = advice
         out.append(entry)
     return out
 

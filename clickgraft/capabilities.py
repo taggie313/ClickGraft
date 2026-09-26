@@ -353,6 +353,12 @@ def _no_answer(printer, macos, rows, blocked):
 def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
     """Which HP Click this person should run, and what it costs them.
 
+    `printer` is one model or a list of them. A shop with a T1600 and a T750 has
+    to be answered about both: the newest release that lists all of them wins,
+    and when nothing lists all of them the one covering the most is returned with
+    `unlisted` naming what it misses, because silently answering about the first
+    printer in the list would tell a T750 owner their plotter is covered.
+
     Returns a dict:
         version        the release to run, or None when nothing recorded fits
         why            one sentence, in terms of what was given
@@ -380,15 +386,21 @@ def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
             from clickgraft.hostarch import is_apple_silicon
             apple_silicon = is_apple_silicon()
 
+    wanted = [printer] if isinstance(printer, str) else list(printer or [])
     rows = [r for r in recorded() if r.get("version")]
-    fits, blocked = [], []
+    fits, blocked, partial = [], [], []
     for row in rows:
         version = row["version"]
         if runs_on(row, macos) is False:
             blocked.append((version, f"needs macOS {row.get('declared_floor')}"))
             continue
-        if printer and lists_printer(row, printer) is False:
-            blocked.append((version, f"does not list {printer}"))
+        missing = [p for p in wanted if lists_printer(row, p) is False]
+        if missing:
+            blocked.append((version, "does not list " + ", ".join(missing)))
+            # Kept as a fallback: covering three of four printers is a real
+            # answer, as long as the fourth is named.
+            if len(missing) < len(wanted):
+                partial.append((len(missing), row, missing))
             continue
         translated = needs_translation(row, apple_silicon)
         if translated and rosetta_available(macos) is False:
@@ -397,18 +409,30 @@ def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
                 continue
         fits.append(row)
 
-    fits.sort(key=lambda r: [int(p) for p in r["version"].split(".")], reverse=True)
+    def _newest(rows_):
+        return sorted(rows_, key=lambda r: [int(p) for p in r["version"].split(".")],
+                      reverse=True)
+
+    fits = _newest(fits)
+    unlisted = []
+    if not fits and partial:
+        fewest = min(n for n, _, _ in partial)
+        best_partial = _newest([r for n, r, _ in partial if n == fewest])
+        fits = best_partial
+        unlisted = next(m for n, r, m in partial if r is fits[0])
     if not fits:
-        return {"version": None, "why": _no_answer(printer, macos, rows, blocked),
+        return {"version": None,
+                "why": _no_answer(wanted[0] if len(wanted) == 1 else None, macos, rows, blocked),
                 "needs_graft": None, "needs_rosetta": None, "obtainable": None,
-                "blocked": blocked, "alternatives": []}
+                "unlisted": wanted, "blocked": blocked, "alternatives": []}
 
     best = fits[0]
     translated = needs_translation(best, apple_silicon)
     graft = bool(translated and graftable_version(best) is True)
     bits = []
-    if printer:
-        bits.append(f"lists {printer}")
+    listed = [p for p in wanted if p not in unlisted]
+    if listed:
+        bits.append("lists " + ", ".join(listed))
     if macos:
         bits.append(f"runs on macOS {macos_floor.format_version(macos)}")
     if best.get("hp_native"):
@@ -422,6 +446,7 @@ def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
         "needs_graft": graft,
         "needs_rosetta": bool(translated) and not graft,
         "obtainable": availability(best["version"]) if check_hp else None,
+        "unlisted": unlisted,
         "blocked": blocked,
         "alternatives": [r["version"] for r in fits[1:]],
     }

@@ -1124,7 +1124,22 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          + "nothing for ClickGraft to do. Use it as it is. It doesn't need "
                          + "Rosetta, so it will keep working on future versions of macOS."),
             ]
-            if let dropped = native["printers_dropped"] as? [String], !dropped.isEmpty {
+            // The printer sentence, said about THEIR printer when HP Click has
+            // one configured. The dropped list is eight models long and left the
+            // reader to work out whether one of them was theirs; the advice knows,
+            // because agent.capability_advice asked HP Click's own printers.json.
+            let advice = native["advice"] as? [String: Any]
+            let mine = advice?["printers"] as? [String] ?? []
+            let better = advice?["recommend"] as? String
+            if !mine.isEmpty, let better = better, better != ver {
+                parts.append(UI.small("Except for your printer. \(printerList(mine)) "
+                    + (mine.count == 1 ? "isn't" : "aren't") + " listed by \(theirs), so keep "
+                    + "HP Click \(better) — which does list "
+                    + (mine.count == 1 ? "it" : "them") + " — and make a ClickGraft copy of it."))
+            } else if !mine.isEmpty {
+                parts.append(UI.small("Your \(printerList(mine)) is listed by \(theirs), so "
+                    + "there is nothing you need from ClickGraft."))
+            } else if let dropped = native["printers_dropped"] as? [String], !dropped.isEmpty {
                 parts.append(UI.small("One exception: \(theirs) doesn't support the "
                     + printerList(dropped) + ". If you print to one of those, "
                     + "keep HP Click \(ref), which does, and make a ClickGraft copy of it."))
@@ -1144,9 +1159,26 @@ final class Wizard: NSObject, NSApplicationDelegate {
         if let old = candidates.first(where: { ($0["reason"] as? String ?? "") == "cannot_graft" }) {
             let ver = old["version"] as? String ?? ""
             let theirs = ver.isEmpty ? "this HP Click" : "HP Click \(ver)"
-            let ref = old["reference_version"] as? String ?? "4.8.117"
+            // Which version to send them to. This was always 4.8.117, the oldest
+            // ClickGraft supports -- correct for a plotter only 4.8.117 lists, and
+            // needlessly roundabout for a T1600 shop, who can run HP's own
+            // 4.11.31 natively and needs no copy at all. The advice picks by the
+            // printers this Mac is configured for; without it, the old answer.
+            let advice = old["advice"] as? [String: Any]
+            let mine = advice?["printers"] as? [String] ?? []
+            let suggested = advice?["recommend"] as? String
+            let ref = suggested ?? (old["reference_version"] as? String ?? "4.8.117")
+            let needsCopy = (advice?["needs_graft"] as? Bool) ?? true
             var printers = ""
-            if let lost = old["printers_lost"] as? [String] {
+            if !mine.isEmpty {
+                let unlisted = advice?["unlisted"] as? [String] ?? []
+                if unlisted.isEmpty {
+                    printers = " It lists your \(printerList(mine))."
+                } else {
+                    printers = " One thing it cannot do: it doesn't list "
+                        + printerList(unlisted) + ", and no released HP Click does."
+                }
+            } else if let lost = old["printers_lost"] as? [String] {
                 printers = lost.isEmpty
                     ? " It accepts every printer \(theirs) does."
                     : " Check one thing first: \(ref) no longer lists "
@@ -1157,7 +1189,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          "ClickGraft works by switching on the Apple Silicon code HP already "
                          + "builds into its app, and this version has none. A report or an "
                          + "update won't change that. A newer HP Click will: \(ref) is still "
-                         + "free on HP's servers, and ClickGraft works with it." + printers),
+                         + "free on HP's servers, and "
+                         + (needsCopy
+                            ? "ClickGraft works with it."
+                            : "HP builds it for Apple Silicon itself, so you won't need a copy at all.")
+                         + printers),
             ]
             if let found = old["blockers"] as? [String], !found.isEmpty {
                 parts.append(UI.small("What ClickGraft found: " + found.joined(separator: " ")))
