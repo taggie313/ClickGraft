@@ -1,0 +1,316 @@
+{
+ "$comment": "Measured by packaging/measure_capabilities.py from stock HP Click bundles. Do not hand-edit: re-run the script and commit its diff. declared_floor is what HP's Info.plist claims; measured_floor is the highest minimum any Mach-O inside declares, and the two disagree in both directions -- the old builds understate by two minors, 4.8.117 and later by three majors.",
+ "reference_version": "4.8.117",
+ "versions": [
+  {
+   "version": "3.7.83",
+   "declared_floor": "10.10.0",
+   "measured_floor": "10.12",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/ICUConverter.framework/Versions/64.2/ICUConverter",
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "x86_64"
+    ]
+   },
+   "electron": "8.2.3",
+   "hp_native": false,
+   "blockers": [
+    "It is built on Electron 8.2.3, and Electron had no Apple Silicon build before version 11.",
+    "HP's DjCoreServicesNative-Electron.node and DjConnServicesNative-Electron.node are Intel-only in this version."
+   ],
+   "printer_count": 107,
+   "printers_missing_vs_reference": [
+    "HP DesignJet T310 24-in",
+    "HP DesignJet T320 24-in",
+    "HP DesignJet T350 24-in",
+    "HP DesignJet T720 24-in",
+    "HP DesignJet T720 36-in",
+    "HP DesignJet T750 24-in",
+    "HP DesignJet T750 36-in",
+    "HP DesignJet T870 24-in",
+    "HP DesignJet XL 3600 MFP",
+    "HP DesignJet XT870 24-in"
+   ],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": false,
+   "asar_integrity": false,
+   "measured_from": "/Users/taggie/JoshCode/HPClickRepack-local/packages/extracted/HPClick-3.7.83/HP Click.app",
+   "hp_still_serves": true
+  },
+  {
+   "version": "4.4.59",
+   "declared_floor": "10.10.0",
+   "measured_floor": "10.12",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/ICUConverter.framework/Versions/64.2/ICUConverter",
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "x86_64"
+    ]
+   },
+   "electron": "8.2.3",
+   "hp_native": false,
+   "blockers": [
+    "It is built on Electron 8.2.3, and Electron had no Apple Silicon build before version 11.",
+    "HP's DjCoreServicesNative-Electron.node and DjConnServicesNative-Electron.node are Intel-only in this version."
+   ],
+   "printer_count": 109,
+   "printers_missing_vs_reference": [
+    "HP DesignJet T310 24-in",
+    "HP DesignJet T320 24-in",
+    "HP DesignJet T350 24-in",
+    "HP DesignJet T720 24-in",
+    "HP DesignJet T720 36-in",
+    "HP DesignJet T750 24-in",
+    "HP DesignJet T750 36-in",
+    "HP DesignJet XL 3600 MFP"
+   ],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": false,
+   "asar_integrity": false,
+   "measured_from": "/Users/taggie/JoshCode/HPClickRepack-local/packages/extracted/HPClick-4.4.59/HP Click.app",
+   "hp_still_serves": true
+  },
+  {
+   "version": "4.5.21",
+   "declared_floor": "10.10.0",
+   "measured_floor": "10.12",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/ICUConverter.framework/Versions/64.2/ICUConverter",
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "x86_64"
+    ]
+   },
+   "electron": "8.2.3",
+   "hp_native": false,
+   "blockers": [
+    "It is built on Electron 8.2.3, and Electron had no Apple Silicon build before version 11.",
+    "HP's DjCoreServicesNative-Electron.node and DjConnServicesNative-Electron.node are Intel-only in this version."
+   ],
+   "printer_count": 109,
+   "printers_missing_vs_reference": [
+    "HP DesignJet T310 24-in",
+    "HP DesignJet T320 24-in",
+    "HP DesignJet T350 24-in",
+    "HP DesignJet T720 24-in",
+    "HP DesignJet T720 36-in",
+    "HP DesignJet T750 24-in",
+    "HP DesignJet T750 36-in",
+    "HP DesignJet XL 3600 MFP"
+   ],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": false,
+   "asar_integrity": false,
+   "measured_from": "/Users/taggie/JoshCode/HPClickRepack-local/packages/extracted/HPClick-4.5.21/HP Click.app",
+   "hp_still_serves": true
+  },
+  {
+   "version": "4.6.47",
+   "declared_floor": "10.10.0",
+   "measured_floor": "10.12",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/ICUConverter.framework/Versions/64.2/ICUConverter",
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "x86_64"
+    ]
+   },
+   "electron": "8.2.3",
+   "hp_native": false,
+   "blockers": [
+    "It is built on Electron 8.2.3, and Electron had no Apple Silicon build before version 11.",
+    "HP's DjCoreServicesNative-Electron.node and DjConnServicesNative-Electron.node are Intel-only in this version."
+   ],
+   "printer_count": 109,
+   "printers_missing_vs_reference": [
+    "HP DesignJet T310 24-in",
+    "HP DesignJet T320 24-in",
+    "HP DesignJet T350 24-in",
+    "HP DesignJet T720 24-in",
+    "HP DesignJet T720 36-in",
+    "HP DesignJet T750 24-in",
+    "HP DesignJet T750 36-in",
+    "HP DesignJet XL 3600 MFP"
+   ],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": false,
+   "asar_integrity": false,
+   "measured_from": "/Users/taggie/JoshCode/HPClickRepack-local/packages/extracted/HPClick-4.6.47/HP Click.app",
+   "hp_still_serves": true
+  },
+  {
+   "version": "4.8.117",
+   "declared_floor": "12.0",
+   "measured_floor": "15.0",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/lib/libmagic.1.dylib",
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ]
+   },
+   "electron": "39.8.4",
+   "hp_native": false,
+   "blockers": [],
+   "printer_count": 117,
+   "printers_missing_vs_reference": [],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": true,
+   "asar_integrity": true,
+   "measured_from": "/Applications/4.8.117 HP Click.app",
+   "hp_still_serves": true
+  },
+  {
+   "version": "4.8.118",
+   "declared_floor": "12.0",
+   "measured_floor": "15.0",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/lib/libmagic.1.dylib",
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ]
+   },
+   "electron": "39.8.4",
+   "hp_native": false,
+   "blockers": [],
+   "printer_count": 110,
+   "printers_missing_vs_reference": [
+    "HP DesignJet T310 24-in",
+    "HP DesignJet T320 24-in",
+    "HP DesignJet T350 24-in",
+    "HP DesignJet T720 24-in",
+    "HP DesignJet T720 36-in",
+    "HP DesignJet T750 24-in",
+    "HP DesignJet T750 36-in"
+   ],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": true,
+   "asar_integrity": true,
+   "measured_from": "/Applications/4.8.118 HP Click.app",
+   "hp_still_serves": true
+  },
+  {
+   "version": "4.10.42",
+   "declared_floor": "12.0",
+   "measured_floor": "15.0",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/libcrypto.3.dylib",
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ]
+   },
+   "electron": "39.8.4",
+   "hp_native": false,
+   "blockers": [],
+   "printer_count": 110,
+   "printers_missing_vs_reference": [
+    "HP DesignJet T310 24-in",
+    "HP DesignJet T320 24-in",
+    "HP DesignJet T350 24-in",
+    "HP DesignJet T720 24-in",
+    "HP DesignJet T720 36-in",
+    "HP DesignJet T750 24-in",
+    "HP DesignJet T750 36-in"
+   ],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": true,
+   "asar_integrity": true,
+   "measured_from": "/Applications/HP Click.app",
+   "hp_still_serves": true
+  },
+  {
+   "version": "4.11.31",
+   "declared_floor": "12.0",
+   "measured_floor": "15.0",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/libcrypto.3.dylib",
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "arm64",
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ]
+   },
+   "electron": "39.8.4",
+   "hp_native": true,
+   "blockers": [],
+   "printer_count": 110,
+   "printers_missing_vs_reference": [
+    "HP DesignJet T310 24-in",
+    "HP DesignJet T320 24-in",
+    "HP DesignJet T350 24-in",
+    "HP DesignJet T720 24-in",
+    "HP DesignJet T720 36-in",
+    "HP DesignJet T750 24-in",
+    "HP DesignJet T750 36-in"
+   ],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": true,
+   "asar_integrity": true,
+   "measured_from": "/Applications/4.11.31 HP Click.app",
+   "hp_still_serves": true
+  }
+ ],
+ "$skipped": [
+  "/Applications/4.8.117 HP Click (Apple Silicon).app: ValueError: /Applications/4.8.117 HP Click (Apple Silicon).app is a ClickGraft output (arm64-only executable), not a stock bundle"
+ ]
+}

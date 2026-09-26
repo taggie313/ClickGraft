@@ -167,6 +167,65 @@ def cmd_probe(args):
         sys.exit(1)
 
 
+def cmd_capabilities(args):
+    """What each recorded HP Click can do, and which one this person needs."""
+    from clickgraft import capabilities
+
+    if args.app:
+        cap = capabilities.of_bundle(args.app)
+        if cap is None:
+            print(f"[ERROR] Not a readable app bundle: {args.app}")
+            sys.exit(1)
+        print(f"[+] {args.app}")
+        print(f"    version        {cap['version'] or '?'}"
+              f"{'' if cap['is_stock'] else '   (a ClickGraft copy, not a stock HP build)'}")
+        print(f"    declared floor {cap['declared_floor'] or '?'}")
+        print(f"    architectures  {'+'.join(cap['exe_archs']) or '?'}")
+        print(f"    electron       {cap['electron'] or '?'}")
+        print(f"    printers       {cap['printer_count'] if cap['printer_count'] is not None else '?'}")
+        graft = capabilities.graftable_version(cap)
+        answer = "yes" if graft else "no" if graft is False else "don't know"
+        print(f"    graftable      {answer}")
+        for reason in cap["blockers"]:
+            print(f"                   {reason}")
+        return
+
+    if args.printer or args.macos:
+        got = capabilities.recommend(printer=args.printer, macos=args.macos)
+        if got["version"]:
+            print(f"[+] Run HP Click {got['version']}")
+            print(f"    {got['why']}")
+            if got["needs_graft"]:
+                print("    ClickGraft has to make an Apple Silicon copy of it first")
+            if got["needs_rosetta"]:
+                print("    It will run under Rosetta")
+            if got["obtainable"] is False:
+                print("    HP no longer serves this version")
+            if got["alternatives"]:
+                print(f"    also fits: {', '.join(got['alternatives'])}")
+        else:
+            print(f"[!] No HP Click fits: {got['why']}")
+            for version, reason in got["blocked"]:
+                print(f"    {version:<9} {reason}")
+        return
+
+    rows = capabilities.table()
+    if not rows:
+        print("No capability table recorded. Build one with:"
+              "  python3 packaging/measure_capabilities.py <bundle> ...")
+        sys.exit(1)
+    head = f"{'version':<9} {'needs':<9} {'libraries':<10} {'architectures':<14} {'electron':<9} {'printers':<9} graft"
+    print(head)
+    print("-" * len(head))
+    for r in rows:
+        graft = "yes" if r["graftable"] else "HP native" if r["hp_native"] else \
+                "no" if r["graftable"] is False else "?"
+        print(f"{r['version']:<9} {r['declared_floor']:<9} {r['library_floor']:<10} "
+              f"{r['archs']:<14} {r['electron']:<9} {str(r['printers']):<9} {graft}")
+    print("\n'needs' is the floor macOS enforces; 'libraries' is the highest any library inside")
+    print("declares, which is an upper bound and not a tested requirement.")
+
+
 def cmd_gui(args):
     """Open the native app. When running from a source checkout there is no
     bundle to open, so point the user at the built one."""
@@ -215,6 +274,13 @@ def main():
     probe_p.add_argument("--out-manifest", help="Path to save draft manifest JSON file")
 
     # gui
+    # capabilities
+    cap_p = subparsers.add_parser("capabilities",
+                                  help="What each HP Click version can do, and which one you need")
+    cap_p.add_argument("--app", help="Describe one bundle instead of the recorded table")
+    cap_p.add_argument("--printer", help="Printer model, e.g. T730, to get a recommendation")
+    cap_p.add_argument("--macos", help="macOS version to assume, e.g. 10.14 (default: this Mac)")
+
     subparsers.add_parser("gui", help="Open the ClickGraft app")
 
     ap = subparsers.add_parser("agent", help="JSON interface used by the native app")
@@ -233,6 +299,8 @@ def main():
         cmd_verify(args)
     elif args.subcommand == "probe":
         cmd_probe(args)
+    elif args.subcommand == "capabilities":
+        cmd_capabilities(args)
     elif args.subcommand == "agent":
         cmd_agent(args)
     else:
