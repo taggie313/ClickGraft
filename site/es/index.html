@@ -145,6 +145,10 @@ footer p { margin: 0 0 .7em; }
       <li><b>Seguir con la 4.10.42 o la 4.8.118 por ahora.</b> <span>ClickGraft
           sigue haciendo que funcionen a toda velocidad.</span></li>
     </ul>
+    <p class="disclaim">Si tu Mac no es compatible con macOS&nbsp;12, ClickGraft no es
+       para ti y no lo necesitas &mdash; pero la página de HP te dará igualmente una
+       versión que no arranca. <a href="#oldmacos">Qué HP&nbsp;Click funciona en un Mac
+       antiguo</a>.</p>
   </section>
 
   <p class="lede">Hasta septiembre de 2026, HP Click para Mac era una aplicación
@@ -302,6 +306,84 @@ repositorio</a> (en inglés).</p>
   error. Parece que no ha arrancado. Cierra una antes de abrir la otra.</p>
 </div>
 
+<h2 id="oldmacos">Si tu Mac no es compatible con macOS&nbsp;12</h2>
+
+<p><strong>La página de descargas de HP te dará una versión que no puede
+arrancar.</strong> Si eliges ahí macOS&nbsp;11 o anterior, te ofrece la 4.8.117, y la
+4.8.117 necesita macOS&nbsp;12: no arranca en macOS&nbsp;11 ni en nada más antiguo,
+diga lo que diga la página. Y HP no ofrece ninguna otra: su lista de versiones
+anteriores está vacía para todos los macOS que menciona. Es un callejón sin salida, y
+lo crea la propia página de HP.</p>
+
+<p><strong>HP sí sigue sirviendo versiones que funcionan en un Mac antiguo</strong>, en
+el directorio que usa su actualizador, al que no enlaza ninguna página de HP. El
+26&nbsp;de septiembre de 2026 se comprobaron diez y las diez respondieron: 3.7.83,
+3.7.85, 4.0.57, 4.0.59, 4.1.178, 4.3.27, 4.3.29, 4.4.59, 4.5.21 y 4.6.47. Todas
+declaran macOS&nbsp;10.10. <strong>La más reciente es la 4.6.47</strong>, publicada el
+29&nbsp;de enero de 2026, y es la que conviene usar: las demás son más antiguas sin
+ninguna ventaja.</p>
+
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr><th>Versión</th><th>Aplicación (.zip)</th><th></th></tr>
+  </thead>
+  <tbody>
+    <tr><td>4.6.47</td>
+        <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.6.47.zip">descargar</a></td>
+        <td>La más reciente que funciona por debajo de macOS&nbsp;12. Empieza por esta.</td></tr>
+    <tr><td>4.5.21</td>
+        <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.5.21.zip">descargar</a></td>
+        <td>Una versión anterior, si la 4.6.47 te da problemas.</td></tr>
+    <tr><td>3.7.83</td>
+        <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-3.7.83.zip">descargar</a></td>
+        <td>La HP&nbsp;Click para Mac más antigua que sigue existiendo en algún sitio.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="disclaim">Unos 320&nbsp;MB cada una. Son la aplicación, no un instalador:
+descomprímela y arrástrala donde quieras. Son versiones de HP, firmadas por HP y
+notarizadas &mdash; y conviene que lo compruebes tú, porque nada de esta ruta pasa por
+una página de HP: descomprime con <span class="mono">ditto -x -k</span> y ejecuta
+<span class="mono">spctl -a -vv</span> sobre el resultado. Debe decir
+<em>accepted</em>, de <em>Developer ID Application: HP Inc.</em></p>
+
+<p><strong>Qué se sabe y qué no.</strong> Todas las versiones mínimas de arriba son lo
+que la aplicación declara de sí misma. Si en vez de eso se miran las bibliotecas que
+lleva dentro, la más exigente pide macOS&nbsp;10.12, así que Sierra o posterior es la
+respuesta realista y 10.10 o 10.11 es dudoso. Nada de esto está probado: en este
+proyecto nadie tiene un Mac tan antiguo, así que ninguna de estas versiones se ha
+abierto en uno. Si lo intentas, <a href="#contacto">cuéntanos qué pasó</a> y este
+párrafo podrá dejar de andarse con rodeos.</p>
+
+<div class="panel warn">
+  <h3>Las cinco impresoras no tienen solución en un Mac antiguo</h3>
+  <p>Si imprimes en una <strong>DesignJet T310, T320, T350, T720 o T750</strong> y tu
+  Mac no es compatible con macOS&nbsp;12, no hay ninguna versión de HP&nbsp;Click para
+  ti. No una incómoda: ninguna.</p>
+  <p>Esas cinco aparecen en la <strong>4.8.117 y en ninguna otra versión</strong>. HP
+  las añadió en la 4.8.117 y las quitó en la 4.8.118, y todas las versiones anteriores
+  llevan 109 entradas sin ellas &mdash; se abrieron la 4.6.47, la 4.5.21, la 4.4.59 y
+  la 3.7.83 y se contaron sus listas. Así que la única versión que maneja esas
+  impresoras es la que necesita macOS&nbsp;12, y las únicas que funcionan en tu Mac son
+  las que nunca las incluyeron.</p>
+  <p>ClickGraft tampoco lo salva. Necesita macOS&nbsp;15, así que no funcionará en tu
+  Mac &mdash; y no serviría de nada si lo hiciera: el injerto existe para que una
+  aplicación Intel funcione bien en un Mac con Apple&nbsp;Silicon, y un Mac que no
+  admite macOS&nbsp;12 es un Mac Intel, donde HP&nbsp;Click ya funciona de forma
+  nativa. El problema que resuelve el injerto no es el que tienes.</p>
+  <p>Queda un Mac más nuevo, o imprimir sin HP&nbsp;Click: macOS puede manejar estas
+  impresoras directamente por AirPrint o IPP, lo que te deja sin el anidado ni el
+  aprovechamiento del rollo, pero imprime.</p>
+</div>
+
+<p><strong>Una cosa de la que no tienes que preocuparte:</strong> que te actualicen y
+te quiten una versión que funciona. El actualizador de HP para Mac nunca ha sido capaz
+de instalar nada &mdash; su ayudante de instalación falla por un componente que no
+viene en la aplicación, y en el registro de un Mac había 1.366 fallos seguidos. El
+servidor de HP seguirá anunciando la 4.8.118 y tu copia seguirá ignorándola.</p>
+
 <h2>Más detalle, en inglés</h2>
 
 <p>Esta página es un resumen. La <a href="../">página completa en inglés</a>
@@ -309,7 +391,7 @@ incluye cómo verificar la descarga con
 <span class="mono">spctl</span> y con la huella SHA-256, la tabla de versiones de
 HP con enlaces de descarga directos, y cómo ponerse en contacto.</p>
 
-<h2>Contacto</h2>
+<h2 id="contacto">Contacto</h2>
 
 <p>Lo más rápido es desde dentro de ClickGraft: al terminar ofrece
 <em>Share how it went</em> y <em>Report a problem</em>, y los dos llevan lo que
