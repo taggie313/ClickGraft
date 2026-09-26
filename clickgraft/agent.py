@@ -282,8 +282,18 @@ def capability_advice(this_mac=None, config=None):
     """
     if not capabilities.recorded():
         return None
-    printers = configured_printers(config)
-    got = capabilities.recommend(printer=printers, macos=this_mac)
+    try:
+        printers = configured_printers(config)
+        got = capabilities.recommend(printer=printers, macos=this_mac)
+    except Exception:                                              # noqa: BLE001
+        # This runs inside candidates(), which builds the wizard's FIRST screen.
+        # An exception here escapes main() before anything is emitted, and the
+        # wizard shows "couldn't start" with no way even to pick a bundle -- for a
+        # panel that is only ever an extra sentence. Measured 27 Sep 2026: a
+        # capabilities.json whose "versions" is not a list did exactly that.
+        # Advice is the one thing here that is better absent than fatal, and both
+        # panels are already written to fall back without it.
+        return None
     if not got.get("version"):
         return {
             "recommend": None,

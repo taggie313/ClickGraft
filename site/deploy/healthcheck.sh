@@ -41,6 +41,19 @@ check "GET /$ZIPFILE.sha256" 200 "$(code "$BASE/$ZIPFILE.sha256")"
 check "POST /report"         200 "$(code -X POST --data-binary 'healthcheck' "$BASE/report")"
 check "GET /stats (must 404)" 404 "$(code "$BASE/stats/report.html")"
 
+# The Spanish page. It had never been checked here, and three deploys in one day
+# passed while it went unrequested -- the same shape of gap as the one in the
+# header comment, where everything reported success and the one unchecked thing
+# was broken. It is a separate file with its own stylesheet and its own templated
+# placeholders, so it can break on its own, and it is half of what is published.
+check "GET /es/"             200 "$(code "$BASE/es/")"
+# A page that 200s while still holding {{VERSION}} is worse than one that 404s:
+# it looks fine and tells the reader to download a file called {{ZIP_NAME}}.
+for page in / /es/; do
+  left=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE$page" | grep -c '{{[A-Z_]*}}')
+  check "no placeholders left in $page" 0 "$left"
+done
+
 # The advertised version must match the download's actual hash, or the update
 # check tells people to fetch something that isn't there.
 adv=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/appcast.json" | sed -n 's/.*"sha256": "\([a-f0-9]*\)".*/\1/p')

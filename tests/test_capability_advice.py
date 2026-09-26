@@ -132,3 +132,60 @@ def test_two_printers_with_no_answer_blames_the_printers_not_the_mac():
     assert got["version"] is None
     assert "T750" in got["why"] and "T310" in got["why"]
     assert got["why"] != "no recorded release runs on macOS 10.14"
+
+
+def _env_lines(monkeypatch, table_bytes):
+    """Run `agent env` with a given capabilities.json and count what it emitted."""
+    import contextlib, io, pathlib
+    real = pathlib.Path(capabilities.__file__).parent / "data" / "capabilities.json"
+    backup = real.read_bytes()
+    buf, raised = io.StringIO(), None
+    try:
+        real.write_bytes(table_bytes)
+        try:
+            with contextlib.redirect_stdout(buf):
+                agent.main(["env"])
+        except Exception as e:                                     # noqa: BLE001
+            raised = f"{type(e).__name__}: {e}"
+    finally:
+        real.write_bytes(backup)
+    return raised, [l for l in buf.getvalue().strip().splitlines() if l]
+
+
+@pytest.mark.parametrize("label,blob", [
+    ("not JSON at all", b"{ this is not json"),
+    ("rows missing every key", b'{"reference_version":"4.8.117","versions":[{"nope":1}]}'),
+    ("versions is not a list", b'{"reference_version":"4.8.117","versions":"oops"}'),
+    ("a field has the wrong type", b'{"reference_version":"4.8.117","versions":[{"version":"4.8.117","declared_floor":12}]}'),
+])
+def test_a_bad_table_never_costs_the_wizard_its_first_screen(monkeypatch, label, blob):
+    """candidates() builds the FIRST screen, so nothing here may raise.
+
+    An exception escapes main() before a single line is emitted and the wizard
+    shows "couldn't start", with no way even to choose a bundle -- for a panel
+    that is only ever one extra sentence. The "versions is not a list" case did
+    exactly that until 27 Sep 2026.
+    """
+    raised, lines = _env_lines(monkeypatch, blob)
+    assert raised is None, f"{label}: {raised}"
+    assert len(lines) == 1, f"{label}: emitted {len(lines)} lines, wanted exactly 1"
+    payload = json.loads(lines[0])
+    assert payload["type"] == "env"
+    assert "candidates" in payload
+
+
+def test_the_advice_is_simply_absent_when_the_table_is_bad():
+    """And the panels fall back to the wording they had before the advice existed."""
+    import contextlib, io, pathlib
+    real = pathlib.Path(capabilities.__file__).parent / "data" / "capabilities.json"
+    backup = real.read_bytes()
+    try:
+        real.write_bytes(b'{"reference_version":"4.8.117","versions":"oops"}')
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            agent.main(["env"])
+        payload = json.loads(buf.getvalue().strip().splitlines()[0])
+    finally:
+        real.write_bytes(backup)
+    for entry in payload["candidates"]:
+        assert "advice" not in entry, "advice must be omitted, not half-filled"
