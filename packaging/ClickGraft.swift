@@ -1168,7 +1168,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
             let mine = advice?["printers"] as? [String] ?? []
             let suggested = advice?["recommend"] as? String
             let ref = suggested ?? (old["reference_version"] as? String ?? "4.8.117")
+            // Three states, not two. needs_graft false means "no copy needed",
+            // which on an Intel Mac is true of every release and says nothing
+            // about who compiled it -- reading it as "HP ships this natively"
+            // told an Intel Mac with a T750 that 4.8.117, an Intel-only build,
+            // was built for Apple Silicon.
             let needsCopy = (advice?["needs_graft"] as? Bool) ?? true
+            let recIsNative = (advice?["recommend_hp_native"] as? Bool) ?? false
             var printers = ""
             if !mine.isEmpty {
                 let unlisted = advice?["unlisted"] as? [String] ?? []
@@ -1190,9 +1196,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          + "builds into its app, and this version has none. A report or an "
                          + "update won't change that. A newer HP Click will: \(ref) is still "
                          + "free on HP's servers, and "
-                         + (needsCopy
-                            ? "ClickGraft works with it."
-                            : "HP builds it for Apple Silicon itself, so you won't need a copy at all.")
+                         + (recIsNative
+                            ? "HP builds it for Apple Silicon itself, so you won't need a copy at all."
+                            : needsCopy
+                              ? "ClickGraft works with it."
+                              : "it runs natively on this Mac, so you won't need a copy at all.")
                          + printers),
             ]
             if let found = old["blockers"] as? [String], !found.isEmpty {

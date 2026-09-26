@@ -319,7 +319,7 @@ def printers(cap):
     return sorted((ref - set(missing)) | set(extra))
 
 
-def _no_answer(printer, macos, rows, blocked):
+def _no_answer(wanted, macos, rows, blocked):
     """Say *why* there is no answer, because this is the case that matters most.
 
     A DesignJet T310/T320/T350/T720/T750 owner on macOS 10.14 is the dead end
@@ -330,10 +330,15 @@ def _no_answer(printer, macos, rows, blocked):
     it out.
     """
     here = f"macOS {macos_floor.format_version(macos)}" if macos else "this macOS"
-    if not printer:
+    if not wanted:
         return f"no recorded release runs on {here}"
+    # Every printer at once, not the first one. Called with a single printer or
+    # None, a two-plotter shop was told "no recorded release runs on macOS 10.14"
+    # -- blaming their Mac for what is a printer problem, which is the one thing
+    # the sentence below exists to avoid.
+    printer = ", ".join(wanted)
 
-    listing = [r for r in rows if lists_printer(r, printer) is True]
+    listing = [r for r in rows if all(lists_printer(r, p) is True for p in wanted)]
     if not listing:
         known = any(lists_printer(r, printer) is not None for r in rows)
         if not known:
@@ -422,8 +427,9 @@ def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
         unlisted = next(m for n, r, m in partial if r is fits[0])
     if not fits:
         return {"version": None,
-                "why": _no_answer(wanted[0] if len(wanted) == 1 else None, macos, rows, blocked),
+                "why": _no_answer(wanted, macos, rows, blocked),
                 "needs_graft": None, "needs_rosetta": None, "obtainable": None,
+                "hp_native": None,
                 "unlisted": wanted, "blocked": blocked, "alternatives": []}
 
     best = fits[0]
@@ -443,11 +449,19 @@ def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
     return {
         "version": best["version"],
         "why": why,
+        # Distinct from needs_graft. On an Intel Mac nothing needs translating, so
+        # needs_graft is False for every release -- and a caller inferring "HP
+        # ships this for Apple Silicon" from it said exactly that about 4.8.117,
+        # an Intel-only build, to anyone on an Intel Mac with a T750.
+        "hp_native": bool(best.get("hp_native")),
         "needs_graft": graft,
         "needs_rosetta": bool(translated) and not graft,
         "obtainable": availability(best["version"]) if check_hp else None,
         "unlisted": unlisted,
-        "blocked": blocked,
+        # Never the answer itself. The partial-coverage fallback promotes a row
+        # that was rejected for a printer it misses, so without this a panel can
+        # render "Run 4.11.31" directly above "4.11.31 - does not list ...".
+        "blocked": [(v, why_not) for v, why_not in blocked if v != best["version"]],
         "alternatives": [r["version"] for r in fits[1:]],
     }
 

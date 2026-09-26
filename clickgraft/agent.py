@@ -267,7 +267,7 @@ def configured_printers(config=None):
     return out
 
 
-def capability_advice(path, this_mac=None, config=None):
+def capability_advice(this_mac=None, config=None):
     """Which HP Click this Mac should run instead of the one at `path`.
 
     The old answer to "this cannot be grafted" was the reference version and the
@@ -288,6 +288,7 @@ def capability_advice(path, this_mac=None, config=None):
         return {
             "recommend": None,
             "why": got["why"],
+            "recommend_hp_native": None,
             "needs_graft": None,
             "printers": printers,
             "unlisted": got.get("unlisted") or [],
@@ -296,6 +297,8 @@ def capability_advice(path, this_mac=None, config=None):
     return {
         "recommend": got["version"],
         "why": got["why"],
+        # Who compiled it, kept apart from whether a copy is needed.
+        "recommend_hp_native": got.get("hp_native"),
         "needs_graft": got["needs_graft"],
         "printers": printers,
         "unlisted": got.get("unlisted") or [],
@@ -376,7 +379,7 @@ def candidates(mm):
         # it drives their plotter. The advice answers that from the printers this
         # Mac is configured for; absent, it is omitted and the panel is unchanged.
         if reason in ("hp_native", "cannot_graft"):
-            advice = capability_advice(path)
+            advice = capability_advice()
             if advice:
                 entry["advice"] = advice
         out.append(entry)
