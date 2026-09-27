@@ -189,3 +189,45 @@ def test_the_advice_is_simply_absent_when_the_table_is_bad():
         real.write_bytes(backup)
     for entry in payload["candidates"]:
         assert "advice" not in entry, "advice must be omitted, not half-filled"
+
+
+def test_the_overview_is_actually_present_when_the_table_is_fine():
+    """The guard around capability_overview() returns None on ANY failure, which
+    means a bug inside it disables the reference screen silently and forever.
+
+    That happened while writing it: agent.py imports macos_floor's names rather
+    than the module, so a call through `macos_floor.` raised NameError and the
+    guard turned it into "no table", with nothing to see. This test is the alarm.
+    """
+    import contextlib, io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        agent.main(["env"])
+    payload = json.loads(buf.getvalue().strip().splitlines()[0])
+    caps = payload.get("capabilities")
+    assert caps is not None, "the overview went missing — a guard is hiding a bug"
+    assert caps["table"], "the table is empty"
+    assert caps["recommended"], "no version recommended"
+    assert caps["your_macos"], "this Mac's macOS was not reported"
+    assert caps["floor_tested"] is False
+
+
+def test_every_table_row_carries_somewhere_to_get_it():
+    for row in capabilities.table():
+        assert row["download"]["zip"].endswith(f"HPClick-{row['version']}.zip")
+        assert row["download"]["dmg"].endswith(f"HPClick-{row['version']}.dmg")
+        assert row["download"]["zip"].startswith("https://ftp.hp.com/")
+
+
+def test_download_urls_needs_a_version():
+    assert capabilities.download_urls(None) is None
+    assert capabilities.download_urls("") is None
+
+
+def test_a_bad_table_costs_the_overview_but_not_the_screen():
+    raised, lines = _env_lines(None, b'{"reference_version":"4.8.117","versions":"oops"}')
+    assert raised is None
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["capabilities"] is None, "should degrade to no reference, not half a one"
+    assert "candidates" in payload, "and the wizard still gets its first screen"

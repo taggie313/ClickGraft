@@ -408,6 +408,50 @@ floor by this project, so no panel says a version will run — only that HP list
 and what it accepts. `floor_tested` is recorded as false in every row of the table
 for that reason.
 
+### Which HP Click you should run — new screen, reached from Choose
+
+*(since the capability matrix)* Everything a user needed to **know** — which
+version their printer needs, what macOS each one wants, where to get one HP will
+not serve — lived only on the website. Somebody who already installed the app does
+not go back to a website, so it went unread by exactly the people it was written
+for. Reached from a `Which one do I need?` button on Choose, which is only offered
+when the backend has a table to show.
+
+> **Which HP Click you should run**
+>
+> This Mac: macOS 27.0.  Your printer: DesignJet T1600dr PostScript Printer.
+>
+> > **Run HP Click 4.11.31.** 4.11.31 lists HP DesignJet T1600dr PostScript
+> > Printer, runs on macOS 27.0, and HP ships it for Apple Silicon.
+> >
+> > `Get 4.11.31 from HP`
+>
+> ```
+>   version  needs macOS printers Apple Silicon
+>   3.7.83   10.10.0     107      cannot be copied
+>   4.6.47   10.10.0     109      cannot be copied
+>   4.8.117  12.0        117      ClickGraft can copy it
+> → 4.11.31  12.0        110      HP builds it
+> ```
+>
+> "Needs macOS" is the minimum each build declares, which is what macOS enforces
+> when you open it. No build below macOS 12 has been started on a Mac that old by
+> this project, so those rows are read from the build and not tested.
+
+The arrow marks the recommendation. The download button hands over the `.zip`
+rather than the website, because the zip is the application itself and is the only
+form some of these were ever published in — 4.8.118 was never a `.dmg`, and
+4.10.42's was removed from HP's page.
+
+Monospaced because it is a table and alignment is the only thing making it
+readable. **Pad the columns in code, not with a format width:** `%@` silently
+ignores field widths in CFString formatting, so `"%-9@"` compiles, runs, and
+produces every column jammed against the next.
+
+**What it must not say.** That a version will run. Every floor here is a
+declaration, and nothing below macOS 12 has been launched on hardware that old by
+anyone on this project.
+
 **Note:** show unsupported apps rather than hiding them. Someone who sees only
 one of their three HP Clicks assumes the tool is broken. Showing them greyed with
 a reason answers the question before it's asked.

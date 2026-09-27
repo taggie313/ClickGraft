@@ -318,6 +318,44 @@ def capability_advice(this_mac=None, config=None):
     }
 
 
+def capability_overview(this_mac=None, config=None):
+    """Everything a reference screen needs, or None if there is no table.
+
+    The wizard used to be an installer, and anything a user needed to KNOW --
+    which version their printer needs, which macOS each one wants, where to get
+    one HP will not serve -- lived on the website. People who already have the app
+    installed do not go back to a website, so it went unread. This is that
+    reference, handed over in the env reply the wizard already asks for.
+
+    Rides in `env` rather than a subcommand of its own: the whole thing is about
+    3 KB, while a second query costs another interpreter start and another
+    resolve_output() side effect for a panel that is a table.
+
+    Never raises, for the reason capability_advice() does not: this is assembled
+    while building the wizard's first screen.
+    """
+    try:
+        if not capabilities.recorded():
+            return None
+        printers = configured_printers(config)
+        got = capabilities.recommend(printer=printers, macos=this_mac)
+        return {
+            "table": capabilities.table(),
+            "recommended": got.get("version"),
+            "why": got.get("why"),
+            "needs_graft": got.get("needs_graft"),
+            "unlisted": got.get("unlisted") or [],
+            # What the recommendation was made from, so the screen can say "your
+            # printer" and "your Mac" instead of leaving the reader to trust it.
+            "your_printers": printers,
+            "your_macos": format_version(
+                capabilities._as_version(this_mac) if this_mac else host_macos()),
+            "floor_tested": False,
+        }
+    except Exception:                                              # noqa: BLE001
+        return None
+
+
 def candidates(mm):
     """Every HP Click bundle found, with enough detail for the user to choose.
 
@@ -735,6 +773,7 @@ def main(argv):
 
     if cmd == "env":
         emit({"type": "env", "env": environment(mm), "candidates": candidates(mm),
+              "capabilities": capability_overview(),
               "default_output": default_out,
               # The interface has to be able to say WHY the path is unusual.
               # A copy appearing in the home folder instead of /Applications,

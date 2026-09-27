@@ -445,7 +445,7 @@ def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
         bits.append("and HP ships it for Apple Silicon")
     elif graft:
         bits.append("and ClickGraft can make an Apple Silicon copy")
-    why = f"{best['version']} {', '.join(bits)}" if bits else best["version"]
+    why = f"{best['version']} {', '.join(bits)}." if bits else best["version"]
     return {
         "version": best["version"],
         "why": why,
@@ -466,6 +466,30 @@ def recommend(printer=None, macos=None, apple_silicon=None, check_hp=False):
     }
 
 
+# Where HP serves each build. Composed rather than recorded: which URL exists is a
+# fact about HP's servers today, the same reason availability() is a function and
+# not a column. The updater directory is the one no HP page links to, and it is the
+# only place some of these exist at all.
+_HP_ZIP = ("https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/"
+           "HPClick-%s.zip")
+_HP_DMG = ("https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/"
+           "HPClick-%s.dmg")
+
+
+def download_urls(version):
+    """Where to get a version: {"zip": url, "dmg": url}.
+
+    Both are always composed, never checked here -- a wizard panel must not block
+    on the network to draw itself, and availability() exists for when someone
+    wants the answer. The .zip is the application itself and is the only form some
+    versions were ever published in; 4.8.118 was never a .dmg at all and 4.10.42's
+    was removed, which is why the zip comes first.
+    """
+    if not version:
+        return None
+    return {"zip": _HP_ZIP % version, "dmg": _HP_DMG % version}
+
+
 def table():
     """Rows for the docs and the site: one per recorded version, display-ready."""
     out = []
@@ -480,5 +504,6 @@ def table():
             "graftable": graftable_version(row),
             "hp_native": row.get("hp_native"),
             "floor_tested": row.get("floor_tested", False),
+            "download": download_urls(row.get("version")),
         })
     return out

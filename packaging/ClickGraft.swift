@@ -214,6 +214,16 @@ enum UI {
         v.tint = tint
         v.wantsLayer = true
         v.translatesAutoresizingMaskIntoConstraints = false
+        // A panel insets its content by 14 a side, so the room inside it is
+        // narrower than the room outside. text() assumes the outside width, and a
+        // label laid out for 644pt inside a 632pt panel measures its own height
+        // for fewer lines than it draws -- the overflow is clipped, mid-sentence,
+        // and the app looks like it forgot how to finish a word. Seen on Choose,
+        // 27 Sep 2026: "so there is nothing you need from" and then nothing.
+        // Fixed here rather than in every caller, so it stays fixed.
+        for case let label as NSTextField in views {
+            label.preferredMaxLayoutWidth = width - (margin * 2) - 30
+        }
         let stack = vstack(views, spacing: 7)
         v.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -348,6 +358,12 @@ final class Wizard: NSObject, NSApplicationDelegate {
     var container: NSView!
 
     var candidates: [[String: Any]] = []
+    /// agent.capability_overview(): which HP Click this Mac and printer need, the
+    /// whole measured table, and where HP still serves each build. nil when the
+    /// backend has no table, in which case the reference screen is not offered --
+    /// people who already have the app installed do not go back to a website to
+    /// read this, which is the whole reason it is in here.
+    var capabilityOverview: [String: Any]?
     var picked: [String: Any]?
     var plan: [String: Any] = [:]
     var outputPath = ""
@@ -609,6 +625,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
         }
         env = e
         candidates = d["candidates"] as? [[String: Any]] ?? []
+        capabilityOverview = d["capabilities"] as? [String: Any]
         outputPath = d["default_output"] as? String ?? ""
         outputPerUser = d["output_per_user"] as? Bool ?? false
         leftovers = d["leftovers"] as? [[String: Any]] ?? []
@@ -1252,9 +1269,17 @@ final class Wizard: NSObject, NSApplicationDelegate {
         let next = UI.button("Continue", self, #selector(showReview), primary: true)
         next.isEnabled = false
         continueButton = next
-        present(rows, buttons: [UI.button("Back", self, #selector(showRequirements)),
-                                UI.button("Check again", self, #selector(rescan)),
-                                UI.spacer(), next])
+        var choiceButtons: [NSView] = [UI.button("Back", self, #selector(showRequirements)),
+                                       UI.button("Check again", self, #selector(rescan))]
+        // Offered only when there is a table to show, so the button never leads
+        // to an empty screen.
+        if capabilityOverview?["table"] != nil {
+            choiceButtons.append(UI.button("Which one do I need?", self,
+                                           #selector(showVersionReference)))
+        }
+        choiceButtons.append(UI.spacer())
+        choiceButtons.append(next)
+        present(rows, buttons: choiceButtons)
 
         let usableIdx = candidates.indices.filter { candidates[$0]["usable"] as? Bool ?? false }
         if usableIdx.count == 1 {
@@ -1279,6 +1304,7 @@ final class Wizard: NSObject, NSApplicationDelegate {
         let d = agent.once(["env"]) ?? [:]
         if (d["type"] as? String) == "env" {
             candidates = d["candidates"] as? [[String: Any]] ?? []
+            capabilityOverview = d["capabilities"] as? [String: Any]
             outputPath = d["default_output"] as? String ?? outputPath
             outputPerUser = d["output_per_user"] as? Bool ?? outputPerUser
             rescanProblem = nil
@@ -2777,6 +2803,99 @@ final class Wizard: NSObject, NSApplicationDelegate {
     /// supported build, and which printers each one drops. Not HP's DMG
     /// directly -- a 571 MB download that starts on a click, with no word about
     /// the choice between versions, is the wrong first thing to hand someone.
+    /// The measured version table, in the app rather than on the website.
+    ///
+    /// Everything a user needs to KNOW -- which version their printer needs, what
+    /// macOS each one wants, where to get one HP will not serve -- used to live only
+    /// on the site. Somebody who already installed the app does not go back to a
+    /// website, so it went unread by exactly the people it was written for.
+    ///
+    /// Read from the same measurements as the site and the recommendation, so the
+    /// three cannot disagree. Monospaced because it is a table and alignment is the
+    /// only thing making it readable; UI.text already does mono, so nothing new.
+    @objc func showVersionReference() {
+        guard let caps = capabilityOverview,
+              let table = caps["table"] as? [[String: Any]] else {
+            showChoose()
+            return
+        }
+        let mine = caps["your_printers"] as? [String] ?? []
+        let macos = caps["your_macos"] as? String ?? ""
+        let pick = caps["recommended"] as? String ?? ""
+        let unlisted = caps["unlisted"] as? [String] ?? []
+
+        var rows: [NSView] = [UI.title("Which HP Click you should run")]
+
+        // What the answer was worked out from, so it can be argued with rather
+        // than taken on trust.
+        var about = macos.isEmpty ? "" : "This Mac: macOS \(macos)."
+        if !mine.isEmpty {
+            about += (about.isEmpty ? "" : "  ") + "Your printer: " + printerList(mine) + "."
+        }
+        if !about.isEmpty { rows.append(UI.subtitle(about)) }
+
+        if !pick.isEmpty {
+            var says: [NSView] = [UI.point("Run HP Click \(pick).",
+                                           (caps["why"] as? String) ?? "")]
+            if (caps["needs_graft"] as? Bool) == true {
+                says.append(UI.small("ClickGraft makes the Apple Silicon copy of it. "
+                                     + "Choose it on the previous screen once it is installed."))
+            }
+            if !unlisted.isEmpty {
+                says.append(UI.small("It does not list " + printerList(unlisted)
+                                     + ", and no released HP Click does."))
+            }
+            says.append(UI.button("Get \(pick) from HP", self,
+                                  #selector(openRecommendedDownload)))
+            rows.append(UI.panel(says, tint: NSColor.systemBlue.withAlphaComponent(0.10)))
+        }
+
+        // Padded by hand, not with a format width: %@ silently ignores field
+        // widths in CFString formatting, so "%-9@" compiles, runs, and produces a
+        // table with every column jammed against the next. Measured, not assumed.
+        func pad(_ text: String, _ n: Int) -> String {
+            text.count >= n ? text + " "
+                            : text + String(repeating: " ", count: n - text.count)
+        }
+        func line(_ mark: String, _ v: String, _ floor: String,
+                  _ printers: String, _ story: String) -> String {
+            mark + pad(v, 9) + pad(floor, 12) + pad(printers, 9) + story
+        }
+        var lines = [line("  ", "version", "needs macOS", "printers", "Apple Silicon")]
+        for row in table {
+            let v = row["version"] as? String ?? "?"
+            let native = (row["hp_native"] as? Bool) == true
+            let graft = row["graftable"] as? Bool
+            let story = native ? "HP builds it"
+                      : graft == true ? "ClickGraft can copy it"
+                      : graft == false ? "cannot be copied" : "unknown"
+            lines.append(line(v == pick ? "\u{2192} " : "  ", v,
+                              row["declared_floor"] as? String ?? "?",
+                              String(describing: row["printers"] ?? "?"), story))
+        }
+        rows.append(UI.text(lines.joined(separator: "\n"), size: 11.5, mono: true))
+        rows.append(UI.small("\u{201C}Needs macOS\u{201D} is the minimum each build declares, "
+                             + "which is what macOS enforces when you open it. No build below "
+                             + "macOS 12 has been started on a Mac that old by this project, so "
+                             + "those rows are read from the build and not tested."))
+
+        present(rows, buttons: [UI.button("Back", self, #selector(showChoose)), UI.spacer(),
+                                UI.button("Done", self, #selector(showChoose), primary: true)])
+    }
+
+    /// Hand over the download rather than the website. The .zip is the application
+    /// itself and is the only form some of these were ever published in -- 4.8.118
+    /// was never a .dmg, and 4.10.42's was removed from HP's page.
+    @objc func openRecommendedDownload() {
+        guard let caps = capabilityOverview,
+              let pick = caps["recommended"] as? String,
+              let table = caps["table"] as? [[String: Any]],
+              let row = table.first(where: { ($0["version"] as? String) == pick }),
+              let dl = row["download"] as? [String: Any],
+              let zip = dl["zip"] as? String, let u = URL(string: zip) else { return }
+        NSWorkspace.shared.open(u)
+    }
+
     @objc func openVersionsPage() {
         if let u = URL(string: Wizard.versionsURL) { NSWorkspace.shared.open(u) }
     }
