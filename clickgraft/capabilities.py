@@ -30,7 +30,15 @@ LSMinimumSystemVersion, which Launch Services enforces: below it the app does no
 start, full stop. `library_floor` is the highest minimum any Mach-O inside
 declares, which is an upper bound on what the code might need and NOT a proven
 requirement -- stock 4.8.117 declares 12.0 while its bundled libmagic declares
-15.0, and whether it truly needs 15.0 has never been tested on a 12-14 machine.
+15.0. Measured 27 September 2026 against a real macOS 12.4 (21F79), mounted from
+a VM built for the purpose: every symbol imported by every file in 4.8.117 and in
+4.11.31 that declares 15.0 resolves there, against macOS itself or against HP's
+own bundled libraries. So the higher figure is a build artifact and the declared
+floor is honest -- which is what runs_on() already assumed, now on evidence
+rather than on caution. tools/symbols_on.py re-derives it, and refuses to run
+against a system new enough to make the answer meaningless. It proves nothing
+would stop those libraries LOADING; it is not a launch, and says nothing about
+behaviour or about anything reached through dlsym.
 Gating a launch decision on the library floor would wrongly refuse macOS 12 to a
 build HP ships for macOS 12, so runs_on() uses the declared floor and reports the
 library floor beside it as a caveat. macos_floor.plan_floor() is the one that

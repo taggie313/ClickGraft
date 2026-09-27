@@ -50,3 +50,8 @@ ag-review*.md
 
 # Benchmark-only Node tooling
 benchmarks/node_modules/
+
+# tools/macvm builds a binary and an .app wrapper beside its source; neither is
+# committed, and a VM bundle is 16 GB.
+tools/macvm
+tools/macvm.app/

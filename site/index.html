@@ -518,10 +518,13 @@ same measurements, so the two cannot disagree.</p>
 </div>
 
 <p class="disclaim">&ldquo;Needs macOS&rdquo; is the minimum each build declares, which is
-what macOS enforces when you open it. The libraries inside ask for more in every case
-&mdash; 15.0 in 4.8.117 and 4.11.31, 10.12 in 4.6.47 &mdash; and whether they really
-need it has never been tested, so the declared figure is the one used here and the other
-is recorded rather than acted on.</p>
+what macOS enforces when you open it. The libraries inside ask for more &mdash; 15.0 in
+4.8.117 and 4.11.31, 10.12 in 4.6.47 &mdash; which for years was a reason to hedge. It has
+now been checked: on a real macOS&nbsp;12.4, every symbol those 15.0 libraries import
+resolves, against macOS itself or against the libraries HP ships beside them. The 15.0 is
+how they were built, not what they need, so the declared figure is the one that counts.
+That is a check that they would load, not a print job &mdash; and the 10.12 in the older
+builds has had no equivalent test, because nothing here can run a Mac that old.</p>
 
 <h2 id="versions">Which versions work</h2>
 

@@ -423,10 +423,14 @@ ejecutas, a partir de las mismas mediciones, así que ninguno de los dos puede c
 </div>
 
 <p class="disclaim">«Necesita macOS» es el mínimo que declara cada versión, que es lo que
-macOS exige al abrirla. Las bibliotecas que llevan dentro piden más en todos los casos
-&mdash; 15.0 en la 4.8.117 y en la 4.11.31, y 10.12 en la 4.6.47 &mdash; y nunca se ha
-probado si de verdad lo necesitan, así que aquí se usa la cifra declarada y la otra queda
-anotada en vez de aplicada.</p>
+macOS exige al abrirla. Las bibliotecas que llevan dentro piden más &mdash; 15.0 en la
+4.8.117 y en la 4.11.31, y 10.12 en la 4.6.47 &mdash;, y durante mucho tiempo eso fue
+motivo para no afirmar nada. Ya está comprobado: en un macOS&nbsp;12.4 real, todos los
+símbolos que piden esas bibliotecas de 15.0 se resuelven, con el propio macOS o con las
+bibliotecas que HP pone junto a ellas. El 15.0 es cómo se compilaron, no lo que necesitan,
+así que la cifra que cuenta es la declarada. Es una comprobación de que cargarían, no de
+que impriman &mdash; y el 10.12 de las versiones antiguas no tiene una prueba equivalente,
+porque aquí no hay ningún Mac tan antiguo.</p>
 
 <h2 id="oldmacos">Si tu Mac no es compatible con macOS&nbsp;12</h2>
 
