@@ -25,9 +25,14 @@ import urllib.parse
 import urllib.request
 
 # What a build ACTUALLY needs from Apple's Command Line Tools, measured rather
-# than assumed. install_name_tool rewrites install names and adds the rpath the
-# APPE frameworks need, in both build modes; clang compiles the libpng NEON shim
-# and so only matters to a full graft.
+# than assumed. Exactly one thing is left: clang, which compiles the four-line
+# libpng NEON shim. That is on the full-graft path only, so a patch_only copy --
+# 4.11.31's frozen copy -- now needs no developer tool at all, and the only
+# reason the requirement has not gone entirely is that the backend itself runs
+# on /usr/bin/python3, which is the same shim.
+#
+# install_name_tool left this list on 27 September 2026 when macho_write.py
+# started rewriting install names and rpaths directly.
 #
 # The list this replaces named codesign, ditto and getconf -- all three are
 # base-OS binaries that are present on a Mac with no developer tools at all, so
@@ -44,7 +49,7 @@ import urllib.request
 #
 # lipo, otool, nm and vtool are gone from the list because they are gone from the
 # code -- clickgraft/macho_read.py reads the headers directly now.
-REQUIRED_CLT_TOOLS = ["install_name_tool", "clang"]
+REQUIRED_CLT_TOOLS = ["clang"]
 
 
 def check_clt():

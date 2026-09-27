@@ -20,7 +20,7 @@ def cmd_preflight(args):
     print("[+] === Running Preflight Checks ===")
     if not check_clt():
         print("[ERROR] Xcode Command Line Tools are missing or incomplete.")
-        print("Run 'xcode-select --install' to install the tools a build needs (install_name_tool, and clang for a full graft).")
+        print("Run 'xcode-select --install' to install clang, which a full graft needs to build the libpng shim.")
         sys.exit(1)
     print("[+] Xcode Command Line Tools: INSTALLED")
 

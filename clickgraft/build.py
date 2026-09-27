@@ -21,6 +21,7 @@ from clickgraft.asar import AsarArchive, patch_and_repack_asar
 from clickgraft.deps import _sha256_of, choose_bottles, fetch_electron, resolve_dylib
 from clickgraft.macos_floor import (exact_floor, floor_reasons, format_version,
                                     plan_floor, refuse_if_too_old, stamp_minimum)
+from clickgraft import macho_write
 from clickgraft.macho import get_load_dylibs, run_cmd
 from clickgraft.patches import PatchEngine
 from clickgraft.signing import sign_bundle
@@ -941,7 +942,7 @@ def _build_apple_silicon_bundle(
                     os.remove(dst_dylib)
                 shutil.copy2(src_dylib, dst_dylib)
                 os.chmod(dst_dylib, 0o755)
-                run_cmd(["install_name_tool", "-id", f"@rpath/{d_name}", dst_dylib])
+                macho_write.set_dylib_id(dst_dylib, f"@rpath/{d_name}")
 
             # Supply png_init_filter_functions_neon, which HP references and nobody
             # provides.
@@ -979,7 +980,7 @@ def _build_apple_silicon_bundle(
                     for dep in get_load_dylibs(dst_d):
                         if dep.startswith("/opt/homebrew") or dep.startswith("/usr/local"):
                             dep_name = os.path.basename(dep)
-                            run_cmd(["install_name_tool", "-change", dep, f"@rpath/{dep_name}", dst_d], check=False)
+                            macho_write.change_dylib_path(dst_d, dep, f"@rpath/{dep_name}")
 
             # 6. Rewrite Qt5 install names to @rpath across native modules
             _log("Rewriting Qt5 install names to @rpath...", 0.60)
@@ -991,7 +992,7 @@ def _build_apple_silicon_bundle(
                         for dep in get_load_dylibs(fp):
                             for qlib in qt_libs:
                                 if dep.endswith(qlib) and not dep.startswith("@rpath/"):
-                                    run_cmd(["install_name_tool", "-change", dep, f"@rpath/{qlib}", fp], check=False)
+                                    macho_write.change_dylib_path(fp, dep, f"@rpath/{qlib}")
 
         # 7. Update Bundle Identifiers in Info.plist files
         _log("Updating bundle identifiers...", 0.65)

@@ -19,7 +19,9 @@ Target: Python 3.9+ (Standard Library only)
 import os
 import subprocess
 import tempfile
+from clickgraft import macho_write
 from clickgraft.macho import get_rpaths, is_macho
+from clickgraft.macho_read import MachOError
 
 ENTITLEMENTS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -65,23 +67,23 @@ def _codesign(args, path, bundle):
 
 
 def _add_rpath(path, bundle, notes):
-    """Give an APPE framework binary the @loader_path/.. rpath it needs."""
-    r = _run(["install_name_tool", "-add_rpath", "@loader_path/..", path])
-    if r.returncode == 0:
-        return
-    # Optional in exactly one case: the rpath is already there, which is what
-    # this step is for. get_rpaths() reads every slice together, so a slice
-    # that already had it slips past the check in sign_bundle and lands here:
-    # "would duplicate path, file already has LC_RPATH for: @loader_path/.."
-    # (install_name_tool, 22 Sep 2026).
-    if "would duplicate path" in (r.stderr or ""):
-        notes.append(f"{_where(path, bundle)} already had the @loader_path/.. rpath")
-        return
-    said = (r.stderr or r.stdout or "").strip() or f"no output, exit status {r.returncode}"
-    raise SigningError(
-        f"Signing failed: install_name_tool could not add the @loader_path/.. rpath "
-        f"to {_where(path, bundle)}, which the print engine's frameworks need to "
-        f"find each other.\ninstall_name_tool said: {said}")
+    """Give an APPE framework binary the @loader_path/.. rpath it needs.
+
+    Written directly rather than through install_name_tool, which is one of the
+    seven xcrun shims this project is trying to stop requiring. The duplicate
+    case is now a fact rather than a parsed error message: add_rpath() returns
+    False when every slice already carries it, where install_name_tool exited
+    non-zero and had to be told apart from a real failure by looking for
+    "would duplicate path" in its stderr.
+    """
+    try:
+        if not macho_write.add_rpath(path, "@loader_path/.."):
+            notes.append(f"{_where(path, bundle)} already had the @loader_path/.. rpath")
+    except (MachOError, OSError) as e:
+        raise SigningError(
+            f"Signing failed: could not add the @loader_path/.. rpath to "
+            f"{_where(path, bundle)}, which the print engine's frameworks need to "
+            f"find each other.\n{e}")
 
 
 def sign_bundle(app_bundle_path):
@@ -139,12 +141,15 @@ def sign_bundle(app_bundle_path):
                     fp = os.path.join(root, file_name)
                     if is_macho(fp):
                         # Not in a .dSYM. A dSYM companion holds debug symbols
-                        # and is never loaded, so it has no use for an rpath,
-                        # and install_name_tool cannot edit one: "string table
-                        # not at the end of the file (can't be processed)" on
-                        # AIDE.framework.dSYM in 4.8.117 and 4.10.42 (22 Sep
-                        # 2026). It failed there on every build up to 1.5.8,
-                        # unseen. It is still signed, as it always was.
+                        # and is never loaded, so it has no use for an rpath.
+                        # It also could not be given one: install_name_tool
+                        # reported "string table not at the end of the file
+                        # (can't be processed)" on AIDE.framework.dSYM in
+                        # 4.8.117 and 4.10.42 (22 Sep 2026), and failed there on
+                        # every build up to 1.5.8, unseen. That second reason is
+                        # now history -- macho_write has no such limit -- but
+                        # the first still holds, so the exclusion stays. It is
+                        # still signed, as it always was.
                         if ".framework" in fp and ".dSYM" + os.sep not in fp:
                             rpaths = get_rpaths(fp)
                             if "@loader_path/.." not in rpaths:

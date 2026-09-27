@@ -762,21 +762,46 @@ def test_the_optional_steps_are_notes_not_failures(tmp, monkeypatch):
     assert len(notes) == 1 and "quarantine" in notes[0] and "not permitted" in notes[0]
 
 
-def test_an_rpath_that_is_already_there_is_a_note(tmp, monkeypatch):
-    fp = os.path.join(tmp, "AdobeACE")
-    open(fp, "wb").close()
-    bindir = _tool(os.path.join(tmp, "bin"), "install_name_tool",
-                   'echo "error: install_name_tool: for: x (for architecture arm64) option '
-                   '\\"-add_rpath @loader_path/..\\" would duplicate path, file already has '
-                   'LC_RPATH for: @loader_path/.." >&2\nexit 1')
-    monkeypatch.setenv("PATH", bindir + os.pathsep + os.environ["PATH"])
+def _macho_with_rpath(path, rpath="@loader_path/.."):
+    """A minimal arm64 Mach-O carrying one LC_RPATH, and room to spare.
+
+    No segments, so the whole file past the header counts as slack -- which is
+    what makes the "already there" answer, rather than a size refusal, the thing
+    under test.
+    """
+    import struct
+    from clickgraft.macho_read import LC_RPATH, MH_MAGIC_64
+
+    raw = rpath.encode() + b"\x00"
+    size = (12 + len(raw) + 7) // 8 * 8
+    cmd = struct.pack("<III", LC_RPATH, size, 12) + raw + b"\x00" * (size - 12 - len(raw))
+    header = struct.pack("<IiiIIIII", MH_MAGIC_64, 0x0100000C, 0, 6, 1, len(cmd), 0, 0)
+    with open(path, "wb") as f:
+        f.write(header + cmd + b"\x00" * 4096)
+    return path
+
+
+def test_an_rpath_that_is_already_there_is_a_note(tmp):
+    """A note, not a failure -- and now a fact rather than a parsed error string.
+
+    install_name_tool exited non-zero for this and had to be told apart from a
+    real failure by grepping stderr for "would duplicate path". macho_write
+    returns False instead, so the distinction no longer depends on Apple's
+    wording staying put.
+    """
+    fp = _macho_with_rpath(os.path.join(tmp, "AdobeACE"))
     notes = []
     signing._add_rpath(fp, tmp, notes)
     assert notes == ["AdobeACE already had the @loader_path/.. rpath"]
 
-    _tool(bindir, "install_name_tool", 'echo "fatal error: truncated or malformed object" >&2\nexit 1')
-    with pytest.raises(SigningError, match="truncated or malformed object"):
-        signing._add_rpath(fp, tmp, notes)
+
+def test_a_file_that_cannot_be_edited_is_a_failure_that_names_it(tmp):
+    fp = os.path.join(tmp, "AdobeACE")
+    open(fp, "wb").close()
+    with pytest.raises(SigningError) as exc:
+        signing._add_rpath(fp, tmp, [])
+    assert "AdobeACE" in str(exc.value)
+    assert "@loader_path/.." in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
