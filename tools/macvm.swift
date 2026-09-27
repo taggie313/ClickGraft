@@ -209,8 +209,12 @@ func install() {
 //   move  <x> <y>            pointer, in GUEST display points, origin top-left
 //   click <x> <y> [count]    count 2 is a double-click
 //   key   <keyCode> [flags]  flags: c=command s=shift a=option t=control
-//   text  <string>           one keystroke per character
+//   text  <string>           one keystroke per character, UNSHIFTED ONLY
 //   sleep <ms>
+//
+// The flags are accepted and have no effect: see key(_:_:) below. Move, click,
+// double-click, menus and unshifted typing work; modifiers do not. Anything
+// needing a capital, a colon or a dollar goes in on --disk2 instead.
 //
 // The file is truncated as it is read, so appending a line runs it.
 final class Control {
@@ -275,34 +279,61 @@ final class Control {
         }
     }
 
-    private func key(_ code: UInt16, _ f: NSEvent.ModifierFlags, characters: String?) {
-        guard let view = view, let window = view.window else { return }
-        let chars = characters ?? ""
-        func make(_ type: NSEvent.EventType) -> NSEvent? {
-            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: f,
-                             timestamp: ProcessInfo.processInfo.systemUptime,
-                             windowNumber: window.windowNumber, context: nil,
-                             characters: chars, charactersIgnoringModifiers: chars,
-                             isARepeat: false, keyCode: code)
+    /// MODIFIERS DO NOT REACH THE GUEST. Treat this channel as unshifted-only.
+    ///
+    /// Every shifted character arrives unshifted: `$` comes out `4`, `:` comes
+    /// out `;`, `"` comes out `'`, and uppercase comes out lowercase. Built first
+    /// with NSEvent.keyEvent carrying modifierFlags, then rebuilt through CGEvent
+    /// with its own flagsChanged either side, then again with 15 ms of settling
+    /// around the modifier in case the HID reports were being coalesced. All
+    /// three behaved identically, so the flags are not being read from the event
+    /// at all. The CGEvent form is kept because it is the more correct of the
+    /// three and NSEvent(cgEvent:) derives `characters` from the real layout.
+    ///
+    /// This was measured, not inferred, and it reaches back further than it
+    /// looks: the guest's own account was created through a shifted-password
+    /// keystroke that silently lost its shift, so what is stored is the
+    /// LOWERCASED string. `dscl . -authonly taggie <lowercase>` inside the guest
+    /// returns success. If a guest of this project's ever seems to accept the
+    /// wrong password, that is why.
+    ///
+    /// Consequence for callers: keep to a-z, 0-9 and the unshifted punctuation,
+    /// and hand anything else to the guest on the --disk2 volume instead of
+    /// typing it. A URL with a port cannot be typed here.
+    private func key(_ code: UInt16, _ f: NSEvent.ModifierFlags) {
+        guard let view = view else { return }
+        let flags = cgFlags(f)
+
+        func send(_ event: CGEvent?, _ deliver: (NSEvent) -> Void) {
+            guard let event = event, let e = NSEvent(cgEvent: event) else { return }
+            deliver(e)
         }
-        // The guest needs to see the modifier go down as its own event, or the
-        // chord arrives as a bare keypress.
-        if !f.isEmpty, let fc = NSEvent.keyEvent(with: .flagsChanged, location: .zero,
-                                                 modifierFlags: f, timestamp: ProcessInfo.processInfo.systemUptime,
-                                                 windowNumber: window.windowNumber, context: nil,
-                                                 characters: "", charactersIgnoringModifiers: "",
-                                                 isARepeat: false, keyCode: modifierKeyCode(f)) {
-            view.flagsChanged(with: fc)
+        func modifier(down: Bool) {
+            guard !f.isEmpty else { return }
+            let event = CGEvent(keyboardEventSource: nil,
+                                virtualKey: modifierKeyCode(f), keyDown: down)
+            event?.type = .flagsChanged
+            event?.flags = down ? flags : []
+            send(event) { view.flagsChanged(with: $0) }
         }
-        if let d = make(.keyDown) { view.keyDown(with: d) }
-        if let u = make(.keyUp) { view.keyUp(with: u) }
-        if !f.isEmpty, let fc = NSEvent.keyEvent(with: .flagsChanged, location: .zero,
-                                                 modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                 windowNumber: window.windowNumber, context: nil,
-                                                 characters: "", charactersIgnoringModifiers: "",
-                                                 isARepeat: false, keyCode: modifierKeyCode(f)) {
-            view.flagsChanged(with: fc)
-        }
+
+        modifier(down: true)
+        let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true)
+        down?.flags = flags
+        send(down) { view.keyDown(with: $0) }
+        let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)
+        up?.flags = flags
+        send(up) { view.keyUp(with: $0) }
+        modifier(down: false)
+    }
+
+    private func cgFlags(_ f: NSEvent.ModifierFlags) -> CGEventFlags {
+        var out: CGEventFlags = []
+        if f.contains(.command) { out.insert(.maskCommand) }
+        if f.contains(.shift) { out.insert(.maskShift) }
+        if f.contains(.option) { out.insert(.maskAlternate) }
+        if f.contains(.control) { out.insert(.maskControl) }
+        return out
     }
 
     private func modifierKeyCode(_ f: NSEvent.ModifierFlags) -> UInt16 {
@@ -331,7 +362,7 @@ final class Control {
             }
         case "key":
             guard parts.count >= 2, let code = UInt16(parts[1]) else { return }
-            key(code, flags(parts.count > 2 ? parts[2] : ""), characters: nil)
+            key(code, flags(parts.count > 2 ? parts[2] : ""))
         case "text":
             let body = String(line.dropFirst(verb.count).drop(while: { $0 == " " }))
             for ch in body { typeCharacter(ch) }
@@ -360,11 +391,11 @@ final class Control {
             "%": 23, "^": 22, "&": 26, "*": 28, "(": 25, ")": 29
         ]
         if let code = lower[ch] {
-            key(code, [], characters: String(ch))
+            key(code, [])
         } else if ch.isUppercase, let code = lower[Character(ch.lowercased())] {
-            key(code, [.shift], characters: String(ch))
+            key(code, [.shift])
         } else if let code = shifted[ch] {
-            key(code, [.shift], characters: String(ch))
+            key(code, [.shift])
         }
         Thread.sleep(forTimeInterval: 0.03)
     }
