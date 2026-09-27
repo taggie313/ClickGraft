@@ -67,6 +67,16 @@ class ManifestManager:
 
     def validate_manifest(self, manifest):
         required_keys = ["app_version", "asar_sha256", "electron_version", "asar_entries", "patches", "required_dylibs", "expected_x86_only"]
+        # A patch_only manifest describes a copy that is patched and re-signed but
+        # never grafted, because HP already built that version for Apple Silicon.
+        # The three keys dropped here all describe the arm64 runtime that is put
+        # in: which Electron, which dylibs go with it, and which files are allowed
+        # to stay Intel afterwards. Requiring them would mean inventing values for
+        # a download that never happens.
+        if manifest.get("mode") == "patch_only":
+            required_keys = [k for k in required_keys
+                             if k not in ("electron_version", "required_dylibs",
+                                          "expected_x86_only")]
         for k in required_keys:
             if k not in manifest:
                 raise ValueError(f"Invalid manifest: missing required key '{k}'")

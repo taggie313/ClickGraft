@@ -87,7 +87,7 @@ def check_patch_outcomes(read_file, manifest):
     return results
 
 
-def check_minimum_macos(target_app_path):
+def check_minimum_macos(target_app_path, patch_only=False, hp_declared=None):
     """No Mach-O in the copy may need a newer macOS than the copy says it needs.
 
     Returns the results entry; raises ValueError naming each file that does.
@@ -99,6 +99,19 @@ def check_minimum_macos(target_app_path):
     Homebrew bottles listed first carried a libidn2 that imports _strchrnul,
     new in macOS 15.4: on macOS 12.0-15.3 it aborts at launch, where macOS
     would have refused to open it, clearly, had the Info.plist said so.
+
+    patch_only changes the question, because the premise above stops holding.
+    That copy is HP's bundle with its asar patched and nothing added -- no
+    Homebrew dylib, no shim, no Electron -- so every Mach-O in it is one HP
+    built, shipped and runs. HP's 4.11.31 declares 12.0 while its own libcrypto
+    and libssl declare 15.0, and stamping the copy at 15.0 would lock out every
+    macOS 12-14 user for whom HP's app works today, on the strength of an upper
+    bound this project explicitly does not treat as a requirement (see
+    clickgraft/capabilities.py on the two floors). So in that mode the check
+    becomes the one thing ClickGraft could still get wrong here: that the copy
+    declares exactly what HP declared, and has not been quietly lowered. Files
+    that ask for more are reported rather than raised on, because they are
+    HP's answer to HP's question.
 
     Static, so it runs without launching anything and on an Intel Mac.
     """
@@ -116,6 +129,16 @@ def check_minimum_macos(target_app_path):
             f"the copy's LSMinimumSystemVersion cannot be checked: "
             f"{', '.join(unreadable[:5])}")
     over = [(rel, v) for rel, v in found if v > declared]
+    if patch_only:
+        if hp_declared is not None and declared != hp_declared:
+            raise ValueError(
+                f"The copy says it needs macOS {format_version(declared)}, but the "
+                f"HP build it was made from says {format_version(hp_declared)}. A "
+                f"patch_only copy adds no files, so it must not change this.")
+        return {"declared": format_version(declared),
+                "files_declaring_more": [(rel, format_version(v)) for rel, v in over],
+                "note": ("patch_only: every file is HP's own and unmodified, and HP "
+                         "ships this build declaring this minimum.")}
     if over:
         shown = "; ".join(f"{rel} needs {format_version(v)}" for rel, v in over[:5])
         more = f" (and {len(over) - 5} more)" if len(over) > 5 else ""

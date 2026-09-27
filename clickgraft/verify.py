@@ -813,7 +813,12 @@ def verify_app_bundle(target_app_path, manifest=None, *, results, step):
     # 2c. The copy's LSMinimumSystemVersion against every Mach-O in it (see
     # check_minimum_macos).
     step.now = "minimum_macos"
-    results["minimum_macos"] = check_minimum_macos(target_app_path)
+    from clickgraft.macos_floor import parse_version
+    _m = manifest or {}
+    results["minimum_macos"] = check_minimum_macos(
+        target_app_path,
+        patch_only=_m.get("mode") == "patch_only",
+        hp_declared=parse_version(_m.get("hp_declared_floor") or "") or None)
 
     # 3. Code Signatures & Entitlements (D7: single call, no --deep)
     step.now = "code_signature"

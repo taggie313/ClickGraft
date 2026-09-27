@@ -335,6 +335,13 @@ def test_shipped_dependency_selection_needs_no_live_api(monkeypatch):
         pytest.fail('pinned dependency selection queried the changing formula API')
     monkeypatch.setattr(deps, '_http_get', forbidden)
     for manifest in ManifestManager().manifests.values():
+        # A patch_only manifest pins nothing because it downloads nothing: no
+        # Electron, no bottles. Asserting pins on it would be asserting the
+        # shape of a fetch that never happens.
+        if manifest.get('mode') == 'patch_only':
+            assert 'electron_sha256' not in manifest
+            assert not manifest.get('required_dylibs')
+            continue
         chosen = deps.choose_bottles(manifest)
         assert all(b['dylib_sha256'] for b in chosen.values())
         assert len(manifest['electron_sha256']) == 64
@@ -351,6 +358,8 @@ def test_every_shipped_pin_is_well_formed_and_dated():
     manifests = ManifestManager().manifests
     assert manifests
     for version, manifest in manifests.items():
+        if manifest.get('mode') == 'patch_only':
+            continue                      # nothing is fetched, so nothing is pinned
         deps.check_pins(manifest)
         assert deps._SHA256.fullmatch(manifest['electron_sha256']), version
         assert '22 Sep 2026' in manifest['$bottles_pinned'], version

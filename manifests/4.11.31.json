@@ -1,0 +1,83 @@
+{
+  "$comment": "HP's own Apple Silicon build, published 17 September 2026. There is nothing to graft: every Mach-O in it already carries arm64, and ClickGraft says so when it finds one. This manifest exists for the other job -- a copy that will not move. HP removed five DesignJets from the supported list in 4.8.118, a point release, with no warning; anyone on 4.11.31 has no protection from the next one, because its updater works. So mode is patch_only: copy the bundle, apply the patches below, re-sign, and skip the graft entirely. No Electron is fetched, no dylibs are bundled, no launcher is written, and the copy's LSMinimumSystemVersion is left exactly as HP set it.",
+  "app_version": "4.11.31",
+  "mode": "patch_only",
+  "$mode_note": "patch_only is the whole difference from the other manifests. build.py reads it and skips every step that exists to put an arm64 runtime in: the floor plan, the Electron fetch and framework swap, required_dylibs, the png shim, the Qt5 install-name rewrite, the shell launcher, and stamping a new minimum macOS. What still happens is the staging copy, the bundle identifiers, the asar patches with ElectronAsarIntegrity recomputed, the signature, and the set-aside install with its rollback.",
+  "asar_sha256": "a653fbda76285aebe096625ae7d660d0d6445a5332407f33a489a22dd77803ef",
+  "asar_entries": {
+    "packed": 18628,
+    "unpacked": 25
+  },
+  "$no_electron_version": "Deliberately absent. The other manifests pin the runtime that replaces HP's; this one replaces nothing, so a version and a sha256 here would describe a download that never happens.",
+  "patches": [
+    {
+      "path": "app/node/main/app-updater.js",
+      "why": "The reason this manifest exists. Squirrel's JSON-file mode version-compares, so it takes anything HP's feed names that is newer than the copy -- today the feed names 4.8.118 and 4.11.31 ignores it, but the next release HP publishes will be taken. HP dropped the DesignJet T310, T320, T350, T720 and T750 in 4.8.118 without warning, so 'newer' is not the same as 'better' for the person whose plotter is on that list. The early return stops the check before the download, so there is no ~570 MB fetch and no 'restart to update' bar. Same anchor as 4.8.117, 4.8.118 and 4.10.42; measured 27 September 2026 to occur exactly once in this build's app-updater.js. Reached via main.js -> app-starter.js -> require('./app-updater'). Note this does NOT touch NotificationsService.checkNotifications(), which lives in app-starter.js and is left alone.",
+      "ops": [
+        {
+          "type": "replace",
+          "anchor": "function startup(e){",
+          "replacement": "function startup(e){return;"
+        }
+      ]
+    },
+    {
+      "path": "app/package.json",
+      "why": "HP's crash reporter reads app/package.json -- app/main.js does const packagejson=require('./package.json') -- and 4.11.31 still ships crashAutoSubmit true with crashReportUrl http://15.23.17.24:9100/upload_crash, over plain HTTP to a bare address. So a copy that never updates would also never stop sending crashes unread, which is the opposite of what this project promises about reports. Same fix as the other three manifests, and the one in 1.5.8 that corrected an earlier version patching the wrong package.json. Set structurally rather than by string anchor, the same json_set the other three manifests use: the value is a JSON field, and matching it as text would break on HP reformatting the file.",
+      "ops": [
+        {
+          "type": "json_set",
+          "path": "hp_configs.crashAutoSubmit",
+          "value": false
+        }
+      ]
+    }
+  ],
+  "$do_not_patch": {
+    "app/bundle.js": "The SNMPv3 log-line fix the 4.8 and 4.10 manifests carry is not needed here: HP fixed it themselves in 4.11.31, which is where ClickGraft back-ported it from.",
+    "app/shared/constants.js": "The classic-script load bug the 4.8 manifests work around is not present in this build.",
+    "app/shared/industries.js": "Same."
+  },
+  "$what_this_copy_does_not_get": "Chromium security fixes. A copy that refuses updates refuses all of them, and 4.11.31 is Electron 39.8.4 / Chromium 142. That is current today and will not be in a year. The wizard and the site have to say so where someone choosing this can read it -- it is the first thing this project offers that asks a person to stop updating on purpose.",
+  "verified_by": "Built and verified 27 September 2026 as the first patch_only copy: manifest, staging, identifiers, asar patches with ElectronAsarIntegrity recomputed, Squirrel's ShipIt stubbed and signed, signature, rollback install. 20 seconds, no Electron fetched and no dylibs bundled.",
+  "verified_on": "2026-09-27",
+  "accepted_unprovided_symbols": [
+    "MPCurrentTaskID",
+    "MPGetTaskStorageValue",
+    "nghttp2_http2_strerror",
+    "nghttp2_is_fatal",
+    "nghttp2_pack_settings_payload",
+    "nghttp2_priority_spec_init",
+    "nghttp2_session_callbacks_del",
+    "nghttp2_session_callbacks_new",
+    "nghttp2_session_callbacks_set_error_callback",
+    "nghttp2_session_callbacks_set_on_begin_headers_callback",
+    "nghttp2_session_callbacks_set_on_data_chunk_recv_callback",
+    "nghttp2_session_callbacks_set_on_frame_recv_callback",
+    "nghttp2_session_callbacks_set_on_header_callback",
+    "nghttp2_session_callbacks_set_on_stream_close_callback",
+    "nghttp2_session_callbacks_set_send_callback",
+    "nghttp2_session_client_new",
+    "nghttp2_session_del",
+    "nghttp2_session_get_remote_settings",
+    "nghttp2_session_get_stream_user_data",
+    "nghttp2_session_mem_recv",
+    "nghttp2_session_resume_data",
+    "nghttp2_session_send",
+    "nghttp2_session_set_local_window_size",
+    "nghttp2_session_set_stream_user_data",
+    "nghttp2_session_upgrade",
+    "nghttp2_session_want_read",
+    "nghttp2_session_want_write",
+    "nghttp2_strerror",
+    "nghttp2_submit_ping",
+    "nghttp2_submit_priority",
+    "nghttp2_submit_request",
+    "nghttp2_submit_rst_stream",
+    "nghttp2_submit_settings",
+    "nghttp2_version"
+  ],
+  "$accepted_unprovided_symbols_note": "Measured 27 September 2026 against STOCK 4.11.31 and against a patch_only copy of it: both have exactly these 34 flat-namespace symbols that nothing in the bundle provides, and the copy introduces not one of them. That is the difference between this manifest and a graft. The check exists because grafting an arm64 Electron makes arm64 code live that HP never ran, so a symbol binding to NULL becomes reachable -- which is how png_init_filter_functions_neon crashed the app on PNG import. Here nothing is grafted: HP built this slice, ships it, and runs it, so these are HP's own and are reachable exactly as often as they are in the app on HP's download page. They are recorded rather than shimmed or skipped, so the list is auditable and a future version's must be measured again. MPCurrentTaskID and MPGetTaskStorageValue are Carbon Multiprocessing Services, removed from macOS long ago; the nghttp2_* are HTTP/2 entry points Chromium's network stack leaves dynamically looked up.",
+  "hp_declared_floor": "12.0",
+  "$hp_declared_floor_note": "What HP's own 4.11.31 Info.plist says, measured 27 September 2026. A patch_only copy adds no Mach-O, so its LSMinimumSystemVersion must come out exactly the same; the verifier raises if it does not, which is the one way this mode could still get the floor wrong. HP's own libcrypto and libssl inside it declare 15.0 -- that disagreement is HP's, it is present in the app on HP's download page, and the copy neither inherits a new one nor pretends to fix it."
+}

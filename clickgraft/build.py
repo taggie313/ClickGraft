@@ -818,26 +818,42 @@ def _build_apple_silicon_bundle(
             f"untouched HP Click instead."
         )
 
+    # A copy that is patched but not grafted. 4.11.31 is already HP's own Apple
+    # Silicon build, so there is no runtime to put in it -- what it still needs is
+    # an updater that never runs, which is what this manifest is for. Everything
+    # below that exists to install an arm64 engine is skipped; everything that
+    # makes a copy safe to hand over -- the identifiers, the asar patches and their
+    # integrity, Squirrel's installer, the signature, the rollback install -- is not.
+    patch_only = manifest.get("mode") == "patch_only"
+    electron_version = None
+    electron_zip = None
+    bottles = {}
+    floor_plan = None
+    dependency_records = []
+
     # 1b. The oldest macOS the copy will run on, before anything is downloaded
     # or written, so that a Mac too old for it hears so now rather than from a
     # copy that aborts at launch (clickgraft/macos_floor.py has the history).
     # Choosing the Homebrew bottles is a query to Homebrew's formula API, not a
     # download, and the floor depends on which ones are used.
-    _log("Working out which macOS the copy will need...", 0.07)
-    bottles = choose_bottles(manifest)
-    floor_plan = plan_floor(source_app_path, manifest, bottles=bottles)
-    # Only when the copy is for this Mac. An Intel Mac building for another one
-    # says nothing about that Mac's macOS; the copy's own LSMinimumSystemVersion,
-    # stamped at step 9c, is what speaks for it there.
-    if is_apple_silicon():
-        refuse_if_too_old(floor_plan["floor"], floor_reasons(floor_plan),
-                          manifest.get("app_version"))
+    # patch_only: no bottles, no Electron, so no floor to plan -- the copy
+    # needs exactly what HP's own build needs, and step 9c leaves it alone.
+    if not patch_only:
+        _log("Working out which macOS the copy will need...", 0.07)
+        bottles = choose_bottles(manifest)
+        floor_plan = plan_floor(source_app_path, manifest, bottles=bottles)
+        # Only when the copy is for this Mac. An Intel Mac building for another one
+        # says nothing about that Mac's macOS; the copy's own LSMinimumSystemVersion,
+        # stamped at step 9c, is what speaks for it there.
+        if is_apple_silicon():
+            refuse_if_too_old(floor_plan["floor"], floor_reasons(floor_plan),
+                              manifest.get("app_version"))
 
-    electron_version = manifest["electron_version"]
+        electron_version = manifest["electron_version"]
 
-    # 2. Fetch Electron runtime zip
-    _log(f"Fetching/verifying Electron {electron_version} arm64 runtime...", 0.10)
-    electron_zip = fetch_electron(electron_version, sha256=manifest.get("electron_sha256"))
+        # 2. Fetch Electron runtime zip
+        _log(f"Fetching/verifying Electron {electron_version} arm64 runtime...", 0.10)
+        electron_zip = fetch_electron(electron_version, sha256=manifest.get("electron_sha256"))
 
     # 3. Create staging directory (non-.app name to prevent App Management locks),
     # in work_dir: the folder that is locked, and the one the finally block
@@ -854,127 +870,132 @@ def _build_apple_silicon_bundle(
     run_cmd(["ditto", source_app_path, staging_dir])
 
     try:
-        # Extract Electron arm64 runtime using ditto to preserve macOS framework symlinks
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            el_extract_dir = os.path.join(tmp_dir, "electron_extract")
-            os.makedirs(el_extract_dir, exist_ok=True)
-            _log("Extracting Electron arm64 runtime...", 0.30)
-            run_cmd(["ditto", "-x", "-k", electron_zip, el_extract_dir])
-            el_app = os.path.join(el_extract_dir, "Electron.app")
+        # patch_only: 4.11.31 is already HP's Apple Silicon build. There is no
+        # runtime to swap, which is the whole reason this mode exists.
+        if not patch_only:
+            # Extract Electron arm64 runtime using ditto to preserve macOS framework symlinks
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                el_extract_dir = os.path.join(tmp_dir, "electron_extract")
+                os.makedirs(el_extract_dir, exist_ok=True)
+                _log("Extracting Electron arm64 runtime...", 0.30)
+                run_cmd(["ditto", "-x", "-k", electron_zip, el_extract_dir])
+                el_app = os.path.join(el_extract_dir, "Electron.app")
 
-            # 4. Swap Runtime Frameworks & Binaries
-            _log("Swapping Electron runtime frameworks and helper binaries...", 0.40)
-            el_fw_dir = os.path.join(el_app, "Contents", "Frameworks")
-            dst_fw_dir = os.path.join(staging_dir, "Contents", "Frameworks")
-            for fw_name in os.listdir(el_fw_dir):
-                if fw_name.endswith(".framework"):
-                    src_fw = os.path.join(el_fw_dir, fw_name)
-                    dst_fw = os.path.join(dst_fw_dir, fw_name)
-                    if os.path.exists(dst_fw):
-                        shutil.rmtree(dst_fw)
-                    run_cmd(["ditto", src_fw, dst_fw])
+                # 4. Swap Runtime Frameworks & Binaries
+                _log("Swapping Electron runtime frameworks and helper binaries...", 0.40)
+                el_fw_dir = os.path.join(el_app, "Contents", "Frameworks")
+                dst_fw_dir = os.path.join(staging_dir, "Contents", "Frameworks")
+                for fw_name in os.listdir(el_fw_dir):
+                    if fw_name.endswith(".framework"):
+                        src_fw = os.path.join(el_fw_dir, fw_name)
+                        dst_fw = os.path.join(dst_fw_dir, fw_name)
+                        if os.path.exists(dst_fw):
+                            shutil.rmtree(dst_fw)
+                        run_cmd(["ditto", src_fw, dst_fw])
 
-            # Replace helper app executables while keeping HP Info.plist
-            helpers = [
-                ("HP Click Helper.app", "HP Click Helper"),
-                ("HP Click Helper (GPU).app", "HP Click Helper (GPU)"),
-                ("HP Click Helper (Plugin).app", "HP Click Helper (Plugin)"),
-                ("HP Click Helper (Renderer).app", "HP Click Helper (Renderer)")
-            ]
-            for helper_app, helper_exe in helpers:
-                src_exe = os.path.join(el_app, "Contents", "Frameworks", "Electron Helper.app", "Contents", "MacOS", "Electron Helper")
-                dst_exe = os.path.join(staging_dir, "Contents", "Frameworks", helper_app, "Contents", "MacOS", helper_exe)
-                if os.path.exists(dst_exe):
-                    os.remove(dst_exe)
-                shutil.copy2(src_exe, dst_exe)
+                # Replace helper app executables while keeping HP Info.plist
+                helpers = [
+                    ("HP Click Helper.app", "HP Click Helper"),
+                    ("HP Click Helper (GPU).app", "HP Click Helper (GPU)"),
+                    ("HP Click Helper (Plugin).app", "HP Click Helper (Plugin)"),
+                    ("HP Click Helper (Renderer).app", "HP Click Helper (Renderer)")
+                ]
+                for helper_app, helper_exe in helpers:
+                    src_exe = os.path.join(el_app, "Contents", "Frameworks", "Electron Helper.app", "Contents", "MacOS", "Electron Helper")
+                    dst_exe = os.path.join(staging_dir, "Contents", "Frameworks", helper_app, "Contents", "MacOS", helper_exe)
+                    if os.path.exists(dst_exe):
+                        os.remove(dst_exe)
+                    shutil.copy2(src_exe, dst_exe)
 
-            # Replace main executable
-            src_main_exe = os.path.join(el_app, "Contents", "MacOS", "Electron")
-            dst_hp_exe = os.path.join(staging_dir, "Contents", "MacOS", "HPClickExe")
-            if os.path.exists(dst_hp_exe):
-                os.remove(dst_hp_exe)
-            shutil.copy2(src_main_exe, dst_hp_exe)
-            os.chmod(dst_hp_exe, 0o755)
+                # Replace main executable
+                src_main_exe = os.path.join(el_app, "Contents", "MacOS", "Electron")
+                dst_hp_exe = os.path.join(staging_dir, "Contents", "MacOS", "HPClickExe")
+                if os.path.exists(dst_hp_exe):
+                    os.remove(dst_hp_exe)
+                shutil.copy2(src_main_exe, dst_hp_exe)
+                os.chmod(dst_hp_exe, 0o755)
 
-        # 5. Fetch/Bundle Required Dylibs
-        _log("Bundling required dylibs...", 0.50)
-        dst_lib_dir = os.path.join(staging_dir, "Contents", "Resources", "app", "appData", "macx", "lib")
-        os.makedirs(dst_lib_dir, exist_ok=True)
+        # patch_only: nothing arm64 is going in, so there is nothing to bundle,
+        # no png shim to build, and no Qt5 install names to rewrite.
+        if not patch_only:
+            # 5. Fetch/Bundle Required Dylibs
+            _log("Bundling required dylibs...", 0.50)
+            dst_lib_dir = os.path.join(staging_dir, "Contents", "Resources", "app", "appData", "macx", "lib")
+            os.makedirs(dst_lib_dir, exist_ok=True)
 
-        dependency_records = []
-        for dylib_info in manifest.get("required_dylibs", []):
-            d_name = dylib_info["name"]
-            got = resolve_dylib(dylib_info, floor=floor_plan["floor"],
-                                bottle=bottles.get(dylib_info.get("brew_formula")))
-            src_dylib = got["path"]
-            dependency_records.append({"name": d_name, "sha256": _sha256_of(src_dylib),
-                                       "bottle": bottles.get(dylib_info.get("brew_formula")),
-                                       "source": got["source"]})
-            where = {"homebrew": "this Mac's Homebrew",
-                     "cache": f"cache, Homebrew bottle {got['bottle_tag']}",
-                     "download": f"downloaded, Homebrew bottle {got['bottle_tag']}"}[got["source"]]
-            _log(f"{d_name}: {where}, needs macOS "
-                 f"{format_version(got['minos']) or 'unknown'}", 0.50)
-            dst_dylib = os.path.join(dst_lib_dir, d_name)
-            if os.path.exists(dst_dylib):
-                os.remove(dst_dylib)
-            shutil.copy2(src_dylib, dst_dylib)
-            os.chmod(dst_dylib, 0o755)
-            run_cmd(["install_name_tool", "-id", f"@rpath/{d_name}", dst_dylib])
+            for dylib_info in manifest.get("required_dylibs", []):
+                d_name = dylib_info["name"]
+                got = resolve_dylib(dylib_info, floor=floor_plan["floor"],
+                                    bottle=bottles.get(dylib_info.get("brew_formula")))
+                src_dylib = got["path"]
+                dependency_records.append({"name": d_name, "sha256": _sha256_of(src_dylib),
+                                           "bottle": bottles.get(dylib_info.get("brew_formula")),
+                                           "source": got["source"]})
+                where = {"homebrew": "this Mac's Homebrew",
+                         "cache": f"cache, Homebrew bottle {got['bottle_tag']}",
+                         "download": f"downloaded, Homebrew bottle {got['bottle_tag']}"}[got["source"]]
+                _log(f"{d_name}: {where}, needs macOS "
+                     f"{format_version(got['minos']) or 'unknown'}", 0.50)
+                dst_dylib = os.path.join(dst_lib_dir, d_name)
+                if os.path.exists(dst_dylib):
+                    os.remove(dst_dylib)
+                shutil.copy2(src_dylib, dst_dylib)
+                os.chmod(dst_dylib, 0o755)
+                run_cmd(["install_name_tool", "-id", f"@rpath/{d_name}", dst_dylib])
 
-        # Supply png_init_filter_functions_neon, which HP references and nobody
-        # provides.
-        #
-        # The arm64 slice of DjCoreServicesNative-Electron.node has an undefined
-        # flat-namespace reference to it; the x86_64 slice does not. HP never
-        # trips over this because they ship an Intel Electron and never load the
-        # arm64 slice. Grafting an arm64 runtime makes that code live, the call
-        # binds to null, and the app dies with PC=0x0 the moment it decodes a
-        # PNG. Confirmed from a real crash: EXC_BAD_ACCESS at 0x0 with LR inside
-        # DjCoreServices, while importing PNGs.
-        #
-        # A no-op is correct rather than a fudge: libpng installs its portable C
-        # filter implementations first and calls this only to override them with
-        # NEON versions. Doing nothing leaves the C paths, which is exactly what
-        # this build has always actually used -- the symbol was never resolvable.
-        #
-        # Compiled here rather than shipped as a binary: the toolchain is already
-        # a hard requirement (preflight checks for it), and a 16KB .dylib in git
-        # that nobody can diff is worse than four lines of C.
-        shim_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shims", "pngshim.c")
-        shim_name = "libclickgraft-pngshim.dylib"
-        shim_dst = os.path.join(dst_lib_dir, shim_name)
-        if os.path.exists(shim_src):
-            _compile_pngshim(shim_src, shim_dst, shim_name, _log)
-            os.chmod(shim_dst, 0o755)
-            _log("Built libpng NEON shim (HP references a symbol nothing exports)", 0.55)
-        else:
-            raise FileNotFoundError(f"png shim source missing: {shim_src}")
+            # Supply png_init_filter_functions_neon, which HP references and nobody
+            # provides.
+            #
+            # The arm64 slice of DjCoreServicesNative-Electron.node has an undefined
+            # flat-namespace reference to it; the x86_64 slice does not. HP never
+            # trips over this because they ship an Intel Electron and never load the
+            # arm64 slice. Grafting an arm64 runtime makes that code live, the call
+            # binds to null, and the app dies with PC=0x0 the moment it decodes a
+            # PNG. Confirmed from a real crash: EXC_BAD_ACCESS at 0x0 with LR inside
+            # DjCoreServices, while importing PNGs.
+            #
+            # A no-op is correct rather than a fudge: libpng installs its portable C
+            # filter implementations first and calls this only to override them with
+            # NEON versions. Doing nothing leaves the C paths, which is exactly what
+            # this build has always actually used -- the symbol was never resolvable.
+            #
+            # Compiled here rather than shipped as a binary: the toolchain is already
+            # a hard requirement (preflight checks for it), and a 16KB .dylib in git
+            # that nobody can diff is worse than four lines of C.
+            shim_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shims", "pngshim.c")
+            shim_name = "libclickgraft-pngshim.dylib"
+            shim_dst = os.path.join(dst_lib_dir, shim_name)
+            if os.path.exists(shim_src):
+                _compile_pngshim(shim_src, shim_dst, shim_name, _log)
+                os.chmod(shim_dst, 0o755)
+                _log("Built libpng NEON shim (HP references a symbol nothing exports)", 0.55)
+            else:
+                raise FileNotFoundError(f"png shim source missing: {shim_src}")
 
-        # Rewrite internal Homebrew paths inside bundled dylibs to @rpath
-        for dylib_info in manifest.get("required_dylibs", []):
-            dst_d = os.path.join(dst_lib_dir, dylib_info["name"])
-            if os.path.exists(dst_d):
-                otool_out = run_cmd(["otool", "-L", dst_d], check=False)
-                for line in otool_out.splitlines()[1:]:
-                    dep = line.strip().split()[0]
-                    if dep.startswith("/opt/homebrew") or dep.startswith("/usr/local"):
-                        dep_name = os.path.basename(dep)
-                        run_cmd(["install_name_tool", "-change", dep, f"@rpath/{dep_name}", dst_d], check=False)
-
-        # 6. Rewrite Qt5 install names to @rpath across native modules
-        _log("Rewriting Qt5 install names to @rpath...", 0.60)
-        qt_libs = ["libQt5Gui.5.dylib", "libQt5Network.5.dylib", "libQt5Xml.5.dylib", "libQt5Core.5.dylib"]
-        for root, dirs, files in os.walk(os.path.join(staging_dir, "Contents", "Resources", "app")):
-            for f in files:
-                if f.endswith(".node") or f.endswith(".dylib"):
-                    fp = os.path.join(root, f)
-                    otool_out = run_cmd(["otool", "-L", fp], check=False)
+            # Rewrite internal Homebrew paths inside bundled dylibs to @rpath
+            for dylib_info in manifest.get("required_dylibs", []):
+                dst_d = os.path.join(dst_lib_dir, dylib_info["name"])
+                if os.path.exists(dst_d):
+                    otool_out = run_cmd(["otool", "-L", dst_d], check=False)
                     for line in otool_out.splitlines()[1:]:
                         dep = line.strip().split()[0]
-                        for qlib in qt_libs:
-                            if dep.endswith(qlib) and not dep.startswith("@rpath/"):
-                                run_cmd(["install_name_tool", "-change", dep, f"@rpath/{qlib}", fp], check=False)
+                        if dep.startswith("/opt/homebrew") or dep.startswith("/usr/local"):
+                            dep_name = os.path.basename(dep)
+                            run_cmd(["install_name_tool", "-change", dep, f"@rpath/{dep_name}", dst_d], check=False)
+
+            # 6. Rewrite Qt5 install names to @rpath across native modules
+            _log("Rewriting Qt5 install names to @rpath...", 0.60)
+            qt_libs = ["libQt5Gui.5.dylib", "libQt5Network.5.dylib", "libQt5Xml.5.dylib", "libQt5Core.5.dylib"]
+            for root, dirs, files in os.walk(os.path.join(staging_dir, "Contents", "Resources", "app")):
+                for f in files:
+                    if f.endswith(".node") or f.endswith(".dylib"):
+                        fp = os.path.join(root, f)
+                        otool_out = run_cmd(["otool", "-L", fp], check=False)
+                        for line in otool_out.splitlines()[1:]:
+                            dep = line.strip().split()[0]
+                            for qlib in qt_libs:
+                                if dep.endswith(qlib) and not dep.startswith("@rpath/"):
+                                    run_cmd(["install_name_tool", "-change", dep, f"@rpath/{qlib}", fp], check=False)
 
         # 7. Update Bundle Identifiers in Info.plist files
         _log("Updating bundle identifiers...", 0.65)
@@ -1017,16 +1038,19 @@ def _build_apple_silicon_bundle(
         with open(main_plist_p, "wb") as pf:
             plistlib.dump(plist, pf)
 
-        # 9. Write Shell Launcher Script
-        _log("Writing shell launcher script...", 0.80)
-        launcher_path = os.path.join(staging_dir, "Contents", "MacOS", "HP Click")
-        if os.path.exists(launcher_path):
-            os.remove(launcher_path)
+        # patch_only: the launcher exists to point DYLD at the dylibs and the
+        # shim this mode never adds. HP's own executable is left in place.
+        if not patch_only:
+            # 9. Write Shell Launcher Script
+            _log("Writing shell launcher script...", 0.80)
+            launcher_path = os.path.join(staging_dir, "Contents", "MacOS", "HP Click")
+            if os.path.exists(launcher_path):
+                os.remove(launcher_path)
 
-        shim = os.path.exists(os.path.join(dst_lib_dir, "libclickgraft-pngshim.dylib"))
-        with open(launcher_path, "w", encoding="utf-8") as lf:
-            lf.write(launcher_script(manifest, preload=preload, shim=shim))
-        os.chmod(launcher_path, 0o755)
+            shim = os.path.exists(os.path.join(dst_lib_dir, "libclickgraft-pngshim.dylib"))
+            with open(launcher_path, "w", encoding="utf-8") as lf:
+                lf.write(launcher_script(manifest, preload=preload, shim=shim))
+            os.chmod(launcher_path, 0o755)
 
         # 9b. Neutralise Squirrel's installer.
         #
@@ -1068,30 +1092,43 @@ def _build_apple_silicon_bundle(
                 with open(target, "w", encoding="utf-8") as sf:
                     sf.write(shipit_stub)
                 os.chmod(target, 0o755)
+                # Sign the stub where it stands. HP's own Squirrel.framework
+                # (4.11.31) carries ShipIt at Versions/A/ShipIt as well as in
+                # Versions/A/Resources/, and the first of those is nested CODE:
+                # codesign refuses to sign the framework around an unsigned one
+                # with "code object is not signed at all". Electron's Squirrel,
+                # which a graft swaps in, has only the Resources copy, where a
+                # script is just a resource -- so this never fired until a
+                # patch_only copy kept HP's framework. A shell script signs
+                # perfectly well; it is being unsigned that is the problem.
+                run_cmd(["codesign", "--force", "-s", "-", target], check=False)
                 shipit_count += 1
         if shipit_count:
             _log(f"Squirrel installer disabled ({shipit_count} ShipIt binary replaced)", 0.88)
 
-        # 9c. The copy's own minimum macOS: the highest any Mach-O in it
-        # declares, and never lower than HP's. Stamped into the copy's
-        # Info.plist, never HP's, before signing seals it, so that a Mac too old
-        # for it gets macOS's own "requires macOS 15.0 or later" instead of a
-        # crash at launch. Electron's runtime is counted here for the first
-        # time, so this is checked against this Mac again.
-        _log("Setting the oldest macOS the copy will run on...", 0.89)
-        floor, reached_by = exact_floor(staging_dir, hp_declared=floor_plan["declared"])
-        if is_apple_silicon():
-            # Step 1b already refused a Mac older than HP's files and the
-            # bottles, and a dylib newer than that floor is never accepted, so
-            # a floor above it here can only have come from the engine.
-            refuse_if_too_old(floor, floor_reasons(floor_plan)
-                              if floor == floor_plan["floor"]
-                              else ["the files of the Apple Silicon engine ClickGraft puts in the copy"],
-                              manifest.get("app_version"), after_build=True)
-        stamp_minimum(staging_dir, floor)
-        _log(f"The copy needs macOS {format_version(floor)} or later"
-             + (f" ({len(reached_by)} file(s) declare it, e.g. {reached_by[0][0]})"
-                if reached_by else " (HP's own minimum)"), 0.89)
+        # patch_only: HP's own minimum stands. Nothing was added to the copy,
+        # so there is no file in it that could declare a higher one.
+        if not patch_only:
+            # 9c. The copy's own minimum macOS: the highest any Mach-O in it
+            # declares, and never lower than HP's. Stamped into the copy's
+            # Info.plist, never HP's, before signing seals it, so that a Mac too old
+            # for it gets macOS's own "requires macOS 15.0 or later" instead of a
+            # crash at launch. Electron's runtime is counted here for the first
+            # time, so this is checked against this Mac again.
+            _log("Setting the oldest macOS the copy will run on...", 0.89)
+            floor, reached_by = exact_floor(staging_dir, hp_declared=floor_plan["declared"])
+            if is_apple_silicon():
+                # Step 1b already refused a Mac older than HP's files and the
+                # bottles, and a dylib newer than that floor is never accepted, so
+                # a floor above it here can only have come from the engine.
+                refuse_if_too_old(floor, floor_reasons(floor_plan)
+                                  if floor == floor_plan["floor"]
+                                  else ["the files of the Apple Silicon engine ClickGraft puts in the copy"],
+                                  manifest.get("app_version"), after_build=True)
+            stamp_minimum(staging_dir, floor)
+            _log(f"The copy needs macOS {format_version(floor)} or later"
+                 + (f" ({len(reached_by)} file(s) declare it, e.g. {reached_by[0][0]})"
+                    if reached_by else " (HP's own minimum)"), 0.89)
 
         with open(os.path.join(staging_dir, "Contents", "Resources", "clickgraft-build.json"),
                   "w", encoding="utf-8") as provenance:
