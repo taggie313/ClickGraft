@@ -258,10 +258,17 @@ their copy is for another Mac.
 
 **Disclosure — "What ClickGraft uses them for":**
 
-> Two things: to read the app you already have, and to sign the copy it makes so
-> macOS will run it. The list below is exactly what it looks for.
+> One thing: to point the copy's bundled libraries at each other, so they load
+> from inside the copy instead of from wherever they were built. Reading your app,
+> and signing the copy, no longer need them. The list below is exactly what it
+> looks for.
 >
 > *(tool → path table)*
+
+**Why this shrank (27 Sep 2026):** ClickGraft used to shell out to `lipo`, `otool`,
+`nm` and `vtool` to read Mach-O files. It reads them itself now, so those four are
+gone from the requirement. What is left is `install_name_tool`, and `clang` for a
+full graft. The screen should keep getting shorter, not longer.
 
 **Note:** never print `xcode-select --install` as the primary instruction. A
 terminal command in a wizard is a failure of the wizard.

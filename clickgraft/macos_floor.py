@@ -36,6 +36,7 @@ import os
 import plistlib
 import subprocess
 
+from clickgraft import macho_read
 from clickgraft.macho import is_macho
 
 
@@ -99,44 +100,26 @@ def host_macos():
 
 
 def slice_minimums(path):
-    """{arch: version or None} for each slice of a Mach-O, via vtool.
+    """{arch: version or None} for each slice of a Mach-O.
 
-    A thin file's one slice is keyed "". Returns {} when vtool cannot read
-    the file at all. Only the macOS platform counts: a zippered library also
+    A thin file's one slice is keyed "". Returns {} when the file cannot be read
+    as a Mach-O at all. Only the macOS platform counts: a zippered library also
     carries a Mac Catalyst LC_BUILD_VERSION, which says nothing about macOS.
+
+    This used to reverse-engineer `vtool -show-build`'s text layout -- which
+    architecture heading it was under, which load command a `minos` line
+    belonged to -- and it now reads LC_BUILD_VERSION and LC_VERSION_MIN_MACOSX
+    out of the load commands instead. Same answers, measured: identical on every
+    Mach-O in three stock bundles and one grafted copy, 27 September 2026. The
+    reason for the change is that `vtool` is a hard link to the same xcrun shim
+    as `python3`, and this project would like to stop needing it.
     """
     try:
-        r = subprocess.run(["vtool", "-show-build", path], capture_output=True,
-                           text=True, errors="replace")
-    except OSError:
+        data = macho_read.read(path)
+        raw = macho_read.minimum_versions(data)
+    except (OSError, macho_read.MachOError):
         return {}
-    if r.returncode != 0:
-        return {}
-    out = {}
-    arch, cmd, platform = None, None, None
-    for line in r.stdout.splitlines():
-        if line and not line[0].isspace() and line.endswith(":"):
-            # "<path> (architecture arm64):" or, for a thin file, "<path>:"
-            marker = " (architecture "
-            arch = line[line.rfind(marker) + len(marker):-2] if line.endswith("):") \
-                and marker in line else ""
-            out.setdefault(arch, None)
-            cmd = platform = None
-            continue
-        key, _, value = line.strip().partition(" ")
-        value = value.strip()
-        if key == "cmd":
-            cmd, platform = value, None
-        elif key == "platform":
-            platform = value
-        elif arch is None:
-            continue
-        elif ((key == "minos" and cmd == "LC_BUILD_VERSION" and platform in ("MACOS", "1"))
-              or (key == "version" and cmd == "LC_VERSION_MIN_MACOSX")):
-            v = parse_version(value)
-            if v is not None and (out[arch] is None or v > out[arch]):
-                out[arch] = v
-    return out
+    return {arch: parse_version(text) if text else None for arch, text in raw.items()}
 
 
 def macho_minimum(path):

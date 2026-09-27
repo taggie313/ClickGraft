@@ -760,8 +760,10 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 .map { "\($0.key.padding(toLength: 20, withPad: " ", startingAt: 0))"
                      + "\($0.value.isEmpty ? "not found" : $0.value)" }
                 .joined(separator: "\n")
-            return "Two things: to read the app you already have, and to sign the copy it "
-                 + "makes so macOS will run it.\n\n" + list
+            return "One thing: to point the copy's bundled libraries at each other, so "
+                 + "they load from inside the copy instead of from wherever they were "
+                 + "built. Reading your app, and signing the copy, no longer need "
+                 + "them.\n\n" + list
         })
 
         let next = UI.button("Continue", self, #selector(showChoose), primary: true)

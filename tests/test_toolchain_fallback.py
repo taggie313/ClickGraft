@@ -69,3 +69,90 @@ def test_requirements_screen_checks_before_starting_the_backend():
     assert m, "showRequirements no longer starts with the toolchain check"
     assert "Toolchain.refresh()" in m.group(1)
     assert "showXcodeLicence()" in m.group(1)
+
+
+# --- the gate itself -------------------------------------------------------
+#
+# Until 27 Sep 2026 REQUIRED_CLT_TOOLS named codesign, ditto and getconf, which
+# are base-OS and can never be missing, and omitted clang and nm, which the build
+# needed. check_clt() therefore returned True on a Mac with no developer tools
+# and the build died at 55% inside the compiler. Two things stop that recurring:
+# the gate has to RUN a tool rather than stat it, and the list has to match what
+# the code actually invokes.
+
+SHIM_TOOLS = ["clang", "lipo", "otool", "nm", "vtool", "install_name_tool",
+              "strip", "dsymutil", "ld", "ar"]
+
+
+def _fake_tool(directory, name, body):
+    path = os.path.join(directory, name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body)
+    os.chmod(path, 0o755)
+    return path
+
+
+def test_gate_fails_when_a_tool_cannot_resolve(tmp_path, monkeypatch):
+    """A shim with no developer directory behind it exits non-zero on stderr.
+
+    shutil.which() finds it either way, which is exactly why the old check passed
+    on the Macs it existed to catch.
+    """
+    from clickgraft.deps import REQUIRED_CLT_TOOLS, check_clt
+
+    d = str(tmp_path)
+    for tool in REQUIRED_CLT_TOOLS:
+        _fake_tool(d, tool, "#!/bin/sh\necho 'xcrun: error: invalid DEVELOPER_DIR path' >&2\nexit 1\n")
+    monkeypatch.setenv("PATH", d + os.pathsep + os.environ["PATH"])
+    assert check_clt() is False
+
+    import shutil as _shutil
+    assert all(_shutil.which(t) is not None for t in REQUIRED_CLT_TOOLS), \
+        "the control is broken: the fakes must be findable, or this proves nothing"
+
+
+def test_gate_passes_when_a_tool_merely_complains_about_arguments(tmp_path, monkeypatch):
+    """Run with no arguments, a real tool prints usage and exits non-zero.
+
+    That is a pass. Treating a non-zero exit as failure would reject every
+    working Mac.
+    """
+    from clickgraft.deps import REQUIRED_CLT_TOOLS, check_clt
+
+    d = str(tmp_path)
+    for tool in REQUIRED_CLT_TOOLS:
+        _fake_tool(d, tool, "#!/bin/sh\necho 'usage: %s ...' >&2\nexit 1\n" % tool)
+    monkeypatch.setenv("PATH", d + os.pathsep + os.environ["PATH"])
+    assert check_clt() is True
+
+
+def test_required_list_matches_what_the_code_invokes():
+    """The list drifted once because nothing tied it to reality. This ties it."""
+    from clickgraft.deps import REQUIRED_CLT_TOOLS
+
+    invoked = set()
+    src_dir = os.path.join(ROOT, "clickgraft")
+    for fn in sorted(os.listdir(src_dir)):
+        if not fn.endswith(".py"):
+            continue
+        body = open(os.path.join(src_dir, fn), encoding="utf-8").read()
+        for tool in SHIM_TOOLS:
+            # As an argv element, not as a word in a comment.
+            if f'["{tool}"' in body or f'["{tool}",' in body:
+                invoked.add(tool)
+
+    assert invoked == set(REQUIRED_CLT_TOOLS), (
+        f"clickgraft/ invokes {sorted(invoked)} but REQUIRED_CLT_TOOLS is "
+        f"{sorted(REQUIRED_CLT_TOOLS)}")
+
+
+def test_base_os_tools_are_not_claimed_as_developer_tools():
+    """codesign, ditto and file ship with macOS and work with no Xcode at all.
+
+    Listing one as a Command Line Tool makes the gate unfalsifiable, which is
+    how it came to pass on a Mac that had none.
+    """
+    from clickgraft.deps import REQUIRED_CLT_TOOLS
+
+    for tool in ("codesign", "ditto", "file", "xattr", "getconf", "sw_vers"):
+        assert tool not in REQUIRED_CLT_TOOLS, f"{tool} is base-OS, not a developer tool"

@@ -536,7 +536,13 @@ class TestClickGraftAgent(unittest.TestCase):
         d = self.agent("env")
         self.assertIn("env", d)
         self.assertIn("4.8.117", d["env"]["versions"])
-        for t in ("codesign", "lipo", "otool"):
+        # Against the list the backend actually reports, not a second copy of it
+        # here. This used to name lipo and otool; they stopped being used on
+        # 27 Sep 2026 when macho_read replaced them, and a hardcoded copy in a
+        # test is how a list goes stale without anyone noticing.
+        from clickgraft.agent import REQUIRED_TOOLS
+        self.assertEqual(set(d["env"]["tools"]), set(REQUIRED_TOOLS))
+        for t in ("install_name_tool", "codesign"):
             self.assertIn(t, d["env"]["tools"])
         print(f"Test 18 PASSED: {len(d['candidates'])} candidate(s), versions {d['env']['versions']}.")
 

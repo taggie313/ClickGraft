@@ -24,31 +24,53 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# vtool reads the minimum macOS each Mach-O declares (clickgraft/macos_floor.py).
-# It has shipped with the Command Line Tools since Xcode 11, so requiring it asks
-# nothing new of anyone who can build at all.
-REQUIRED_CLT_TOOLS = ["codesign", "install_name_tool", "lipo", "otool", "vtool", "ditto", "getconf"]
+# What a build ACTUALLY needs from Apple's Command Line Tools, measured rather
+# than assumed. install_name_tool rewrites install names and adds the rpath the
+# APPE frameworks need, in both build modes; clang compiles the libpng NEON shim
+# and so only matters to a full graft.
+#
+# The list this replaces named codesign, ditto and getconf -- all three are
+# base-OS binaries that are present on a Mac with no developer tools at all, so
+# they could never fail -- and omitted clang and nm, which the build did need.
+# Measured on macOS 27, 27 September 2026: codesign, ditto, file and xattr are
+# separate real inodes that run with DEVELOPER_DIR pointing at an empty
+# directory, while install_name_tool, clang, lipo, otool, nm, vtool and python3
+# are all one 200,560-byte inode with 78 hard links -- a single xcrun shim. The
+# net effect of the old list was that check_clt() returned True on a Mac with no
+# tools and the build died at 55%, inside _compile_pngshim, with a message about
+# a compiler rather than about the tools.
+#
+# getconf appeared exactly once in the whole repository: in that list.
+#
+# lipo, otool, nm and vtool are gone from the list because they are gone from the
+# code -- clickgraft/macho_read.py reads the headers directly now.
+REQUIRED_CLT_TOOLS = ["install_name_tool", "clang"]
 
 
 def check_clt():
-    """Checks if all required Xcode Command Line Tools are installed."""
+    """Are the Command Line Tools actually usable?
+
+    Runs each tool instead of looking it up. shutil.which() finds the xcrun shim
+    whether or not a developer directory resolves behind it, so the old check
+    passed on exactly the Macs it existed to catch. A shim with nothing behind it
+    prints "xcrun: error: ..." and exits non-zero; a tool that really ran
+    complains about its arguments instead, which is a pass.
+
+    One side effect worth knowing: on a Mac with no tools at all, running a shim
+    is what makes macOS offer to install them. That is the offer the Requirements
+    screen tells the user to expect, so triggering it here is not a surprise --
+    but it is the reason this is called from the preflight and the environment
+    report, and not from the middle of a build.
+    """
     for tool in REQUIRED_CLT_TOOLS:
-        if shutil.which(tool) is None:
+        try:
+            r = subprocess.run([tool], capture_output=True, text=True,
+                               errors="replace", timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if "xcrun: error" in (r.stderr or ""):
             return False
     return True
-
-
-def install_clt_interactive():
-    """Triggers xcode-select --install and blocks/polls until Xcode CLT installation completes."""
-    try:
-        subprocess.run(["xcode-select", "--install"], check=True)
-    except subprocess.CalledProcessError:
-        pass  # May already be downloading or installed
-
-    # Poll until check_clt returns True
-    import time
-    while not check_clt():
-        time.sleep(2)
 
 
 def get_cache_dir():

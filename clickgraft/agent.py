@@ -96,7 +96,11 @@ from clickgraft.verify import VerifyError, processes_inside, verify_app_bundle
 # vtool since 1.5.9: it reads the minimum macOS each file in a copy declares
 # (clickgraft/macos_floor.py). Listed here so the Requirements screen's detail,
 # and test_toolchain_fallback's run on the Command Line Tools alone, cover it.
-REQUIRED_TOOLS = ["codesign", "install_name_tool", "lipo", "otool", "nm", "vtool", "ditto"]
+# Reported in the environment payload so a problem report can say what was on
+# the machine. Not a gate -- check_clt() is. The first two come from Apple's
+# Command Line Tools; the rest are base-OS and are listed because "not found"
+# against one of them would mean something has gone very wrong with the Mac.
+REQUIRED_TOOLS = ["install_name_tool", "clang", "codesign", "ditto", "file"]
 APP_NAME = "HP Click (Apple Silicon).app"
 # What build.py step 7 sets on every copy, and nothing of HP's uses.
 COPY_BUNDLE_ID = "com.hp.hpclick.arm64"

@@ -20,6 +20,7 @@ from clickgraft.asar import AsarArchive
 from clickgraft.bundle_audits import (CRASH_PACKAGE_JSON, LAUNCHER, SNMP_CREDENTIAL_FRAGMENT,
                                       _manifest_patches_snmp_line, check_launcher,
                                       check_minimum_macos, check_patch_outcomes)
+from clickgraft import macho_read
 from clickgraft.macho import get_archs, get_load_dylibs, is_macho
 
 
@@ -776,24 +777,22 @@ def verify_app_bundle(target_app_path, manifest=None, *, results, step):
     for root, _dirs, files in os.walk(target_app_path):
         for f in files:
             fp = os.path.join(root, f)
-            if not is_macho(fp) or "arm64" not in get_archs(fp):
+            if not is_macho(fp):
                 continue
-            u = subprocess.run(["nm", "-m", "-arch", "arm64", "-u", fp],
-                               capture_output=True, text=True)
-            for line in u.stdout.splitlines():
-                if "dynamically looked up" not in line:
+            try:
+                data = macho_read.read(fp)
+                if "arm64" not in macho_read.archs(data):
                     continue
-                parts = line.split()
-                for tok in parts:
-                    if tok.startswith("_") and len(tok) > 1:
-                        flat_undef.add(tok[1:])
-                        break
-            d = subprocess.run(["nm", "-arch", "arm64", "-g", "--defined-only", fp],
-                               capture_output=True, text=True)
-            for line in d.stdout.splitlines():
-                cols = line.split()
-                if len(cols) >= 3 and cols[2].startswith("_"):
-                    exported.add(cols[2][1:])
+                flat = macho_read.flat_undefined_symbols(data, "arm64")
+                defined = macho_read.defined_global_symbols(data, "arm64")
+            except (OSError, macho_read.MachOError):
+                continue
+            # One underscore, not lstrip: the C symbol ___stack_chk_fail really
+            # is spelled with three, and lstrip would compare it against a name
+            # that exists nowhere. Both sides are stripped the same way, which
+            # is all that matters as long as it is done exactly once.
+            flat_undef |= {s[1:] for s in flat if s.startswith("_") and len(s) > 1}
+            exported |= {s[1:] for s in defined if s.startswith("_")}
 
     unprovided = flat_undef - exported
     unexpected = sorted(unprovided - accepted_missing)

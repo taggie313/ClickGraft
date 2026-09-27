@@ -21,7 +21,7 @@ from clickgraft.asar import AsarArchive, patch_and_repack_asar
 from clickgraft.deps import _sha256_of, choose_bottles, fetch_electron, resolve_dylib
 from clickgraft.macos_floor import (exact_floor, floor_reasons, format_version,
                                     plan_floor, refuse_if_too_old, stamp_minimum)
-from clickgraft.macho import run_cmd
+from clickgraft.macho import get_load_dylibs, run_cmd
 from clickgraft.patches import PatchEngine
 from clickgraft.signing import sign_bundle
 from clickgraft.verify import processes_inside
@@ -976,9 +976,7 @@ def _build_apple_silicon_bundle(
             for dylib_info in manifest.get("required_dylibs", []):
                 dst_d = os.path.join(dst_lib_dir, dylib_info["name"])
                 if os.path.exists(dst_d):
-                    otool_out = run_cmd(["otool", "-L", dst_d], check=False)
-                    for line in otool_out.splitlines()[1:]:
-                        dep = line.strip().split()[0]
+                    for dep in get_load_dylibs(dst_d):
                         if dep.startswith("/opt/homebrew") or dep.startswith("/usr/local"):
                             dep_name = os.path.basename(dep)
                             run_cmd(["install_name_tool", "-change", dep, f"@rpath/{dep_name}", dst_d], check=False)
@@ -990,9 +988,7 @@ def _build_apple_silicon_bundle(
                 for f in files:
                     if f.endswith(".node") or f.endswith(".dylib"):
                         fp = os.path.join(root, f)
-                        otool_out = run_cmd(["otool", "-L", fp], check=False)
-                        for line in otool_out.splitlines()[1:]:
-                            dep = line.strip().split()[0]
+                        for dep in get_load_dylibs(fp):
                             for qlib in qt_libs:
                                 if dep.endswith(qlib) and not dep.startswith("@rpath/"):
                                     run_cmd(["install_name_tool", "-change", dep, f"@rpath/{qlib}", fp], check=False)
