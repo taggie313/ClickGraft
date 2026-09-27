@@ -760,10 +760,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 .map { "\($0.key.padding(toLength: 20, withPad: " ", startingAt: 0))"
                      + "\($0.value.isEmpty ? "not found" : $0.value)" }
                 .joined(separator: "\n")
-            return "One thing: to point the copy's bundled libraries at each other, so "
-                 + "they load from inside the copy instead of from wherever they were "
-                 + "built. Reading your app, and signing the copy, no longer need "
-                 + "them.\n\n" + list
+            return "Nothing, any more. Making a copy needs no tool from this list: "
+                 + "reading your app, rewriting the copy's libraries and signing it are "
+                 + "all done without them. What still needs them is ClickGraft itself \u{2014} "
+                 + "it starts through /usr/bin/python3, which Apple ships as part of the "
+                 + "same set.\n\n" + list
         })
 
         let next = UI.button("Continue", self, #selector(showChoose), primary: true)

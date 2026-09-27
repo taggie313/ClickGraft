@@ -19,10 +19,10 @@ from clickgraft.verify import verify_app_bundle
 def cmd_preflight(args):
     print("[+] === Running Preflight Checks ===")
     if not check_clt():
-        print("[ERROR] Xcode Command Line Tools are missing or incomplete.")
-        print("Run 'xcode-select --install' to install clang, which a full graft needs to build the libpng shim.")
+        print("[ERROR] A tool this build needs is missing or unusable.")
+        print("Run 'xcode-select --install' and try again.")
         sys.exit(1)
-    print("[+] Xcode Command Line Tools: INSTALLED")
+    print("[+] Developer tools: none needed to make a copy")
 
     mm = ManifestManager()
     print(f"[+] Loaded {len(mm.manifests)} version manifest(s) from {mm.manifests_dir}")

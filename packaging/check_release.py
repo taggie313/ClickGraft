@@ -328,6 +328,55 @@ def check_manifests(folder):
                       [line for failure in failures for line in failure.splitlines()])
 
 
+def check_pngshim(root=ROOT):
+    """Rebuild the shipped PNG shim from its C source and compare the code.
+
+    This is the price of shipping a binary. ClickGraft used to compile the shim
+    on the user's Mac, and the reason given for not shipping it was exactly
+    right: "a 16KB .dylib in git that nobody can diff is worse than four lines
+    of C". Shipping it removed clang from what a user needs, so the objection
+    has to be answered rather than dropped -- the .c stays the reviewable thing,
+    and the release cannot go out unless the .dylib is that .c compiled.
+
+    Compared as code, not as bytes. LC_BUILD_VERSION records the SDK, so the
+    same source built against MacOSX15, MacOSX26 and MacOSX27 gives three
+    different files -- while __TEXT,__text, the exports, the install name and
+    the declared minimum are identical across all three (measured 28 September
+    2026). Those are what the copy depends on.
+    """
+    from clickgraft import macho_read
+
+    shipped = root / 'clickgraft/shims/libclickgraft-pngshim.dylib'
+    if not shipped.exists():
+        raise Refused(f'The PNG shim is missing: {shipped}')
+    with tempfile.TemporaryDirectory(prefix='cg-pngshim-') as folder:
+        fresh = Path(folder) / 'rebuilt.dylib'
+        run = subprocess.run([str(root / 'packaging/build_pngshim.sh'), str(fresh)],
+                             cwd=str(root), capture_output=True, text=True)
+        if run.returncode:
+            raise Refused('The PNG shim could not be rebuilt from pngshim.c.',
+                          (run.stdout + run.stderr).strip().splitlines()[-4:])
+        a, b = macho_read.read(str(shipped)), macho_read.read(str(fresh))
+
+        def facts(data):
+            return {
+                'code': macho_read.section_data(data, 'arm64', '__TEXT', '__text'),
+                'exports': sorted(macho_read.defined_global_symbols(data, 'arm64')),
+                'install name': macho_read.dylib_paths(data)[:1],
+                'architectures': macho_read.archs(data),
+                'minimum macOS': sorted(set(macho_read.minimum_versions(data).values())),
+            }
+
+        shipped_facts, fresh_facts = facts(a), facts(b)
+        differences = [f'{key}: shipped {shipped_facts[key]!r}, rebuilt {fresh_facts[key]!r}'
+                       for key in shipped_facts if shipped_facts[key] != fresh_facts[key]]
+        if differences:
+            raise Refused(
+                'The shipped PNG shim is not what pngshim.c compiles to. '
+                'Rebuild it with packaging/build_pngshim.sh and commit it.',
+                differences)
+
+
 def source_gate(root=ROOT, say=print):
     if sys.platform != 'darwin':
         raise Refused('The release gate needs macOS. The portable tests alone cannot approve a release.')
@@ -337,6 +386,8 @@ def source_gate(root=ROOT, say=print):
         raise Refused('The release gate needs the developer tools and a stock HP Click 4.8.117 in /Applications.')
     check_manifests(root / 'manifests')
     say('  ✓ every manifest passes the patch guard')
+    check_pngshim(root)
+    say('  ✓ the shipped PNG shim is what pngshim.c compiles to')
     if subprocess.run([sys.executable, '-m', 'pytest', '-q', '-rs', 'tests'], cwd=str(root)).returncode:
         raise Refused('The tests failed. Their output is above.')
     say('  ✓ the tests passed. Read every skipped case listed above')

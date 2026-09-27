@@ -258,17 +258,25 @@ their copy is for another Mac.
 
 **Disclosure — "What ClickGraft uses them for":**
 
-> One thing: to point the copy's bundled libraries at each other, so they load
-> from inside the copy instead of from wherever they were built. Reading your app,
-> and signing the copy, no longer need them. The list below is exactly what it
-> looks for.
+> Nothing, any more. Making a copy needs no tool from this list: reading your
+> app, rewriting the copy's libraries and signing it are all done without them.
+> What still needs them is ClickGraft itself — it starts through
+> `/usr/bin/python3`, which Apple ships as part of the same set. The list below
+> is exactly what it looks for.
 >
 > *(tool → path table)*
 
-**Why this shrank (27 Sep 2026):** ClickGraft used to shell out to `lipo`, `otool`,
-`nm` and `vtool` to read Mach-O files. It reads them itself now, so those four are
-gone from the requirement. What is left is `install_name_tool`, and `clang` for a
-full graft. The screen should keep getting shorter, not longer.
+**Why this shrank to nothing (27–28 Sep 2026):** ClickGraft shelled out to `lipo`,
+`otool`, `nm` and `vtool` to read Mach-O files, and to `install_name_tool` to
+rewrite them; it now does both itself. The libpng shim was compiled on the user's
+Mac and now ships prebuilt, which was the last thing wanting `clang`. So a build
+needs no developer tool at all.
+
+**The screen cannot go yet, and should not.** `/usr/bin/python3` is the same
+binary as `clang` — one shim with 78 hard links — and the whole backend runs on
+it. Removing this screen before ClickGraft carries its own Python would delete
+the *explanation* of the requirement, not the requirement, and leave someone
+without the tools staring at an app that does not start.
 
 **Note:** never print `xcode-select --install` as the primary instruction. A
 terminal command in a wizard is a failure of the wizard.

@@ -24,32 +24,26 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# What a build ACTUALLY needs from Apple's Command Line Tools, measured rather
-# than assumed. Exactly one thing is left: clang, which compiles the four-line
-# libpng NEON shim. That is on the full-graft path only, so a patch_only copy --
-# 4.11.31's frozen copy -- now needs no developer tool at all, and the only
-# reason the requirement has not gone entirely is that the backend itself runs
-# on /usr/bin/python3, which is the same shim.
+# What a build ACTUALLY needs from Apple's Command Line Tools: nothing.
 #
-# install_name_tool left this list on 27 September 2026 when macho_write.py
-# started rewriting install names and rpaths directly.
+# This list has been shrinking all day and has now reached empty. It named
+# codesign, ditto and getconf -- all base-OS, so they could never fail -- while
+# omitting clang and nm, which the build did need; check_clt() therefore
+# returned True on a Mac with no developer tools and the build died at 55%
+# inside the compiler. Correcting it left install_name_tool and clang. Then
+# macho_read.py replaced lipo, otool, nm and vtool, macho_write.py replaced
+# install_name_tool, and the libpng shim started shipping prebuilt instead of
+# being compiled on every user's Mac, which was the only thing wanting clang.
 #
-# The list this replaces named codesign, ditto and getconf -- all three are
-# base-OS binaries that are present on a Mac with no developer tools at all, so
-# they could never fail -- and omitted clang and nm, which the build did need.
-# Measured on macOS 27, 27 September 2026: codesign, ditto, file and xattr are
-# separate real inodes that run with DEVELOPER_DIR pointing at an empty
-# directory, while install_name_tool, clang, lipo, otool, nm, vtool and python3
-# are all one 200,560-byte inode with 78 hard links -- a single xcrun shim. The
-# net effect of the old list was that check_clt() returned True on a Mac with no
-# tools and the build died at 55%, inside _compile_pngshim, with a message about
-# a compiler rather than about the tools.
+# The requirement has NOT gone, and this list is not the place it lives: the
+# backend runs on /usr/bin/python3, which is the same 200,560-byte inode with
+# 78 hard links as clang and the rest. Nothing here can check that -- by the
+# time this code runs, it has already succeeded -- so the honest answer is that
+# a build needs no developer tool beyond the one that started ClickGraft.
 #
-# getconf appeared exactly once in the whole repository: in that list.
-#
-# lipo, otool, nm and vtool are gone from the list because they are gone from the
-# code -- clickgraft/macho_read.py reads the headers directly now.
-REQUIRED_CLT_TOOLS = ["clang"]
+# The machinery stays for when a tool comes back. It is cheaper to keep an
+# empty list honest than to rediscover why there was a check.
+REQUIRED_CLT_TOOLS = []
 
 
 def check_clt():

@@ -95,20 +95,25 @@ def _fake_tool(directory, name, body):
 def test_gate_fails_when_a_tool_cannot_resolve(tmp_path, monkeypatch):
     """A shim with no developer directory behind it exits non-zero on stderr.
 
-    shutil.which() finds it either way, which is exactly why the old check passed
-    on the Macs it existed to catch.
+    shutil.which() finds it either way, which is why the old check passed on
+    exactly the Macs it existed to catch. The list is empty today -- nothing a
+    build does needs a developer tool any more -- so the mechanism is exercised
+    with an injected one. An empty list makes check_clt() vacuously true, and a
+    test that passed for that reason would guard nothing on the day a tool
+    comes back.
     """
-    from clickgraft.deps import REQUIRED_CLT_TOOLS, check_clt
+    from clickgraft import deps
 
     d = str(tmp_path)
-    for tool in REQUIRED_CLT_TOOLS:
-        _fake_tool(d, tool, "#!/bin/sh\necho 'xcrun: error: invalid DEVELOPER_DIR path' >&2\nexit 1\n")
+    _fake_tool(d, "pretend_tool",
+               "#!/bin/sh\necho 'xcrun: error: invalid DEVELOPER_DIR path' >&2\nexit 1\n")
     monkeypatch.setenv("PATH", d + os.pathsep + os.environ["PATH"])
-    assert check_clt() is False
+    monkeypatch.setattr(deps, "REQUIRED_CLT_TOOLS", ["pretend_tool"])
+    assert deps.check_clt() is False
 
     import shutil as _shutil
-    assert all(_shutil.which(t) is not None for t in REQUIRED_CLT_TOOLS), \
-        "the control is broken: the fakes must be findable, or this proves nothing"
+    assert _shutil.which("pretend_tool") is not None, \
+        "the control is broken: the fake must be findable, or this proves nothing"
 
 
 def test_gate_passes_when_a_tool_merely_complains_about_arguments(tmp_path, monkeypatch):
@@ -117,12 +122,26 @@ def test_gate_passes_when_a_tool_merely_complains_about_arguments(tmp_path, monk
     That is a pass. Treating a non-zero exit as failure would reject every
     working Mac.
     """
-    from clickgraft.deps import REQUIRED_CLT_TOOLS, check_clt
+    from clickgraft import deps
 
     d = str(tmp_path)
-    for tool in REQUIRED_CLT_TOOLS:
-        _fake_tool(d, tool, "#!/bin/sh\necho 'usage: %s ...' >&2\nexit 1\n" % tool)
+    _fake_tool(d, "pretend_tool", "#!/bin/sh\necho 'usage: pretend_tool ...' >&2\nexit 1\n")
     monkeypatch.setenv("PATH", d + os.pathsep + os.environ["PATH"])
+    monkeypatch.setattr(deps, "REQUIRED_CLT_TOOLS", ["pretend_tool"])
+    assert deps.check_clt() is True
+
+
+def test_a_build_needs_no_developer_tool():
+    """The state Phase 3 reached, asserted so a regression is loud.
+
+    If something starts shelling out to clang, lipo, otool, nm, vtool or
+    install_name_tool again, this fails alongside the list test below -- which
+    is the point. The remaining requirement is /usr/bin/python3, and no test
+    inside Python can check that.
+    """
+    from clickgraft.deps import REQUIRED_CLT_TOOLS, check_clt
+
+    assert REQUIRED_CLT_TOOLS == []
     assert check_clt() is True
 
 

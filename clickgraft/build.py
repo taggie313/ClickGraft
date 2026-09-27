@@ -21,7 +21,7 @@ from clickgraft.asar import AsarArchive, patch_and_repack_asar
 from clickgraft.deps import _sha256_of, choose_bottles, fetch_electron, resolve_dylib
 from clickgraft.macos_floor import (exact_floor, floor_reasons, format_version,
                                     plan_floor, refuse_if_too_old, stamp_minimum)
-from clickgraft import macho_write
+from clickgraft import macho_read, macho_write
 from clickgraft.macho import get_load_dylibs, run_cmd
 from clickgraft.patches import PatchEngine
 from clickgraft.signing import sign_bundle
@@ -960,18 +960,33 @@ def _build_apple_silicon_bundle(
             # NEON versions. Doing nothing leaves the C paths, which is exactly what
             # this build has always actually used -- the symbol was never resolvable.
             #
-            # Compiled here rather than shipped as a binary: the toolchain is already
-            # a hard requirement (preflight checks for it), and a 16KB .dylib in git
-            # that nobody can diff is worse than four lines of C.
-            shim_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shims", "pngshim.c")
+            # Shipped prebuilt rather than compiled here. It used to be built on
+            # the user's Mac, on the reasoning that the toolchain was a hard
+            # requirement anyway and "a 16KB .dylib in git that nobody can diff
+            # is worse than four lines of C". The first half stopped being true
+            # -- clang is the last developer tool a build needs, and this is the
+            # only thing that needs it -- and the second half is answered rather
+            # than ignored: packaging/check_release.py rebuilds this from
+            # pngshim.c and compares the code, so the .c is still the reviewable
+            # thing and the .dylib has to match it. packaging/build_pngshim.sh
+            # is how it is made.
+            #
+            # It also deletes a failure class. Building on the user's machine
+            # meant their SDK had to be readable by their linker, and on
+            # 10 Sep 2026 a field report had macOS 26.6 with a macOS 27 SDK:
+            # "ld: tapi error: malformed file ... unknown architecture
+            # arm64e.x1-macos". The shim is the same 16 KB on every Mac, so
+            # there was never anything to gain by building it 3,000 times.
             shim_name = "libclickgraft-pngshim.dylib"
+            shim_src = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "shims", shim_name)
             shim_dst = os.path.join(dst_lib_dir, shim_name)
-            if os.path.exists(shim_src):
-                _compile_pngshim(shim_src, shim_dst, shim_name, _log)
-                os.chmod(shim_dst, 0o755)
-                _log("Built libpng NEON shim (HP references a symbol nothing exports)", 0.55)
-            else:
-                raise FileNotFoundError(f"png shim source missing: {shim_src}")
+            if not os.path.exists(shim_src):
+                raise FileNotFoundError(f"png shim missing: {shim_src}")
+            _check_pngshim(shim_src)
+            shutil.copy2(shim_src, shim_dst)
+            os.chmod(shim_dst, 0o755)
+            _log("Installed libpng NEON shim (HP references a symbol nothing exports)", 0.55)
 
             # Rewrite internal Homebrew paths inside bundled dylibs to @rpath
             for dylib_info in manifest.get("required_dylibs", []):
@@ -1204,173 +1219,51 @@ exec "$DIR/HPClickExe" "$@"
 """
 
 
-def _macos_sdks():
-    """Every macOS SDK on the machine, newest first.
+def _check_pngshim(path):
+    """Is the shipped shim the thing the build expects?
 
-    Both toolchain locations, because a machine can have Command Line Tools,
-    Xcode, or both, and the broken one is not always the one `xcode-select`
-    points at.
+    Structural, not a checksum: a recorded hash would have to change every time
+    the file is rebuilt against a newer SDK -- LC_BUILD_VERSION records it --
+    and would then be a number nobody checks. These four facts are what the copy
+    actually depends on, and they are read out of the Mach-O with no tools.
+
+    The release gate does the stronger check, rebuilding from pngshim.c and
+    comparing the code, because that is the one that needs a compiler and the
+    maintainer has one.
     """
-    import glob
-    roots = [
-        "/Library/Developer/CommandLineTools/SDKs/MacOSX*.sdk",
-        "/Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform"
-        "/Developer/SDKs/MacOSX*.sdk",
-    ]
-    found = []
-    for pattern in roots:
-        found.extend(glob.glob(pattern))
+    try:
+        data = macho_read.read(path)
+        archs = macho_read.archs(data)
+        exports = macho_read.defined_global_symbols(data, "arm64")
+        ident = macho_read.dylib_paths(data)[:1]
+        minos = macho_read.minimum_versions(data)
+    except (OSError, macho_read.MachOError) as e:
+        raise RuntimeError(f"The bundled PNG shim could not be read: {path}\n{e}")
 
-    def version_key(path):
-        digits = "".join(c if c.isdigit() or c == "." else " "
-                         for c in os.path.basename(path))
-        parts = [int(n) for n in digits.split(".")[0].split() if n.isdigit()]
-        return parts[0] if parts else -1
-
-    return sorted(set(found), key=version_key, reverse=True)
-
-
-def _salient_error_line(message, limit=110):
-    """The most informative line of a captured stderr, for a failure list."""
-    # 1. Ignore empty/whitespace-only lines.
-    raw_lines = [line for line in message.splitlines() if line.strip()]
-    if not raw_lines:
-        return "(no output)"
-
-    # 2. Ignore the leading `Command failed: ...` line and a bare `Stderr:` line.
-    #    A line beginning `Stderr:` that has text after the colon keeps that text.
-    cleaned_lines = []
-    for i, line in enumerate(raw_lines):
-        stripped = line.strip()
-        if i == 0 and stripped.startswith("Command failed:"):
-            continue
-        if stripped == "Stderr:":
-            continue
-        if stripped.startswith("Stderr:"):
-            after = stripped[len("Stderr:"):].strip()
-            if not after:
-                continue
-            cleaned_lines.append(after)
-        else:
-            cleaned_lines.append(stripped)
-
-    # 3. Ignore lines that are pure toolchain boilerplate, matched case-insensitively
-    #    as a SUBSTRING so a prefixed line still matches:
-    #        - `linker command failed with exit code`
-    #        - `use -v to see invocation`
-    #        - `error generated.`  and  `errors generated.`
-    boilerplate = (
-        "linker command failed with exit code",
-        "use -v to see invocation",
-        "error generated.",
-        "errors generated.",
-    )
-    remaining_lines = [
-        line for line in cleaned_lines
-        if not any(bp in line.lower() for bp in boilerplate)
-    ]
-
-    # 4. From what remains, prefer the FIRST line containing any of, case-insensitive:
-    #    `error:`, `ld:`, `tapi`, `fatal`, `cannot`, `no such`, `not found`.
-    salient_keywords = (
-        "error:",
-        "ld:",
-        "tapi",
-        "fatal",
-        "cannot",
-        "no such",
-        "not found",
-    )
-    selected = None
-    for line in remaining_lines:
-        lower = line.lower()
-        if any(kw in lower for kw in salient_keywords):
-            selected = line
-            break
-
-    # 5. If none match, take the first remaining line.
-    if selected is None and remaining_lines:
-        selected = remaining_lines[0]
-
-    # 6. If nothing remains at all, return the last non-empty line of the original
-    #    message; if the message has no non-empty line, return `"(no output)"`.
-    if selected is None:
-        if cleaned_lines:
-            selected = cleaned_lines[-1]
-        elif raw_lines:
-            for line in reversed(raw_lines):
-                s = line.strip()
-                if s != "Stderr:":
-                    selected = s
-                    break
-            if selected is None:
-                selected = raw_lines[-1]
-        else:
-            return "(no output)"
-
-    # 7. Collapse internal whitespace runs to a single space, strip, then truncate to
-    #    `limit` characters. If truncated, the result must end with `…` (U+2026) and
-    #    the total length must be exactly `limit`.
-    collapsed = " ".join(selected.split())
-    if limit <= 0:
-        return ""
-    if len(collapsed) > limit:
-        return collapsed[:limit - 1] + "…"
-    return collapsed
-
-
-def _compile_pngshim(src, dst, name, log=None):
-    """Build the shim, surviving a toolchain whose SDK its own linker can't read.
-
-    The default SDK is tried first because it is right on almost every machine.
-    When it is not, the failure is ugly and looks like ClickGraft's fault:
-
-        ld: tapi error: malformed file
-        .../MacOSX27.0.sdk/usr/lib/libSystem.B.tbd: error: unknown architecture
-                           arm64e.x1-macos, arm64e.x1-maccatalyst ]
-
-    That is an SDK newer than the linker being asked to parse it -- a
-    half-updated Xcode or Command Line Tools. Reported from the field on
-    10 Sep 2026, macOS 26.6 with a macOS 27 SDK.
-
-    `-nostdlib` looks like the obvious escape, since this shim is a no-op that
-    references nothing, but the linker refuses: "dynamic executables or dylibs
-    must link with libSystem.dylib". So instead pick a different SDK. Machines
-    carry several -- this one has five -- and an older one parses fine.
-    """
-    # -mmacosx-version-min, because clang's default deployment target is the
-    # macOS it runs on: built on macOS 27 without it, this shim declared minos
-    # 27.0 (measured 22 Sep 2026), and the copy's floor is the highest minimum
-    # in it. 11.0 is the first macOS on Apple Silicon, and the shim calls
-    # nothing, so it never raises the floor.
-    base = ["clang", "-arch", "arm64", "-dynamiclib", "-O2",
-            "-mmacosx-version-min=11.0",
-            "-install_name", f"@rpath/{name}"]
-    attempts = [(None, base + ["-o", dst, src])]
-    for sdk in _macos_sdks():
-        attempts.append((sdk, base + ["-isysroot", sdk, "-o", dst, src]))
-
-    failures = []
-    for sdk, cmd in attempts:
-        try:
-            run_cmd(cmd)
-            if sdk is not None and log is not None:
-                log(f"Default SDK unusable; built the shim against "
-                    f"{os.path.basename(sdk)} instead", 0.55)
-            return
-        except RuntimeError as e:
-            # CLT and Xcode ship SDKs with identical basenames, so name the
-            # toolchain too or the list looks like it repeated itself.
-            where = "Xcode" if "/Xcode" in (sdk or "") else "CLT"
-            label = f"{where} {os.path.basename(sdk)}" if sdk else "default SDK"
-            failures.append(f"  {label}: {_salient_error_line(str(e))}")
-
-    raise RuntimeError(
-        "Could not compile the PNG shim with any SDK on this Mac.\n\n"
-        "This is a broken developer toolchain rather than a problem with your "
-        "HP Click. It usually means Xcode and the Command Line Tools are at "
-        "different versions, so the linker cannot read its own SDK.\n\n"
-        "Try:  sudo rm -rf /Library/Developer/CommandLineTools\n"
-        "      sudo xcode-select --install\n\n"
-        "and if you have Xcode installed, open it once so it finishes setting "
-        "up. Tried " + str(len(attempts)) + " SDK(s):\n" + "\n".join(failures))
+    problems = []
+    if archs != ["arm64"]:
+        problems.append(f"architectures are {archs}, expected ['arm64']")
+    if "_png_init_filter_functions_neon" not in exports:
+        problems.append("it does not export _png_init_filter_functions_neon, "
+                        "which is the only reason it exists")
+    if ident != ["@rpath/libclickgraft-pngshim.dylib"]:
+        problems.append(f"its install name is {ident}, expected "
+                        f"['@rpath/libclickgraft-pngshim.dylib']")
+    # The copy's floor is the highest minimum inside it, so a shim built without
+    # an explicit deployment target would quietly raise it to whatever macOS the
+    # maintainer's Mac was running. Measured 22 Sep 2026: that gave 27.0.
+    if set(minos.values()) - {"11.0"}:
+        problems.append(f"it declares a minimum macOS of {sorted(set(minos.values()))}, "
+                        f"expected 11.0")
+    # dyld refuses a dylib with no LC_UUID, and it is the only thing that does:
+    # codesign, lipo, vtool and otool all accept one. A shim linked with
+    # -Wl,-no_uuid killed the app with signal 6 on 28 Sep 2026, and only the
+    # smoke launch noticed.
+    if not macho_read.has_load_command(data, macho_read.LC_UUID):
+        problems.append("it has no LC_UUID, so dyld will refuse to load it "
+                        "(was it linked with -Wl,-no_uuid?)")
+    if problems:
+        raise RuntimeError(
+            "The bundled PNG shim is not what this build expects:\n  - "
+            + "\n  - ".join(problems)
+            + f"\n\nRebuild it with packaging/build_pngshim.sh. File: {path}")

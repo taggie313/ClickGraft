@@ -348,15 +348,17 @@ def test_the_early_floor_says_when_homebrew_could_not_be_asked(tmp_path, brew):
     assert macos_floor.floor_reasons(plan) == ["files HP ships inside HP Click itself"]
 
 
-@needs_clang
-def test_the_png_shim_never_raises_the_floor(tmp_path):
-    """clang's default target is the macOS it runs on: 27.0 here, unasked."""
-    from clickgraft.build import _compile_pngshim
-    src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                       "clickgraft", "shims", "pngshim.c")
-    out = str(tmp_path / "libclickgraft-pngshim.dylib")
-    _compile_pngshim(src, out, "libclickgraft-pngshim.dylib")
-    assert macho_minimum(out) == (11, 0, 0)
+def test_the_png_shim_never_raises_the_floor():
+    """The copy's floor is the highest minimum inside it, and the shim is in it.
+
+    clang's default deployment target is the macOS it runs on -- 27.0 here,
+    unasked -- so build_pngshim.sh passes -mmacosx-version-min=11.0. Asserted
+    against the SHIPPED binary rather than a fresh compile: that is the file a
+    copy actually gets, and since 28 Sep 2026 it is not built on the user's Mac.
+    """
+    shim = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "clickgraft", "shims", "libclickgraft-pngshim.dylib")
+    assert macho_minimum(shim) == (11, 0, 0)
 
 
 # ---------------------------------------------------------------------------

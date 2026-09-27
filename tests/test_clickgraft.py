@@ -542,7 +542,7 @@ class TestClickGraftAgent(unittest.TestCase):
         # test is how a list goes stale without anyone noticing.
         from clickgraft.agent import REQUIRED_TOOLS
         self.assertEqual(set(d["env"]["tools"]), set(REQUIRED_TOOLS))
-        for t in ("clang", "codesign"):
+        for t in ("codesign", "ditto"):
             self.assertIn(t, d["env"]["tools"])
         print(f"Test 18 PASSED: {len(d['candidates'])} candidate(s), versions {d['env']['versions']}.")
 

@@ -51,6 +51,7 @@ LC_LOAD_WEAK_DYLIB = 0x18 | LC_REQ_DYLD
 LC_REEXPORT_DYLIB = 0x1F | LC_REQ_DYLD
 LC_LOAD_UPWARD_DYLIB = 0x23 | LC_REQ_DYLD
 LC_RPATH = 0x1C | LC_REQ_DYLD
+LC_UUID = 0x1B
 LC_VERSION_MIN_MACOSX = 0x24
 LC_BUILD_VERSION = 0x32
 
@@ -292,6 +293,64 @@ def minimum_versions(data):
         if best is not None:
             out[key] = _format_version(best)
     return out
+
+
+def has_load_command(data, cmd):
+    """Does every slice carry this load command?
+
+    Added for LC_UUID, which dyld requires and nothing else notices is missing.
+    Linking the PNG shim with -Wl,-no_uuid made it byte-reproducible and
+    completely unloadable: codesign, lipo, vtool and otool were all satisfied,
+    and the app died with "missing LC_UUID load command" (28 September 2026).
+    """
+    found = False
+    for _name, off, _size in slices(data):
+        present = any(c == cmd for c, _size2, _o in load_commands(data, off))
+        if not present:
+            return False
+        found = True
+    return found
+
+
+def section_data(data, arch, segname, sectname):
+    """One section's bytes from one architecture, or None if it is not there.
+
+    Added for the release gate, which rebuilds the PNG shim from its C source
+    and compares. Whole-file comparison is no use: LC_BUILD_VERSION records the
+    SDK, so the same source built against MacOSX15, MacOSX26 and MacOSX27 gives
+    three different files -- while __TEXT,__text is byte-identical across all
+    three (measured 28 September 2026). The code is the thing worth comparing.
+    """
+    for name, off, _size in slices(data):
+        if name != arch:
+            continue
+        endian, is64, _n, _h = _header(data, off)
+        want_seg = segname.encode()[:16]
+        want_sect = sectname.encode()[:16]
+        for cmd, cmdsize, cmd_off in load_commands(data, off):
+            if is64 and cmd == 0x19 and cmdsize >= 72:
+                nsects = struct.unpack_from(endian + "I", data, cmd_off + 64)[0]
+                base, stride, fields = cmd_off + 72, 80, endian + "QI"
+                size_at = 40
+            elif not is64 and cmd == 0x01 and cmdsize >= 56:
+                nsects = struct.unpack_from(endian + "I", data, cmd_off + 48)[0]
+                base, stride, fields = cmd_off + 56, 68, endian + "II"
+                size_at = 36
+            else:
+                continue
+            for i in range(nsects):
+                s = base + i * stride
+                if s + stride > len(data):
+                    break
+                sect = data[s:s + 16].rstrip(b"\x00")
+                seg = data[s + 16:s + 32].rstrip(b"\x00")
+                if sect != want_sect.rstrip(b"\x00") or seg != want_seg.rstrip(b"\x00"):
+                    continue
+                size, offset = struct.unpack_from(fields, data, s + size_at)
+                start = off + offset
+                return bytes(data[start:start + size])
+        return None
+    return None
 
 
 def _symtab(data, off, endian, is64):
