@@ -1714,7 +1714,8 @@ final class Wizard: NSObject, NSApplicationDelegate {
         var out: [NSView] = [
             UI.point("HP Click \(ver) may be the better answer.",
                      "It's HP's own Apple Silicon version, so it needs no copy, and HP lists "
-                     + "it for macOS \(from)\(upTo)."
+                     + "it for macOS \(from)\(upTo)"
+                     + (from == "12" ? ", which was checked here on macOS 12: it opens." : ".")
                      + (haveIt ? " It's already in your Applications folder." : "")
                      + " It doesn't support the \(models), so if you print to one of those, "
                      + "keep the HP Click you have."),

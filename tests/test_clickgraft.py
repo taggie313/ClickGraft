@@ -47,23 +47,36 @@ def find_stock_bundle(version):
     fine; they were being handed the wrong app.
 
     So: look for the version actually required, and confirm it rather than
-    trusting a filename. Stock means x86_64 -- an arm64 slice means it is a
-    ClickGraft output, which must never be used as a build source.
+    trusting a filename.
+
+    "Stock means no arm64" held until HP shipped 4.11.31, their own universal
+    build -- x86_64 AND arm64, from HP, needing no graft at all. That rule then
+    rejected the one bundle the 4.11.31 manifest's tests need, and they skipped
+    silently through a release that ships that manifest. What actually marks a
+    ClickGraft output is that ClickGraft renames it: build.py sets
+    CFBundleIdentifier to com.hp.hpclick.arm64, in patch_only mode too. That is
+    a positive mark rather than an inference, so it stays right whatever HP
+    builds next. A graft is also arm64-ONLY, which is the same test
+    capabilities.py uses for is_stock, and is kept here as a second line.
     """
     import glob
     for path in sorted(glob.glob("/Applications/*Click*.app")):
         plist = os.path.join(path, "Contents", "Info.plist")
         if not os.path.exists(plist):
             continue
-        got = subprocess.run(["/usr/bin/defaults", "read", plist,
-                              "CFBundleShortVersionString"],
-                             capture_output=True, text=True).stdout.strip()
-        if got != version:
+
+        def read(key):
+            return subprocess.run(["/usr/bin/defaults", "read", plist, key],
+                                  capture_output=True, text=True).stdout.strip()
+
+        if read("CFBundleShortVersionString") != version:
             continue
+        if read("CFBundleIdentifier") == "com.hp.hpclick.arm64":
+            continue              # a ClickGraft copy; never a build source
         exe = os.path.join(path, "Contents", "MacOS", "HPClickExe")
         archs = subprocess.run(["lipo", "-archs", exe],
                                capture_output=True, text=True).stdout.split()
-        if "arm64" in archs:          # already grafted; not a stock source
+        if archs == ["arm64"]:    # arm64 and nothing else: also a graft
             continue
         return path
     return None

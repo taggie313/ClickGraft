@@ -36,9 +36,13 @@ a VM built for the purpose: every symbol imported by every file in 4.8.117 and i
 own bundled libraries. So the higher figure is a build artifact and the declared
 floor is honest -- which is what runs_on() already assumed, now on evidence
 rather than on caution. tools/symbols_on.py re-derives it, and refuses to run
-against a system new enough to make the answer meaningless. It proves nothing
-would stop those libraries LOADING; it is not a launch, and says nothing about
-behaviour or about anything reached through dlsym.
+against a system new enough to make the answer meaningless.
+
+That check only proved nothing would stop those libraries LOADING, so the same
+macOS 12.4 guest was then asked the question directly: stock 4.11.31 was copied
+in on a second disk and opened. It launches, and reaches its first-run privacy
+screen -- Electron up, renderer drawing, menu bar its own. That is a launch and
+not a print job; it still says nothing about whether a plotter answers.
 Gating a launch decision on the library floor would wrongly refuse macOS 12 to a
 build HP ships for macOS 12, so runs_on() uses the declared floor and reports the
 library floor beside it as a caveat. macos_floor.plan_floor() is the one that
