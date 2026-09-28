@@ -162,7 +162,9 @@ What it replaced (`html/`, `collector.py`, `summary.sh`,
 `/opt/edge/sites/clickgraft`, and `ls` lists them oldest first. The newest ten
 are kept. 8 to 10 Sep 2026 had five releases and nine commits to `site/` in
 three days, so rolling back a bad release can mean reaching past several later
-deploys. Each copy is under 1 MB. To put one back, inside the container:
+deploys. Each copy is about 18 MB since 1.8.0 — under 1 MB of site, plus the
+~17 MB interpreter — so ten of them is roughly 170 MB. To put one back, inside
+the container:
 
 ```sh
 python3 /opt/edge/sites/clickgraft/publish_site.py --restore \

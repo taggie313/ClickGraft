@@ -83,23 +83,91 @@ enum PythonPayload {
 
     /// The interpreter this Mac already fetched, or nil.
     ///
-    /// The marker is what makes this safe to trust without re-hashing 51 MB on
-    /// every launch: it is written last, after the unpack, the signature check
-    /// and the move all passed, so an install that was interrupted leaves a
-    /// directory this refuses rather than one it runs.
+    /// Two things have to hold. The marker says an install finished: it is
+    /// written last, after the unpack, the signature and the move all passed, so
+    /// an interrupted install leaves a directory this refuses rather than runs.
+    /// And the framework still has to be signed by whoever signed ClickGraft.
+    ///
+    /// The signature is checked on every launch and not just at install, because
+    /// the marker on its own decides nothing an attacker could not decide too:
+    /// it is a text file in a directory the user can write, and the value it
+    /// holds is public -- it ships in Contents/Resources/python-pin.json and is
+    /// published on the site. A review planted an empty framework and a marker
+    /// copied from the pin, and the app accepted it. It also pointed out the
+    /// reach: this is consulted BEFORE /usr/bin/python3, so a Mac with working
+    /// developer tools that never needed a fetch would prefer the plant.
+    ///
+    /// 30 ms, measured on a 48 MB framework.
     static var installed: String? {
         guard let pin = pin else { return nil }
         let dir = home(pin)
         let exe = dir + "/Python.framework/Versions/Current/bin/python3"
         guard FileManager.default.isExecutableFile(atPath: exe),
               let stamp = try? String(contentsOfFile: dir + "/.pinned", encoding: .utf8),
-              stamp.trimmingCharacters(in: .whitespacesAndNewlines) == pin.sha256
+              stamp.trimmingCharacters(in: .whitespacesAndNewlines) == pin.sha256,
+              trusted(dir + "/Python.framework")
         else { return nil }
         return exe
     }
 
+    /// The Team ID ClickGraft itself is signed with, or nil for a build that
+    /// carries none -- a local build_app.sh output, or a source checkout.
+    static let teamID: String? = {
+        let text = stderr("/usr/bin/codesign", ["-dv", "--verbose=4", Bundle.main.bundlePath])
+        for line in text.split(separator: "\n") where line.hasPrefix("TeamIdentifier=") {
+            let value = line.dropFirst("TeamIdentifier=".count)
+            return value == "not set" ? nil : String(value)
+        }
+        return nil
+    }()
+
+    /// Whether a framework is one ClickGraft should run.
+    ///
+    /// `--verify --strict` ALONE does not answer that. It checks code against
+    /// its own designated requirement, so an ad-hoc seal satisfies it -- which
+    /// means it establishes integrity and says nothing about who signed. The
+    /// requirement below is what ties the interpreter to the same Developer ID
+    /// as the app, and it is the difference between "these bytes are intact"
+    /// and "these bytes are ours".
+    ///
+    /// Fail-SAFE, not fail-stuck: a false here makes `installed` nil, so the app
+    /// falls through to /usr/bin/python3 or offers the fetch again. It never
+    /// leaves someone with an app that refuses to start.
+    static func trusted(_ framework: String) -> Bool {
+        guard let team = teamID else {
+            // Nothing to match against. Check the seal and accept it: an
+            // unsigned ClickGraft is a development build, and refusing here
+            // would break running from a checkout.
+            return shell("/usr/bin/codesign", ["--verify", "--strict", framework]).status == 0
+        }
+        // The leading "=" matters: codesign -R reads its argument as a PATH to a
+        // requirement file unless the text starts with one. Without it every
+        // framework fails with "invalid requirement specification", including
+        // ClickGraft's own -- which would have made this "hardening" a silent
+        // refusal of the real interpreter, i.e. worse than not having it.
+        let requirement = "=anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
+        return shell("/usr/bin/codesign",
+                     ["--verify", "--strict", "-R", requirement, framework]).status == 0
+    }
+
+    /// A tool's stderr, whole. shell() keeps one line on purpose; this is for
+    /// reading output rather than reporting a failure.
+    private static func stderr(_ tool: String, _ args: [String]) -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = args
+        let err = Pipe()
+        p.standardError = err
+        p.standardOutput = Pipe()
+        do { try p.run() } catch { return "" }
+        let data = err.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
     enum Failure: Error {
         case noPin
+        case busy
         case network(String)
         case mismatch(String, String)
         case unpack(String)
@@ -111,6 +179,9 @@ enum PythonPayload {
             switch self {
             case .noPin:
                 return "This copy of ClickGraft doesn't know what to fetch."
+            case .busy:
+                return "Another copy of ClickGraft is already fetching it. Wait for that "
+                     + "one to finish, then try again."
             case .network(let why):
                 return "The download didn't finish: \(why)"
             case .mismatch:
@@ -118,6 +189,12 @@ enum PythonPayload {
                      + "nothing was installed. Try again \u{2014} if it keeps happening, "
                      + "something between this Mac and the download is changing it."
             case .unpack(let why):
+                // Named separately because the advice differs: a corrupt download
+                // is worth retrying, a full disk is not.
+                if why.contains("No space left on device") || why.contains("Disk quota") {
+                    return "There isn't enough room on this Mac to unpack it. It needs about "
+                         + "110 MB free while it installs, and 50 MB afterwards."
+                }
                 return "The download arrived but couldn't be unpacked: \(why)"
             case .signature(let why):
                 return "The download arrived but macOS wouldn't vouch for it, so nothing "
@@ -154,6 +231,13 @@ enum PythonPayload {
         f.start()
     }
 
+    /// Stop a fetch in flight. Answers nothing back: the caller asked for this
+    /// and has already moved on to another screen.
+    static func cancel() {
+        running?.cancel()
+        running = nil
+    }
+
     /// Everything between "the bytes arrived" and "there is an interpreter".
     /// Runs off the main queue, throws Failure.
     static func accept(_ zip: URL, pin: Pin, progress: (Double) -> Void) throws -> String {
@@ -163,10 +247,34 @@ enum PythonPayload {
         progress(0.35)
 
         let dir = home(pin)
-        let staging = dir + ".staging"
-        try? fm.removeItem(atPath: staging)
-        try? fm.createDirectory(atPath: (dir as NSString).deletingLastPathComponent,
-                                withIntermediateDirectories: true)
+        let parent = (dir as NSString).deletingLastPathComponent
+        try? fm.createDirectory(atPath: parent, withIntermediateDirectories: true)
+
+        // One installer at a time, across PROCESSES.
+        //
+        // The in-process guards (running, settled) do nothing about two copies of
+        // ClickGraft, or --fetch-python run twice by a deployment script, or a
+        // script racing the person at the keyboard. A review reproduced that in 2
+        // of 14 staggered double-launches: both unpacked into the SAME staging
+        // path, and what got installed was a tree with one of ditto's .BC.* temp
+        // files left in it -- so codesign --verify failed on the installed
+        // framework ever after, while .pinned said it had passed. The second
+        // check the whole design rests on was void for that install, permanently,
+        // because nothing re-runs it.
+        let lock = Lock(parent + "/.installing")
+        guard lock.taken else {
+            throw Failure.busy
+        }
+        defer { lock.release() }
+
+        // A staging directory nobody else can be using, even so: the lock is
+        // advisory and a stale one must not wedge the app forever. Unpacking
+        // beside the destination keeps the final move on one filesystem.
+        let staging = parent + "/.staging-" + UUID().uuidString
+        // Cleared on EVERY exit, not only the failures this function remembers to
+        // name. An interrupted fetch used to leave 49 MB behind for good.
+        defer { try? fm.removeItem(atPath: staging) }
+        sweepStale(parent, keeping: staging)
 
         // ditto, not unzip: it is what made the archive, and it keeps the
         // symlinks a framework is built out of. Like codesign below it is a real
@@ -174,45 +282,136 @@ enum PythonPayload {
         // shims -- so neither needs a developer tool to be installed.
         let unpacked = shell("/usr/bin/ditto", ["-x", "-k", zip.path, staging])
         guard unpacked.status == 0 else {
-            try? fm.removeItem(atPath: staging)
             throw Failure.unpack(unpacked.problem ?? "ditto exited \(unpacked.status)")
         }
         let framework = staging + "/Python.framework"
         guard fm.fileExists(atPath: framework) else {
-            try? fm.removeItem(atPath: staging)
             throw Failure.unpack("it did not contain an interpreter")
         }
         progress(0.7)
 
-        // The second, independent check. The sha256 says these are the bytes the
-        // release named; this says macOS's own verifier accepts them and the
-        // Developer ID signature is intact, which is what lets the interpreter
-        // load its own support files once it runs.
+        // The second check. The sha256 says these are the bytes the release
+        // named; this says macOS's own verifier finds the seal intact, so a bad
+        // unpack or a damaged archive is caught even when the bytes hashed right.
         //
-        // It is not a defence against someone who can already write to
-        // ~/Library/Application Support: nothing re-checks the installed
-        // framework later, and anyone who can rewrite it there can run code as
-        // this user by easier routes anyway. It is here to catch a bad unpack
-        // and a signature that has stopped verifying.
-        let signed = shell("/usr/bin/codesign", ["--verify", "--strict", framework])
-        guard signed.status == 0 else {
-            try? fm.removeItem(atPath: staging)
-            throw Failure.signature(signed.problem ?? "codesign exited \(signed.status)")
+        // trusted(), not a bare --verify --strict: that checks code against its
+        // own designated requirement, so an ad-hoc seal satisfies it. The
+        // requirement inside trusted() names ClickGraft's own Team ID, which is
+        // what makes this a check on provenance rather than only on integrity.
+        guard trusted(framework) else {
+            let why = shell("/usr/bin/codesign", ["--verify", "--strict", framework])
+            throw Failure.signature(why.problem
+                ?? "it is not signed by whoever signed ClickGraft")
         }
         progress(0.85)
 
-        try? fm.removeItem(atPath: dir)
-        do { try fm.moveItem(atPath: staging, toPath: dir) }
-        catch { throw Failure.broken(error.localizedDescription) }
+        // Replace without a window where `dir` exists but holds nothing usable.
+        // The old code removed `dir` and then moved staging in, so a move that
+        // failed after the remove -- a network home, a file locked by something
+        // else -- destroyed a working interpreter and left nothing in its place.
+        let previous = parent + "/.replaced-" + UUID().uuidString
+        var displaced = false
+        if fm.fileExists(atPath: dir) {
+            do {
+                try fm.moveItem(atPath: dir, toPath: previous)
+                displaced = true
+            } catch {
+                throw Failure.broken(error.localizedDescription)
+            }
+        }
+        do {
+            try fm.moveItem(atPath: staging, toPath: dir)
+        } catch {
+            // Put back what was working before giving up.
+            if displaced { try? fm.moveItem(atPath: previous, toPath: dir) }
+            throw Failure.broken(error.localizedDescription)
+        }
+        if displaced { try? fm.removeItem(atPath: previous) }
 
         let exe = dir + "/Python.framework/Versions/Current/bin/python3"
         guard fm.isExecutableFile(atPath: exe) else {
             throw Failure.broken("what came out has no python3 in it")
         }
+        // Last, after everything above passed: the marker the next launch reads.
         do { try pin.sha256.write(toFile: dir + "/.pinned", atomically: true, encoding: .utf8) }
         catch { throw Failure.broken(error.localizedDescription) }
         progress(1.0)
         return exe
+    }
+
+    /// Leftovers from a run that was killed between unpacking and installing.
+    /// Each is ~49 MB, so they are swept rather than left for someone to find.
+    private static func sweepStale(_ parent: String, keeping: String) {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: parent) else { return }
+        for name in names where name.hasPrefix(".staging-") || name.hasPrefix(".replaced-") {
+            let path = parent + "/" + name
+            if path == keeping { continue }
+            try? fm.removeItem(atPath: path)
+        }
+    }
+
+    /// An O_EXCL lock file holding the owning pid, so one Mac installs one
+    /// interpreter at a time however many ClickGrafts are open.
+    ///
+    /// O_EXCL because it is the only create that is atomic against another
+    /// process; a "does it exist" check followed by a create is the race it is
+    /// meant to close. A lock whose pid is gone is taken over rather than
+    /// obeyed -- a machine that crashed mid-install must not be locked out of
+    /// its own interpreter forever.
+    final class Lock {
+        private let path: String
+        private(set) var taken = false
+
+        /// How long a lock may sit before it is assumed abandoned. A dead owner
+        /// is normally detected by its pid, but pids are recycled: a lock left
+        /// by a process that died, whose number has since been reused by
+        /// something unrelated, would otherwise refuse this Mac its own
+        /// interpreter for ever. Half an hour is far longer than any install.
+        private static let stale: TimeInterval = 30 * 60
+
+        init(_ path: String) {
+            self.path = path
+            if claim() { taken = true; return }
+            guard abandoned() else { return }
+            try? FileManager.default.removeItem(atPath: path)
+            taken = claim()
+        }
+
+        /// Whether the lock on disk can be taken over.
+        private func abandoned() -> Bool {
+            let text = (try? String(contentsOfFile: path, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let text = text, let owner = Int32(text) else {
+                // No readable pid. Only a crash between the create and the
+                // write leaves that, and refusing on it would wedge the app
+                // permanently on a file that names nobody.
+                return true
+            }
+            // kill(pid, 0) fails with ESRCH when there is no such process. It
+            // fails with EPERM when the process exists but belongs to someone
+            // else, which means NOT abandoned.
+            if kill(owner, 0) != 0 && errno == ESRCH { return true }
+            if let made = (try? FileManager.default.attributesOfItem(atPath: path))?[.creationDate]
+                    as? Date, Date().timeIntervalSince(made) > Lock.stale {
+                return true
+            }
+            return false
+        }
+
+        private func claim() -> Bool {
+            let fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+            guard fd >= 0 else { return false }
+            var line = Array("\(getpid())\n".utf8)
+            _ = write(fd, &line, line.count)
+            close(fd)
+            return true
+        }
+
+        func release() {
+            guard taken else { return }
+            try? FileManager.default.removeItem(atPath: path)
+        }
     }
 
     /// Streamed: the payload is 16 MB and reading it whole to hash it would
@@ -231,7 +430,15 @@ enum PythonPayload {
         return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    /// status, and the last non-empty line of stderr if there was one.
+    /// status, and the most informative line of stderr if there was one.
+    ///
+    /// Not simply the LAST line, which is what this did first. ditto reports the
+    /// cause and then its own summary, so a full disk printed
+    ///   .../_sha1.cpython-313-darwin.so: No space left on device
+    ///   ditto: Couldn't read pkzip signature.
+    /// and the user was shown the second one -- telling someone whose disk is
+    /// full that the download is corrupt, which sends them to fetch 17 MB again,
+    /// indefinitely. Prefer a line that names a cause.
     private static func shell(_ tool: String, _ args: [String])
         -> (status: Int32, problem: String?) {
         let p = Process()
@@ -246,6 +453,15 @@ enum PythonPayload {
         let lines = String(decoding: data, as: UTF8.self)
             .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+        // errno strings macOS actually hands back for the failures worth telling
+        // apart. A line carrying one of these is the cause; anything else is a
+        // summary, and the last line is usually the summary.
+        let causes = ["No space left on device", "Permission denied", "Read-only file system",
+                      "Operation not permitted", "Disk quota exceeded",
+                      "No such file or directory", "Input/output error"]
+        if let cause = lines.first(where: { line in causes.contains { line.contains($0) } }) {
+            return (p.terminationStatus, cause)
+        }
         return (p.terminationStatus, lines.last)
     }
 
@@ -279,7 +495,22 @@ enum PythonPayload {
             session = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
         }
 
-        func start() { session.downloadTask(with: pin.url).resume() }
+        private var task: URLSessionDownloadTask?
+
+        func start() {
+            let t = session.downloadTask(with: pin.url)
+            task = t
+            t.resume()
+        }
+
+        /// Cancelling makes didCompleteWithError fire, which would otherwise
+        /// report "cancelled" to a screen that has already been replaced, so
+        /// settle first and let that callback find itself a no-op.
+        func cancel() {
+            settled = true
+            task?.cancel()
+            session.invalidateAndCancel()
+        }
 
         private func settle(_ r: Result<String, Failure>) {
             guard !settled else { return }
@@ -955,7 +1186,9 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          "It's opened for reading only, and left exactly as it is."),
                 UI.point("You end up with two apps.", "Your original, and a new one beside it."),
                 UI.point("To undo everything, drag the new app to the Trash.",
-                         "There is no uninstaller because there's nothing else to remove."),
+                         "There is no uninstaller. If ClickGraft had to fetch a small "
+                         + "program to do its work, that stays in your Library folder, "
+                         + "under Application Support, in a folder named ClickGraft."),
             ]),
         ]
         present(rows, buttons: [UI.button("Quit", self, #selector(quit)), UI.spacer(),
@@ -1044,8 +1277,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
                          "This version records a fingerprint of the exact file, checks what "
                          + "arrives against it, and installs nothing unless they match."),
             ], tint: NSColor.systemGreen.withAlphaComponent(0.10)),
-            UI.small("It comes from clickgraft.elusive.net, the same place ClickGraft itself "
-                     + "came from."),
+            // Not "the same place ClickGraft itself came from": plenty of people
+            // download the app from its GitHub releases page, and telling them
+            // the fetch comes from where they got it would be false for exactly
+            // the readers most likely to check.
+            UI.small("It comes from clickgraft.elusive.net, ClickGraft's own site. "
+                     + "The file and its fingerprint are published there too, so the "
+                     + "check ClickGraft makes is one you can repeat."),
             Disclosure(label: "Why this Mac and not others") { """
                 Macs set up for software development already have this program, and \
                 ClickGraft uses the one that's there. Most Macs used for design or print \
@@ -1065,6 +1303,14 @@ final class Wizard: NSObject, NSApplicationDelegate {
         ])
     }
 
+    /// Stop the fetch and go back to the offer. PythonPayload tears the download
+    /// down and clears its staging directory; nothing is left half-installed.
+    @objc func cancelFetchPython() {
+        PythonPayload.cancel()
+        pythonProblem = nil
+        showNeedPython()
+    }
+
     @objc func fetchPython() {
         pythonProblem = nil
         let b = NSProgressIndicator()
@@ -1075,8 +1321,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
         bar = b
         let cap = UI.body("Fetching")
         caption = cap
+        // A way out. Without one the only exit during a 17 MB download on a slow
+        // or metered connection was the window's close button, which quits the
+        // app (applicationShouldTerminateAfterLastWindowClosed) in the middle of
+        // unpacking -- the exact kill that used to strand 49 MB on the disk.
         present([UI.title("ClickGraft needs one more piece"), b, cap],
-                buttons: [UI.spacer()])
+                buttons: [UI.button("Cancel", self, #selector(cancelFetchPython)),
+                          UI.spacer()])
 
         PythonPayload.install(progress: { [weak self] f in
             self?.bar?.doubleValue = f
@@ -1185,7 +1436,14 @@ final class Wizard: NSObject, NSApplicationDelegate {
             // installed and there was nothing to do.
             UI.body("Nothing you have to install. ClickGraft needs a Mac with Apple Silicon "
                     + "and your own copy of HP Click, and it brings the rest itself."),
-            UI.panel([UI.point("Everything ClickGraft needs is here.", "Nothing to do.")],
+            // Scoped to the one fact it is entitled to assert. Unscoped, it read
+            // "Everything ClickGraft needs is here" directly above the orange
+            // panel telling an Intel Mac the copy will not run on it, and above
+            // a Choose screen that may find no HP Click at all. The panel it
+            // replaced was scoped the same way ("the Command Line Tools are
+            // installed"), so the contradiction was new.
+            UI.panel([UI.point("Nothing to install.",
+                               "ClickGraft brings everything it needs.")],
                      tint: NSColor.systemGreen.withAlphaComponent(0.10)),
         ]
         // Said, not hidden: the tools list in the detail below will name the
@@ -1211,25 +1469,23 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 let tSeries = "the " + models
                 let floor = self?.copiesNeedName ?? "15"
                 return """
-                Installing these tools needs an administrator password. So does putting the \
-                copy into Applications, and making one downloads Apple's Apple Silicon engine \
-                and two small libraries from the internet. On a managed Mac all three are \
-                usually someone else's to allow. Three ways round it:
+                Putting the copy into Applications needs an administrator password, and \
+                making one downloads Apple's Apple Silicon engine and two small libraries \
+                from the internet. On a managed Mac both are usually someone else's to \
+                allow. Three ways round it:
 
                 1. Check HP Click 4.11.31 first. HP's September 2026 version runs on Apple \
                 Silicon by itself: no tools, no copy, nothing for ClickGraft to do. Download \
                 it from HP's support page — but not if you print to \(tSeries), which only \
                 HP Click 4.8.117 supports.
 
-                2. Ask IT to make one copy for everyone. It is usually a smaller ask than \
-                installing developer tools across the estate: they make the copy once, on a \
-                Mac they administer, and what comes out is an ordinary app they can deploy \
-                like any other. It needs nothing installed on the Macs that receive it — no \
-                developer tools, no ClickGraft, no downloads — and nothing from the Mac that \
-                made it, but they do need macOS \(floor) or later. Forward them the notes \
-                below.
+                2. Ask IT to make one copy for everyone. They make the copy once, on a Mac \
+                they administer, and what comes out is an ordinary app they can deploy like \
+                any other. It needs nothing installed on the Macs that receive it — no \
+                ClickGraft, no downloads — and nothing from the Mac that made it, but they do \
+                need macOS \(floor) or later. Forward them the notes below.
 
-                3. Or make the copy on a Mac of your own that has the tools, with your version \
+                3. Or make the copy on a Mac of your own, with your version \
                 of HP Click installed, and bring the app over. This Mac needs macOS \(floor) \
                 or later to open it, and so does a Mac with Apple Silicon to make it. Move it \
                 on a USB drive or a file share if you can: after AirDrop or a download, macOS \

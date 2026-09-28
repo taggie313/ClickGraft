@@ -92,8 +92,14 @@ for anything.
 >
 > **You end up with two apps.** Your original, and a new one beside it.
 >
-> **To undo everything, drag the new app to the Trash.** There is no uninstaller
-> because there's nothing else to remove.
+> **To undo everything, drag the new app to the Trash.** There is no uninstaller.
+> If ClickGraft had to fetch a small program to do its work, that stays in your
+> Library folder, under Application Support, in a folder named ClickGraft.
+
+(It said "there's nothing else to remove" until 1.8.0, which made it false: a Mac
+with no developer tools fetches a ~49 MB interpreter into
+`~/Library/Application Support/ClickGraft`. The same sentence had already been
+corrected once on the failed-check screen, for the same reason — see below.)
 
 **Controls:** `Continue` · `Quit`
 
@@ -177,29 +183,31 @@ Xcode is the instruction; the Terminal command is second, per the note below.
 `Open Xcode` opens the Xcode that `xcode-select` points at, because acceptance is
 per Xcode version.
 
-**Controls:** `Back` · `Continue` (disabled until present) · `Check again`
+**Controls:** `Back` · `Continue` — *(1.8.0)* `Continue` is enabled unless the
+processor rules a copy out, and there is no `Check again` on this screen: both
+gated on a Command Line Tools check that now passes on every Mac.
 
-**Disclosure — "If you can't install them on this Mac"** *(1.5.8)*. Shown only
-while the tools are missing, under the orange panel. What the app shows, with the
-*(1.5.9)* additions marked; "15" comes from the wizard's own `copiesNeedMacOS`:
+**Disclosure — "If this is a Mac you don't administer"** *(1.5.8, relabelled and
+made always-visible in 1.8.0 — it used to appear only while the tools were
+missing, which no longer happens)*. "15" comes from the wizard's own
+`copiesNeedMacOS`:
 
-> Installing these tools needs an administrator password. So does putting the
-> copy into Applications, and making one downloads Apple's Apple Silicon engine
-> and two small libraries from the internet. On a managed Mac all three are
-> usually someone else's to allow. Three ways round it:
+> Putting the copy into Applications needs an administrator password, and making
+> one downloads Apple's Apple Silicon engine and two small libraries from the
+> internet. On a managed Mac both are usually someone else's to allow. Three
+> ways round it:
 >
 > 1. Check HP Click 4.11.31 first. HP's September 2026 version runs on Apple
 >    Silicon by itself: no tools, no copy, nothing for ClickGraft to do. Download
 >    it from HP's support page — but not if you print to the DesignJet T310,
 >    T320, T350, T720 and T750, which only HP Click 4.8.117 supports.
-> 2. Ask IT to make one copy for everyone. It is usually a smaller ask than
->    installing developer tools across the estate: they make the copy once, on a
+> 2. Ask IT to make one copy for everyone. They make the copy once, on a
 >    Mac they administer, and what comes out is an ordinary app they can deploy
 >    like any other. It needs nothing installed on the Macs that receive it — no
->    developer tools, no ClickGraft, no downloads — and nothing from the Mac that
+>    ClickGraft, no downloads — and nothing from the Mac that
 >    made it, *but they do need macOS 15 or later (1.5.9)*. Forward them the
 >    notes below.
-> 3. Or make the copy on a Mac of your own that has the tools, with your version
+> 3. Or make the copy on a Mac of your own, with your version
 >    of HP Click installed, and bring the app over. *This Mac needs macOS 15 or
 >    later to open it, and so does a Mac with Apple Silicon to make it (1.5.9).*
 >    Move it on a USB drive or a file share if you can: after AirDrop or a
@@ -274,13 +282,14 @@ their copy is for another Mac.
 
 **Controls:** `Back` · `Quit`
 
-**Disclosure — "What ClickGraft uses them for":**
+**Disclosure — "What ClickGraft uses on this Mac"** *(relabelled in 1.8.0: it
+read "What ClickGraft uses them for" above a paragraph that had stopped
+mentioning any them)*:
 
-> Nothing, any more. Making a copy needs no tool from this list: reading your
-> app, rewriting the copy's libraries and signing it are all done without them.
-> What still needs them is ClickGraft itself — it starts through
-> `/usr/bin/python3`, which Apple ships as part of the same set. The list below
-> is exactly what it looks for.
+> No developer tools. Reading your app, rewriting the copy's support files and
+> signing it are all done by ClickGraft itself. What it uses are three programs
+> that come with macOS, and an interpreter to run on, which on this Mac is
+> *(where it came from)*.
 >
 > *(tool → path table)*
 
@@ -290,11 +299,13 @@ rewrite them; it now does both itself. The libpng shim was compiled on the user'
 Mac and now ships prebuilt, which was the last thing wanting `clang`. So a build
 needs no developer tool at all.
 
-**The screen cannot go yet, and should not.** `/usr/bin/python3` is the same
+**What happened to the requirement (1.8.0).** `/usr/bin/python3` is the same
 binary as `clang` — one shim with 78 hard links — and the whole backend runs on
-it. Removing this screen before ClickGraft carries its own Python would delete
-the *explanation* of the requirement, not the requirement, and leave someone
-without the tools staring at an app that does not start.
+it, so until 1.8.0 removing this screen would have deleted the *explanation* of
+the requirement rather than the requirement, leaving someone without the tools
+staring at an app that does not start. 1.8.0 removed the requirement instead:
+ClickGraft offers to fetch its own interpreter, and the screen that does the
+offering is *ClickGraft needs one more piece*, below.
 
 **Note:** never print `xcode-select --install` as the primary instruction. A
 terminal command in a wizard is a failure of the wizard.
@@ -1398,8 +1409,13 @@ what the work found and the work cannot start yet.
 > of the exact file, checks what arrives against it, and installs nothing unless
 > they match.
 >
-> It comes from clickgraft.elusive.net, the same place ClickGraft itself came
-> from.
+> It comes from clickgraft.elusive.net, ClickGraft's own site. The file and its
+> fingerprint are published there too, so the check ClickGraft makes is one you
+> can repeat.
+
+(It said "the same place ClickGraft itself came from" until review: the app is
+also downloaded from its GitHub releases page, so that was false for exactly the
+readers most likely to check.)
 >
 > ▸ Why this Mac and not others
 >

@@ -77,7 +77,43 @@ fi
 # fetch the published one back off the site. That is safe for the same reason the
 # whole scheme is -- the pin fixes the hash, and this refuses anything else --
 # and it means a cleared ~/.cache does not cost a deploy.
-PIN="$ROOT/packaging/python-pin.json"
+# The pin comes from the ZIP BEING PUBLISHED, not from the working tree.
+#
+# Every check here used to be self-referential: the post-deploy hash compared the
+# served payload to the working-tree pin, publish_site.validate() compared the
+# staged payload to the staged pin from that same tree, and healthcheck read the
+# published pin. Nothing ever opened the pin inside the app being shipped. So a
+# site-only redeploy run after a re-pin -- which CLAUDE.md explicitly blesses,
+# and which a Python bump makes routine -- would publish the NEW payload, remove
+# the one the LIVE release names, and leave every app in the field fetching a
+# 404, with the page, the appcast, validate() and the healthcheck all green.
+mkdir -p "$BUILD"
+ZIP_PIN="$BUILD/zip-python-pin.json"
+if python3 - "$ZIP" "$ZIP_PIN" <<'PYEOF' 2>/dev/null
+import sys, zipfile
+try:
+    with zipfile.ZipFile(sys.argv[1]) as z:
+        data = z.read("ClickGraft.app/Contents/Resources/python-pin.json")
+except (KeyError, zipfile.BadZipFile, OSError):
+    raise SystemExit(1)
+open(sys.argv[2], "wb").write(data)
+PYEOF
+then
+  PIN="$ZIP_PIN"
+  echo "==> Python pin: read from the app being published"
+  # A working tree that has moved on is a warning, never a silent substitution.
+  if ! cmp -s "$ZIP_PIN" "$ROOT/packaging/python-pin.json"; then
+    echo "!  the working tree's python-pin.json differs from the one in this ZIP."
+    echo "   Publishing the ZIP's, because that is what the released app fetches."
+    echo "   To ship the new pin, build and release that version instead."
+  fi
+else
+  # A pre-1.8.0 ZIP carries none. Publishing the working tree's payload beside it
+  # is how the file reaches the site before the release that needs it.
+  PIN="$ROOT/packaging/python-pin.json"
+  echo "==> Python pin: this ZIP carries none (pre-1.8.0); using the working tree's"
+fi
+
 PY_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$PIN")"
 PY_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["payload_zip_sha256"])' "$PIN")"
 PY_NAME="ClickGraft-python-$PY_VERSION.zip"

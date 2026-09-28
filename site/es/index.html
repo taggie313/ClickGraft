@@ -156,6 +156,16 @@ footer p { margin: 0 0 .7em; }
      <a href="https://github.com/taggie313/ClickGraft/releases">qué ha cambiado</a>
      (en inglés)</p>
 
+<p>Si tu Mac no tiene las herramientas de desarrollo, ClickGraft se ofrece a
+descargar un programa pequeño que necesita &mdash; unos 17&nbsp;MB, una sola vez.
+Puedes comprobarlo de la misma manera. El archivo que descarga, y la huella con
+la que lo compara antes de instalar nada, se publican aquí:
+<a href="python-pin.json"><span class="mono">python-pin.json</span></a> indica la
+versión y el SHA-256, y el archivo en sí es
+<span class="mono">ClickGraft-python-&lt;versión&gt;.zip</span>, junto a él.
+ClickGraft hace esta comprobación por su cuenta y no instala nada que no la pase;
+los archivos se publican para que no tengas que fiarte sin más.</p>
+
   <p class="disclaim"><strong>¿No sabes si esto es lo que necesitas?</strong> Desde que
      HP publicó su propia versión para Apple&nbsp;Silicon, la descarga de arriba es la
      respuesta correcta para unos y la equivocada para otros.
@@ -275,7 +285,10 @@ Rosetta: hizo su copia, y esa copia se abrió con normalidad.</p>
       <span class="mono">HP Click (Apple Silicon)</span> al lado. Tus impresoras y
       ajustes se conservan.</span></li>
   <li><b>Para deshacerlo, arrastra la nueva a la Papelera.</b> <span>No hay
-      desinstalador porque no queda nada más que quitar.</span></li>
+      desinstalador. Si ClickGraft tuvo que descargar un programa pequeño para
+      hacer su trabajo, este se queda en
+      <span class="mono">~/Library/Application&nbsp;Support/ClickGraft</span>
+      &mdash; unos 50&nbsp;MB &mdash; y esa carpeta también puedes borrarla.</span></li>
   <li><b>No se distribuye software de HP.</b> <span>ClickGraft no contiene código
       de HP. Funciona sobre la copia de HP&nbsp;Click que instalaste tú.</span></li>
 </ul>

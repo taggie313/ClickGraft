@@ -74,10 +74,10 @@ PRODUCTS = frozenset({'Info.plist', 'MacOS/ClickGraft', '_CodeSignature/CodeReso
 # fix which interpreter a release will run on.
 BUILT_FROM = ('packaging/build_app.sh', 'packaging/fetch_python.py')
 
-# An interpreter inside the app. A release must NOT have one: 1.8.0 bundled
-# python.org's framework, which worked and took the download from 770 KB to
-# 18 MB, so the app ships the pin and a Mac that needs an interpreter fetches it
-# once. CLICKGRAFT_BUNDLE_PYTHON=1 still builds a bundled copy for an estate
+# An interpreter inside the app. A release must NOT have one. Bundling
+# python.org's framework was tried during 1.8.0's development and abandoned
+# before release -- it worked, and took the download from 770 KB to 18 MB -- so
+# the app ships the pin and a Mac that needs an interpreter fetches it once. CLICKGRAFT_BUNDLE_PYTHON=1 still builds a bundled copy for an estate
 # with no internet; check_python_pin refuses to let one be released, because
 # what the site serves has to be the small one. check_payload skips these paths
 # so that refusal is one line rather than four thousand.
@@ -270,6 +270,26 @@ def _version(files):
     return short
 
 
+def _version_tuple(version):
+    """(major, minor, patch), padding a short version rather than ranking it low.
+
+    '1.8' used to compare as (1, 8) < (1, 8, 0), so a release numbered 1.8 was
+    treated as predating the pin and shipped past the check added for it --
+    while site/deploy/healthcheck.sh's own cutoff read the same 1.8 as needing
+    it. Two mechanisms for one boundary, disagreeing. Padded here; the awk in
+    healthcheck.sh compares major/minor only, which agrees for every form.
+    """
+    parts = []
+    for part in version.split('.')[:3]:
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
 def _predates_python_pin(version):
     """Whether a ZIP of this version can legitimately carry no Python pin.
 
@@ -278,10 +298,7 @@ def _predates_python_pin(version):
     from a 1.7.0 ZIP would refuse a release that was correct when it was made --
     the same reason _predates_records exists.
     """
-    try:
-        return tuple(int(part) for part in version.split('.')) < PYTHON_PIN_FROM
-    except ValueError:
-        return False
+    return _version_tuple(version) < PYTHON_PIN_FROM
 
 
 def _predates_records(version):
@@ -323,11 +340,20 @@ def check_artifact(archive, root=ROOT, check_platform=True, allow_legacy=None, s
     say(f'  ✓ the app ships exactly the {count} files committed at {tag}, and nothing else')
     # The interpreter is not one of those files. The pin that names it is, so
     # the tag fixes which one a Mac will fetch.
-    if _predates_python_pin(version):
-        say(f'  - {version} predates the Python pin; it needed the '
-            f"Command Line Tools instead")
+    # Whether a pin is REQUIRED is decided by the tag, not by the version number.
+    #
+    # Keying it on "is this below 1.8.0" meant a release numbered 1.7.1, cut from
+    # a tree that has the pin, would ship an app that needs one with nothing
+    # checking it -- the single thing that makes the fetch defensible, skipped
+    # because of how the release was numbered. The tag either committed
+    # packaging/python-pin.json or it did not, and that is exactly the question.
+    # The "no interpreter" half runs either way.
+    pinned = check_python_pin(files, root,
+                              require_pin='packaging/python-pin.json' in expected)
+    if pinned is None:
+        say(f'  - v{version} committed no Python pin, so none is required. Carries '
+            f'no interpreter, which is checked for every version')
     else:
-        pinned = check_python_pin(files, root)
         say(f'  ✓ carries the Python {pinned} pin the tag committed, and no interpreter')
     if check_platform:
         _check_signature(archive, say)
@@ -420,7 +446,7 @@ def check_pngshim(root=ROOT):
                 differences)
 
 
-def check_python_pin(files, root=ROOT):
+def check_python_pin(files, root=ROOT, require_pin=True):
     """The app carries the pin, and does not carry an interpreter.
 
     Both halves matter, and they pull in opposite directions.
@@ -438,6 +464,13 @@ def check_python_pin(files, root=ROOT):
     builds that app on purpose, for an estate with no internet, and this is what
     stops one being published by accident in place of the small one.
     """
+    # Unconditional, whatever the version says. This half was behind the same
+    # version gate as the pin, which made it inert for exactly the releases that
+    # could still be numbered below 1.8.0 -- and since check_payload skips
+    # PYTHON_PREFIX to keep a refusal one line rather than four thousand, a
+    # sub-1.8.0 release could carry anything at all under that prefix and no
+    # check would look. No ClickGraft has ever shipped an interpreter, so there
+    # is nothing for the escape hatch to protect.
     bundled = [name for name in files if name.startswith(PYTHON_PREFIX)]
     if bundled:
         raise Refused(
@@ -446,6 +479,9 @@ def check_python_pin(files, root=ROOT):
             f'needs one.',
             ['built with CLICKGRAFT_BUNDLE_PYTHON=1, which is for deploying to an '
              'estate with no internet, not for the download on the site'])
+
+    if not require_pin:
+        return None
 
     shipped = files.get(COPIED['packaging/python-pin.json'])
     if shipped is None:
@@ -470,6 +506,18 @@ def check_python_pin(files, root=ROOT):
         raise Refused('The pin\'s payload_zip_sha256 is not a sha256.')
     if not pin['payload_url'].startswith('https://'):
         raise Refused(f"The pin fetches over {pin['payload_url'].split(':')[0]}, not https.")
+
+    # The app fetches payload_url verbatim, but every publisher -- redeploy.sh,
+    # publish_site.validate(), healthcheck.sh -- composes the filename from
+    # `version` instead. Nothing compared the two, so a re-pin that moved the
+    # version and left the old basename in the URL would publish one file and
+    # send every app to a different one, with all three gates green.
+    expected = f"ClickGraft-python-{pin['version']}.zip"
+    if pin['payload_url'].rsplit('/', 1)[-1] != expected:
+        raise Refused(
+            f"The pin fetches {pin['payload_url'].rsplit('/', 1)[-1]}, but the deploy "
+            f"publishes {expected}.",
+            ['every app would ask for a file the site does not serve'])
     return pin['version']
 
 

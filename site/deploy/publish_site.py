@@ -41,8 +41,11 @@ FILES = ('collector/collector.py', 'summary.sh', 'visitor-classify.awk', 'publis
 # How many .previous-* copies to keep. Ten, because 8 to 10 Sep 2026 had five
 # releases (1.5.0 to 1.5.4) and nine commits to site/ in three days: a bad
 # release noticed after the page fixes that follow it has to reach back past
-# several deploys. Each copy is under 1 MB (0.8 MB, 22 Sep 2026), so the limit
-# keeps the list to choose from short; disk was never the reason.
+# several deploys. Each copy was under 1 MB (0.8 MB, 22 Sep 2026) and disk was
+# never the reason for the limit -- but since 1.8.0 each copy also holds the
+# ~17 MB interpreter, so ten of them is about 170 MB on a host shared with the
+# other projects in ~/JoshCode/elusive-edge. Usually the same Python in every
+# copy; worth watching if the disk there gets tight.
 KEEP = 10
 KEPT = re.compile(r'\.previous-\d{8}T\d{6}\.\d{6}Z-')
 
@@ -63,6 +66,27 @@ class NeedsOperator(RuntimeError):
     def __init__(self, reason, details=()):
         super().__init__(reason)
         self.details = list(details)
+
+
+# The release that first shipped a Python pin. The same boundary as
+# packaging/check_release.py's PYTHON_PIN_FROM and site/deploy/healthcheck.sh's
+# NEEDS_PIN; changing one without the others is how a release slips past the
+# check that was added for it.
+PYTHON_PIN_FROM = (1, 8, 0)
+
+
+def _version_tuple(version):
+    """(major, minor, patch), padding a short version rather than ranking it low
+    -- '1.8' must not compare as older than 1.8.0."""
+    parts = []
+    for part in str(version).split('.')[:3]:
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
 
 
 def _sha256(path):
@@ -90,6 +114,14 @@ def validate(html):
     # The interpreter every ClickGraft from 1.8.0 fetches when the Mac it is on
     # has none of its own, and the pin that names it.
     #
+    # Required only once the tree being published ADVERTISES a version that needs
+    # one. Unconditional, this refused two things it should not: --restore of any
+    # kept copy from before 1.8.0 (they have no pin, and that is the break-glass
+    # path, so it must not be the first thing to break), and a site-only redeploy
+    # of the currently released 1.7.0. The cutoff matches check_release.py's
+    # PYTHON_PIN_FROM and healthcheck.sh's NEEDS_PIN -- one boundary, three
+    # places, deliberately the same.
+    #
     # Checked here, before anything served changes, because publication exchanges
     # the whole of html/: a tree that merely left the file out would REMOVE it
     # from the live site, and every Mac without Apple's Command Line Tools would
@@ -97,10 +129,16 @@ def validate(html):
     # appcast all still perfect, which is the shape of failure this file exists
     # to refuse.
     pin_path = html / 'python-pin.json'
+    needs_pin = _version_tuple(version) >= PYTHON_PIN_FROM
+    if not needs_pin and not pin_path.exists():
+        return
     try:
         pin = json.loads(pin_path.read_text())
         python_version, payload_sha = pin['version'], pin['payload_zip_sha256']
     except (OSError, ValueError, KeyError, TypeError):
+        if not needs_pin:
+            raise ValueError(f'{pin_path.name} is present but is not a pin naming a '
+                             f'version and a payload_zip_sha256') from None
         raise ValueError(f'{pin_path.name} is not a pin naming a version and '
                          f'a payload_zip_sha256') from None
     payload = html / f'ClickGraft-python-{python_version}.zip'
@@ -108,6 +146,8 @@ def validate(html):
         raise ValueError(f'{payload.name} is missing. Every ClickGraft from 1.8.0 on a '
                          f'Mac with no developer tools fetches it, and publishing '
                          f'without it takes it off the site')
+    # Checked whether or not this version needs it: a wrong one published early
+    # is a wrong one served later.
     if _sha256(payload) != payload_sha:
         raise ValueError(f'{payload.name} does not match the sha256 in python-pin.json, '
                          f'so every app that checks it would refuse it')

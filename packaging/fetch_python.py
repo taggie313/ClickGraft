@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Fetch, trim and relocate the Python that ships inside ClickGraft.app.
+"""Build the Python that ClickGraft fetches when a Mac has none of its own.
 
-WHY CLICKGRAFT CARRIES A PYTHON AT ALL. Every other developer tool this project
+WHY CLICKGRAFT BRINGS A PYTHON AT ALL. Every other developer tool this project
 needed has been removed -- lipo, otool, nm and vtool by clickgraft/macho_read.py,
 install_name_tool by macho_write.py, clang by shipping the libpng shim prebuilt.
 One is left and it cannot be removed the same way: the backend RUNS on
@@ -20,10 +20,23 @@ third-party redistribution and ships separate per-architecture builds. For a
 project whose reviewability is the point, one upstream with one signature is
 worth the megabytes.
 
-WHAT THIS COSTS, MEASURED. The installer is 67 MB and unpacks to 112 MB. Trimmed
-to what the backend uses it is 51 MB, which adds about 18 MB to the download:
-ClickGraft.zip goes from roughly 770 KB to roughly 18 MB. That is the price, and
-it is the whole argument against doing this.
+WHAT THIS COSTS, MEASURED, AND WHY IT IS NOT IN THE APP. The installer is 67 MB
+and unpacks to 112 MB. Trimmed to what the backend uses it is 51 MB, and the
+signed archive of that is about 17 MB.
+
+Bundling it inside ClickGraft.app was tried during 1.8.0's development and
+abandoned before release: it took the download from roughly 830 KB to roughly
+18 MB, charging every user 17 MB for a problem only a Mac without Apple's
+Command Line Tools has. So the app ships packaging/python-pin.json alone, this
+archive is published beside the download, and a Mac that needs an interpreter
+fetches it once into ~/Library/Application Support/ClickGraft.
+
+  python3 packaging/fetch_python.py --payload   # build and re-pin the archive
+
+A REBUILD NEVER MATCHES THE OLD HASH: signing writes a fresh signature every
+time, so --payload run twice produces two archives with two sha256s and the pin
+names exactly one. The archive that was hashed is the one that must be published;
+payload_path() is where it is kept so it can be found again.
 
 THE TWO THINGS THAT ARE NOT OBVIOUS, both measured on 28 September 2026:
 
@@ -44,13 +57,15 @@ THE TWO THINGS THAT ARE NOT OBVIOUS, both measured on 28 September 2026:
     vendored here: macOS already ships a trust store.
 
 HOW IT IS PINNED. packaging/python-pin.json carries the version, the URL, the
-installer's sha256 and a hash over the finished framework. The release tag fixes
-the pin, the pin fixes the framework, and packaging/check_release.py refuses a
-release whose bundled Python is not the one the pin names -- which is how a
-50 MB binary nobody can diff stays honest.
+installer's sha256, a hash over the finished framework, and the sha256 of the
+published archive. It is a recorded source, so the release tag fixes it; the app
+installs nothing whose bytes do not match it, and check_release.py refuses a
+release that carries an interpreter instead of the pin, or whose pin could not
+be acted on. That is how 50 MB of binaries nobody can diff stays honest.
 
-    python3 packaging/fetch_python.py            # ensure it is in the cache
+    python3 packaging/fetch_python.py              # ensure it is in the cache
     python3 packaging/fetch_python.py --print-pin  # after changing the version
+    python3 packaging/fetch_python.py --payload    # build the published archive
 
 Target: Python 3.9+ (Standard Library only)
 """

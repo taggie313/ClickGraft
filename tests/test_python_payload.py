@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import sys
 
 import pytest
@@ -42,6 +43,19 @@ needs_app = pytest.mark.skipif(
 def _swift():
     with open(SWIFT, encoding="utf-8") as f:
         return f.read()
+
+
+def _swift_code():
+    """The Swift with its comment lines removed.
+
+    Asserting a phrase is ABSENT from the source is a trap in this file: the
+    comment explaining why a phrase was removed necessarily quotes it, so the
+    test matches its own explanation and fails. That has now happened three
+    times in this project (the showRequirements ordering test, and twice here),
+    so it gets a helper rather than a fourth fix.
+    """
+    return "\n".join(line for line in _swift().splitlines()
+                      if not line.strip().startswith("//"))
 
 
 def _pin(path=REPO_PIN):
@@ -364,3 +378,315 @@ def test_the_gate_accepts_the_app_this_repo_builds():
     gate = _gate()
     files = {"Resources/python-pin.json": open(REPO_PIN, "rb").read()}
     assert gate.check_python_pin(files, ROOT) == _pin()["version"]
+
+
+# --- what the adversarial review of a5b2ec8 found -------------------------
+# Each of these reproduces a defect that shipped in a5b2ec8 and was fixed in the
+# commit that added the test. They are controls first and regression tests
+# second: every one of them failed against a5b2ec8.
+
+@needs_app
+def test_two_fetches_at_once_still_leave_a_working_interpreter(payload, tmp_path):
+    """Two processes fetching at once shared one <version>.staging path.
+
+    Measured against the a5b2ec8 build, 20 staggered double-launches: 10 installed
+    cleanly and 10 installed NOTHING, both processes failing over each other's
+    half-extracted tree, with ditto's raw paths shown to the user. The same 20
+    against the fixed build: 20 clean. A review also reproduced a worse outcome --
+    an install marked .pinned holding one of ditto's .BC.* temp files, so codesign
+    refused the framework ever after while the marker said it had passed. I could
+    not reproduce that specific outcome in 36 further trials, so this test asserts
+    the invariant that does reproduce, and checks the seal as well in case the
+    rarer one ever lands.
+
+    --fetch-python is documented for deploying to a managed estate, so a script
+    run twice, or a script racing the person at the keyboard, is the ordinary
+    case rather than the exotic one.
+    """
+    import threading
+    url = f"file://{payload}"
+    version = _pin()["version"]
+    for attempt, stagger in enumerate((0.0, 0.05, 0.10, 0.15)):
+        home = tmp_path / f"python{attempt}"
+        home.mkdir()
+        results = []
+
+        def go(delay):
+            if delay:
+                time.sleep(delay)
+            results.append(_fetch(url, home))
+
+        threads = [threading.Thread(target=go, args=(d,)) for d in (0, stagger)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=600)
+        assert len(results) == 2, "a fetch never returned"
+        why = "\n".join(out for _c, out in results)
+
+        exe = home / version / "Python.framework/Versions/Current/bin/python3"
+        assert exe.exists(), (
+            f"stagger {stagger}s: two fetches at once left no interpreter at all\n{why}")
+        seal = subprocess.run(
+            ["/usr/bin/codesign", "--verify", "--strict", str(home / version / "Python.framework")],
+            capture_output=True, text=True)
+        assert seal.returncode == 0, (
+            f"stagger {stagger}s: installed a framework codesign refuses:\n{seal.stderr}\n{why}")
+        assert (home / version / ".pinned").read_text().strip() == _pin()["payload_zip_sha256"]
+        assert not list(home.glob(".staging-*")), f"stagger {stagger}s: staging leaked\n{why}"
+        assert not list(home.glob("*.staging")), f"stagger {stagger}s: staging leaked\n{why}"
+        # The loser is told what happened, rather than shown ditto's paths.
+        codes = sorted(c for c, _o in results)
+        if codes != [0, 0]:
+            assert "Another copy of ClickGraft is already fetching" in why, why
+
+
+@needs_app
+def test_a_fetch_sweeps_staging_left_by_an_earlier_run(payload, tmp_path):
+    """Each leftover is ~49 MB.
+
+    Note what this does and does not claim. A SIGKILL does not run Swift's
+    defer, so a killed fetch still leaves its staging directory behind either
+    way -- what changed is that it gets swept by the NEXT run. a5b2ec8 removed
+    one hard-coded path (<version>.staging) which happened to be the only name
+    it ever used; staging names are now unique per run, so without an explicit
+    sweep every interrupted fetch would accumulate forever. This is the sweep.
+    """
+    home = tmp_path / "python"
+    home.mkdir()
+    stale = home / ".staging-0000dead-beef-0000-0000-000000000000"
+    (stale / "Python.framework").mkdir(parents=True)
+    (stale / "Python.framework" / "big").write_bytes(b"x" * 1024)
+    also = home / ".replaced-0000dead-beef-0000-0000-000000000001"
+    also.mkdir()
+
+    assert _fetch(f"file://{payload}", home)[0] == 0
+    assert not stale.exists(), "an interrupted run's staging was left to accumulate"
+    assert not also.exists(), "a displaced copy was left behind"
+    assert not list(home.glob(".staging-*"))
+    assert not list(home.glob(".replaced-*"))
+
+
+def test_the_replace_never_leaves_the_destination_empty():
+    """accept() removed the destination and THEN moved staging in, so a move that
+    failed after the remove destroyed a working interpreter and left nothing --
+    after the replacement had already passed both checks.
+
+    Asserted on the shape of the code rather than by forcing a mid-replace
+    failure: the window is between two renames on one filesystem, and every way
+    I could find to make the second fail also made the first fail, so a
+    behavioural test would have passed against the unfixed code and proved
+    nothing (it did -- that is why this is written this way).
+    """
+    code = _swift_code()
+    body = re.search(r"static func accept\(.*?\n    \}", code, re.S)
+    assert body, "accept() is gone"
+    text = body.group(0)
+    assert "removeItem(atPath: dir)" not in text, \
+        "the destination is removed before the replacement is in place"
+    aside = text.index('moveItem(atPath: dir, toPath: previous)')
+    install = text.index('moveItem(atPath: staging, toPath: dir)')
+    assert aside < install, "the old copy must be moved aside before the new one moves in"
+    # And put back if the install move fails.
+    assert "moveItem(atPath: previous, toPath: dir)" in text[install:]
+
+
+def test_a_full_disk_is_not_reported_as_a_corrupt_download():
+    """shell() kept the LAST stderr line. ditto prints the cause and then its own
+    summary, so a full disk was reported as "Couldn't read pkzip signature" --
+    sending someone whose disk is full to re-download 17 MB, for ever."""
+    code = _swift_code()
+    body = re.search(r"private static func shell\(.*?\n    \}", code, re.S)
+    assert body, "shell() is gone"
+    assert "No space left on device" in body.group(0), \
+        "shell() does not prefer a line naming a cause"
+    assert "lines.first(where:" in body.group(0)
+    # And the sentence the user sees is about disk space, not about the file.
+    assert "isn't enough room on this Mac" in code
+
+
+def test_the_fetch_screen_has_a_way_out():
+    """The progress screen shipped with `buttons: [UI.spacer()]`, so the only exit
+    during a 17 MB download was the close button -- which quits the app mid-ditto,
+    the exact kill that stranded 49 MB."""
+    code = _swift_code()
+    body = re.search(r"@objc func fetchPython\(\) \{(.*?)\n    \}", code, re.S)
+    assert body, "fetchPython is gone"
+    assert "cancelFetchPython" in body.group(1), "no Cancel on the fetch screen"
+    assert "static func cancel()" in code, "PythonPayload cannot be cancelled"
+
+
+def test_the_app_no_longer_claims_there_is_nothing_else_to_remove():
+    """Welcome promised "no uninstaller because there's nothing else to remove",
+    and said it BEFORE the fetch screen. After a fetch there is ~49 MB in
+    Application Support. The project had already made this exact correction once,
+    for the download cache."""
+    assert "nothing else to remove" not in _swift_code()
+    for path in ("site/index.html", "site/es/index.html"):
+        text = open(os.path.join(ROOT, path), encoding="utf-8").read()
+        assert "nothing else to remove" not in text, path
+        assert "nada más que quitar" not in text, path
+    assert "Application Support" in _swift_code()
+
+
+def test_screen_two_does_not_claim_everything_is_here():
+    """The green panel was unscoped, so on an Intel Mac it said "Everything
+    ClickGraft needs is here" two lines above an orange panel saying the copy
+    will not run on this Mac."""
+    code = _swift_code()
+    assert "Everything ClickGraft needs is here" not in code
+    assert "Nothing to install." in code
+
+
+def test_the_managed_mac_disclosure_names_no_vanished_requirement():
+    """It opened "Installing these tools needs an administrator password" on a
+    screen whose body is "Nothing you have to install" -- the same
+    no-antecedent defect the same commit fixed 50 lines below."""
+    body = re.search(r'Disclosure\(label: "If this is a Mac you don\'t administer"\).*?\n            \}\)',
+                     _swift_code(), re.S)
+    assert body, "the managed-Mac disclosure is gone"
+    text = body.group(0)
+    assert "Installing these tools" not in text
+    assert "installing developer tools across the estate" not in text
+    assert "a Mac of your own that has the tools" not in text
+
+
+# --- the gate holes the review found --------------------------------------
+
+def test_the_no_interpreter_refusal_runs_for_every_version():
+    """It sat behind the same version gate as the pin, so a sub-1.8.0 release
+    could carry anything under Frameworks/Python.framework/ -- which check_payload
+    skips on purpose -- and no check would look."""
+    gate = _gate()
+    files = {gate.PYTHON_PREFIX + "Versions/3.13/lib/python3.13/os.py": b"x"}
+    with pytest.raises(gate.Refused) as e:
+        gate.check_python_pin(files, ROOT, require_pin=False)
+    assert "carries a Python.framework" in str(e.value)
+
+
+@pytest.mark.parametrize("version,expected", [
+    ("1.7.0", (1, 7, 0)), ("1.8", (1, 8, 0)), ("1.8.0", (1, 8, 0)),
+    ("2.0", (2, 0, 0)), ("1.8.0-rc1", (1, 8, 0)),
+])
+def test_a_short_version_is_padded_not_ranked_low(version, expected):
+    """(1, 8) < (1, 8, 0) is True, so a release numbered "1.8" was treated as
+    predating the pin added for it -- while healthcheck.sh's own cutoff read the
+    same 1.8 as needing it. Two mechanisms for one boundary, disagreeing."""
+    gate = _gate()
+    assert gate._version_tuple(version) == expected
+    assert gate._predates_python_pin("1.8") is False
+
+
+def test_the_pin_must_name_the_file_the_deploy_publishes():
+    """The app fetches payload_url verbatim; every publisher composes the name
+    from `version`. Nothing compared them, so a re-pin that moved the version and
+    left the old basename would publish one file and send every app to another."""
+    gate = _gate()
+    pin = _pin()
+    pin["payload_url"] = "https://clickgraft.elusive.net/ClickGraft-python-3.13.8.zip"
+    with pytest.raises(gate.Refused) as e:
+        gate.check_python_pin({"Resources/python-pin.json": json.dumps(pin).encode()}, ROOT)
+    assert "the deploy publishes" in str(e.value)
+
+
+def test_the_real_pin_names_the_file_the_deploy_publishes():
+    """The control for the test above."""
+    gate = _gate()
+    assert gate.check_python_pin(
+        {"Resources/python-pin.json": open(REPO_PIN, "rb").read()}, ROOT) == _pin()["version"]
+
+
+# --- the fetched interpreter has to be OURS, not merely intact ------------
+
+def _developer_id():
+    run = subprocess.run(["security", "find-identity", "-v", "-p", "codesigning"],
+                         capture_output=True, text=True)
+    for line in run.stdout.splitlines():
+        if "Developer ID Application" in line:
+            return line.split('"')[1]
+    return None
+
+
+@pytest.fixture
+def signed_app(tmp_path):
+    """A copy of the built app signed with the Developer ID.
+
+    The build_app.sh output is unsigned, so it has no Team ID and trusted()
+    deliberately falls back to a bare seal check -- which means the unsigned
+    build cannot exercise the thing these tests are about.
+    """
+    if not os.path.exists(APP):
+        pytest.skip("needs a built app: ./packaging/build_app.sh")
+    identity = _developer_id()
+    if not identity:
+        pytest.skip("no Developer ID Application identity in the keychain")
+    dest = tmp_path / "signed"
+    dest.mkdir()
+    shutil.copytree(APP, dest / "ClickGraft.app", symlinks=True)
+    for target in (dest / "ClickGraft.app/Contents/MacOS/ClickGraft", dest / "ClickGraft.app"):
+        # --timestamp=none: signing here must not need Apple's timestamp server.
+        run = subprocess.run(["/usr/bin/codesign", "--force", "--timestamp=none",
+                              "--options", "runtime", "--sign", identity, str(target)],
+                             capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+    return str(dest / "ClickGraft.app/Contents/MacOS/ClickGraft")
+
+
+@needs_app
+def test_an_interpreter_signed_by_someone_else_is_refused(signed_app, payload, tmp_path):
+    """The marker decides nothing an attacker could not decide too.
+
+    It is a text file in a directory the user can write, and the value it holds
+    is public -- it ships in the app and is published on the site. A review
+    planted a framework with a copied marker and the app accepted it, and
+    pointed out the reach: `installed` is consulted BEFORE /usr/bin/python3, so
+    a Mac with working developer tools that never needed a fetch would prefer
+    the plant.
+
+    The plant here is ad-hoc signed, which a bare `codesign --verify --strict`
+    ACCEPTS -- that is the whole reason the check names ClickGraft's own Team ID
+    rather than only checking the seal.
+    """
+    home = tmp_path / "python"
+    assert _fetch(f"file://{payload}", home, app=signed_app)[0] == 0
+    version = _pin()["version"]
+    framework = home / version / "Python.framework"
+
+    # Re-sign the real framework ad-hoc: same files, different signer.
+    subprocess.run(["/usr/bin/codesign", "--force", "--deep", "--sign", "-", str(framework)],
+                   capture_output=True, check=True)
+    bare = subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(framework)],
+                          capture_output=True, text=True)
+    assert bare.returncode == 0, (
+        "the plant must be one a bare seal check accepts, or this proves nothing")
+    assert (home / version / ".pinned").exists(), "the marker is still in place"
+
+    # Offered the plant and a download that cannot succeed: it must go looking
+    # for a real one rather than run what is there.
+    code, out = _fetch("file:///nowhere-at-all.zip", home, app=signed_app, force=False)
+    assert code == 1, "the app ran an interpreter signed by someone else\n" + out
+    assert "nothing to fetch" not in out, out
+
+
+@needs_app
+def test_the_real_interpreter_is_accepted_by_a_signed_app(signed_app, payload, tmp_path):
+    """The control. A check that refuses everything is not a check -- and an
+    earlier draft of this did exactly that: codesign -R reads its argument as a
+    PATH unless the text starts with '=', so every framework failed with
+    'invalid requirement specification', including ClickGraft's own.
+    """
+    home = tmp_path / "python"
+    assert _fetch(f"file://{payload}", home, app=signed_app)[0] == 0
+    code, out = _fetch("file:///nowhere-at-all.zip", home, app=signed_app, force=False)
+    assert code == 0, out
+    assert "nothing to fetch: fetched by ClickGraft" in out, out
+
+
+def test_the_requirement_is_a_requirement_and_not_a_path():
+    """Guards the '=' whose absence made the check refuse everything."""
+    code = _swift_code()
+    body = re.search(r"static func trusted\(.*?\n    \}", code, re.S)
+    assert body, "trusted() is gone"
+    assert '"=anchor apple generic' in body.group(0), \
+        "codesign -R needs a leading = or it reads the text as a filename"
+    assert "subject.OU" in body.group(0)
