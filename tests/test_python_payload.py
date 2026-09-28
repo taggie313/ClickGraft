@@ -85,14 +85,25 @@ def _fetch(url, home, app=EXE, force=True, extra=None):
 
 def _repin(app_dir, sha):
     """A copy of the app whose pin names `sha`, so an archive the real pin would
-    reject can be pushed past the hash check and onto the checks behind it."""
-    pin_path = os.path.join(app_dir, "ClickGraft.app", "Contents",
-                            "Resources", "python-pin.json")
+    reject can be pushed past the hash check and onto the checks behind it.
+
+    Re-sealed afterwards. python-pin.json is a sealed resource, so editing it
+    inside a SIGNED app makes the kernel SIGKILL the process on exec -- which is
+    macOS working correctly, and shows up here as a bare `assert -9 == 1`. It
+    only appears once dist/ has been through sign_and_notarize.sh, so it stayed
+    hidden through every run against an unsigned build and surfaced during the
+    1.8.0 release. Ad-hoc is right for the copy: teamID is then nil and
+    trusted() takes its documented development-build path.
+    """
+    app = os.path.join(app_dir, "ClickGraft.app")
+    pin_path = os.path.join(app, "Contents", "Resources", "python-pin.json")
     pin = _pin(pin_path)
     pin["payload_zip_sha256"] = sha
     with open(pin_path, "w", encoding="utf-8") as f:
         json.dump(pin, f, indent=2)
-    return os.path.join(app_dir, "ClickGraft.app", "Contents", "MacOS", "ClickGraft")
+    subprocess.run(["/usr/bin/codesign", "--force", "--deep", "--sign", "-", app],
+                   capture_output=True, check=True)
+    return os.path.join(app, "Contents", "MacOS", "ClickGraft")
 
 
 # --- fixtures ---------------------------------------------------------------

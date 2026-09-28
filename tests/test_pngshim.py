@@ -133,3 +133,69 @@ def test_the_gate_refuses_a_shim_that_is_not_the_source(tmp_path):
         cr.check_pngshim(repo)
     assert "pngshim.c" in str(e.value)
     assert any("code:" in line for line in e.value.details), e.value.details
+
+
+# --- and what happens to it on the way into a release ---------------------
+
+def _gate_module():
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "cr_pngshim", os.path.join(root, "packaging", "check_release.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module, root
+
+
+APP_PATH = "Resources/clickgraft/shims/libclickgraft-pngshim.dylib"
+REPO_PATH = "clickgraft/shims/libclickgraft-pngshim.dylib"
+
+
+def test_the_shipped_shim_is_checked_as_code_because_signing_rewrites_it():
+    """1.8.0 is the first release to carry the compiled shim, and the artifact
+    gate refused it: sign_and_notarize.sh signs every Mach-O in the app, so the
+    bytes that ship can never equal the bytes that were recorded.
+
+    check_payload therefore skips it. This is the check that keeps that skip
+    from being a hole -- and the control, because a gate that only ever says yes
+    is not a gate.
+    """
+    gate, root = _gate_module()
+    shim = os.path.join(root, REPO_PATH)
+    real = open(shim, "rb").read()
+    record = {REPO_PATH: "unused-here"}
+
+    # The control: the committed shim is accepted.
+    assert gate.check_signed_machos({APP_PATH: real}, record, root) == 1
+
+    # One byte of executable code, in every slice, leaving a valid Mach-O.
+    tampered = bytearray(real)
+    for arch in sorted(set(macho_read.archs(real))):
+        text = macho_read.section_data(real, arch, "__TEXT", "__text")
+        at = real.find(text)
+        assert at > 0, arch
+        tampered[at] ^= 0xFF
+    with pytest.raises(gate.Refused, match="not the one the tag committed"):
+        gate.check_signed_machos({APP_PATH: bytes(tampered)}, record, root)
+
+
+def test_the_byte_check_really_does_skip_it():
+    """If check_payload stopped skipping it, the signed shim would fail every
+    release -- which is how 1.8.0's artifact gate failed the first time."""
+    gate, _root = _gate_module()
+    assert APP_PATH in gate.SIGNED_IN_APP
+
+
+def test_a_non_macho_cannot_hide_behind_the_skip():
+    """The skip exists because the release SIGNS these. Anything that is not a
+    Mach-O is being skipped for no reason at all."""
+    gate, root = _gate_module()
+    with pytest.raises(gate.Refused):
+        gate.check_signed_machos({APP_PATH: b"not a mach-o at all"},
+                                 {REPO_PATH: "unused"}, root)
+
+
+def test_a_signed_macho_that_does_not_ship_is_refused():
+    gate, root = _gate_module()
+    with pytest.raises(gate.Refused, match="does not ship"):
+        gate.check_signed_machos({}, {REPO_PATH: "unused"}, root)

@@ -83,6 +83,24 @@ BUILT_FROM = ('packaging/build_app.sh', 'packaging/fetch_python.py')
 # so that refusal is one line rather than four thousand.
 PYTHON_PREFIX = 'Frameworks/Python.framework/'
 
+# Recorded sources that sign_and_notarize.sh SIGNS inside the app, so the bytes
+# that ship can never equal the bytes that were recorded.
+#
+# Only the PNG shim. The launcher is a build product (PRODUCTS) and nothing else
+# under Contents is executable -- verified against the 1.8.0 build by walking
+# `find Contents -type f -perm +111` for Mach-O magic.
+#
+# 1.7.0 shipped pngshim.c and compiled it on the user's Mac. 1.8.0 is the first
+# release to carry the compiled .dylib, so it is also the first time a recorded
+# source has been re-signed on its way into the app -- which the byte comparison
+# below could not survive, and did not.
+#
+# Skipping it here would be a hole, so check_signed_machos() re-checks it by
+# CODE: same __TEXT,__text, exports, install name, architectures and minimum
+# macOS as the source the tag committed. Signing changes the signature, not the
+# program.
+SIGNED_IN_APP = frozenset({'Resources/clickgraft/shims/libclickgraft-pngshim.dylib'})
+
 # Whether a release needs a pin is NOT decided here by its number. check_artifact
 # asks whether the tag committed packaging/python-pin.json, which is the real
 # question and gets a 1.7.1 cut from a tree that has one right. A version cutoff
@@ -233,13 +251,94 @@ def check_payload(files, record, against):
     dist/ after the build is exactly what CLAUDE.md's "Never distribute" is
     about.
     """
-    shipped = {app_path(name): digest for name, digest in record.items() if app_path(name)}
+    shipped = {app_path(name): digest for name, digest in record.items()
+               if app_path(name) and app_path(name) not in SIGNED_IN_APP}
     found = {name: _sha256(data) for name, data in files.items()
-             if name not in PRODUCTS and not name.startswith(PYTHON_PREFIX)}
+             if name not in PRODUCTS and name not in SIGNED_IN_APP
+             and not name.startswith(PYTHON_PREFIX)}
     problems = _differences(found, shipped, 'the app', against)
     if problems:
         raise Refused(f'The app does not match {against}.', problems)
     return len(shipped)
+
+
+def _macho_facts(data, arch):
+    """What survives signing, and what a copy actually depends on.
+
+    Not the bytes: a signature is appended and the load commands move, so the
+    file changes while the program does not. LC_BUILD_VERSION moves too, which
+    is why check_pngshim() compares these same facts rather than a hash.
+    """
+    from clickgraft import macho_read
+    return {
+        'code': macho_read.section_data(data, arch, '__TEXT', '__text'),
+        'exports': sorted(macho_read.defined_global_symbols(data, arch)),
+        'install name': macho_read.dylib_paths(data)[:1],
+        'architectures': macho_read.archs(data),
+        'minimum macOS': sorted(set(macho_read.minimum_versions(data).values())),
+    }
+
+
+def check_signed_machos(files, record, root=ROOT):
+    """Every Mach-O the release signs is still the one the tag committed.
+
+    check_payload cannot compare these byte for byte -- signing rewrites them --
+    so it skips them and this proves the same thing the harder way. The source
+    to compare against is the working tree's, which is sound only because the
+    caller has already established that the record matches the tag: if those 38
+    sha256s agree, the tree's copy of this file IS the tag's copy.
+    """
+    from clickgraft import macho_read
+
+    checked = 0
+    for name in sorted(SIGNED_IN_APP):
+        source = None
+        for repo_path, app in ((k, app_path(k)) for k in record):
+            if app == name:
+                source = Path(root) / repo_path
+                break
+
+        # Follow the record, in both directions. A release whose tag committed
+        # this file has to ship it -- check_payload skips it, so nothing else
+        # would notice it going missing. A release whose tag did NOT commit it
+        # must not ship it either, because the same skip is otherwise a place to
+        # hide an unrecorded binary. Releases up to 1.7.0 compiled the shim on
+        # the user's Mac and shipped only pngshim.c, so both cases are real.
+        if source is None:
+            if name in files:
+                raise Refused(f'The app ships {name}, which its tag never committed. '
+                              f'It is skipped by the byte check because the release signs '
+                              f'it, so nothing else would have noticed.')
+            continue
+        if name not in files:
+            raise Refused(f'The app does not ship {name}, which it is recorded as carrying.')
+        if not source.exists():
+            raise Refused(f'{name} is recorded but missing from the working tree.')
+
+        shipped_data = files[name]
+        source_data = source.read_bytes()
+        try:
+            shipped_archs = sorted(set(macho_read.archs(shipped_data)))
+            source_archs = sorted(set(macho_read.archs(source_data)))
+        except macho_read.MachOError as why:
+            raise Refused(f'{name} is not a readable Mach-O ({why}). It is skipped by the '
+                          f'byte check because the release signs it, so anything else '
+                          f'there would be skipped for no reason at all.')
+        if not shipped_archs or shipped_archs != source_archs:
+            raise Refused(f'{name} ships {shipped_archs or "no"} architectures, '
+                          f'but its source has {source_archs}.')
+        differences = []
+        for arch in source_archs:
+            want, got = _macho_facts(source_data, arch), _macho_facts(shipped_data, arch)
+            for key in want:
+                if want[key] != got[key]:
+                    differences.append(f'{name} ({arch}) {key}: '
+                                       f'shipped {got[key]!r}, source {want[key]!r}')
+        if differences:
+            raise Refused(f'{name} is signed, but it is not the one the tag committed.',
+                          differences[:5])
+        checked += 1
+    return checked
 
 
 def _zip_contents(archive):
@@ -312,6 +411,8 @@ def check_artifact(archive, root=ROOT, check_platform=True, allow_legacy=None, s
                       f'so nothing ties it to {tag}. To deploy it anyway, run with {LEGACY_ENV}={version}.')
     count = check_payload(files, expected, tag)
     say(f'  ✓ the app ships exactly the {count} files committed at {tag}, and nothing else')
+    signed = check_signed_machos(files, expected, root)
+    say(f'  ✓ the {signed} Mach-O the release signs is still the program {tag} committed')
     # The interpreter is not one of those files. The pin that names it is, so
     # the tag fixes which one a Mac will fetch.
     # Whether a pin is REQUIRED is decided by the tag, not by the version number.
