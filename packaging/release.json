@@ -15,5 +15,5 @@
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "recommended",
-  "summary": "ClickGraft can now tell you which version of HP Click you actually need for your printer and your Mac, and hand you the download for it, instead of leaving that on the website. It can also make a copy of HP's own 4.11.31 that never updates itself, for anyone who wants to stay on a version they have tested. If your Mac is too old to make a copy at all, it now points you at 4.11.31 and says that version was checked on macOS 12 and opens. A copy made from an old HP Click no longer claims HP built it for Apple Silicon when you are on an Intel Mac, and a sentence that was being cut off mid-word now finishes."
+  "summary": "ClickGraft no longer needs Apple's developer tools. On a Mac that doesn't have them, it offers to fetch one small program of its own — 17 MB, once, into your own Library folder — instead of sending you to install several gigabytes behind an administrator password you may not have. If your Mac already has the tools, nothing changes: it uses those and downloads nothing. The screen that used to ask for them now says what ClickGraft actually needs, which on most Macs is nothing at all — it had been telling some Macs the tools were installed when they were not."
 }
