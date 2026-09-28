@@ -1,8 +1,10 @@
 {
-  "_comment": "The Python that ships inside ClickGraft.app. The release tag fixes this file, this file fixes the framework, and packaging/check_release.py refuses a release whose bundled Python is not the one named here. See packaging/fetch_python.py.",
+  "_comment": "The Python that ClickGraft runs on. The release tag fixes this file, this file fixes the framework, and packaging/check_release.py refuses a release whose Python is not the one named here. payload_url/payload_zip_sha256 describe the signed archive an app downloads when the Mac has no usable interpreter of its own. See packaging/fetch_python.py.",
   "version": "3.13.9",
   "url": "https://www.python.org/ftp/python/3.13.9/python-3.13.9-macos11.pkg",
   "pkg_sha256": "dafebf62b8737f341f6b7eca2d6d1153a50a6b1bfbfa4b8aaf0e62adc73e5017",
-  "framework_sha256": "f7f5d2f55627e1e830e319cfb89980165d10b27ef2665444546afa4551181f03",
-  "payload_sha256": "b9796b0f0f95a95e1670f7dd841a9631d267682abadf15f8dc2b1d00f0436839"
+  "framework_sha256": "1839d07a54a83d843cb4e028ed815f6796057d60dfca68ff477d312ab064dc4f",
+  "payload_sha256": "6b6a59608610d1d3e3def9cceb6c3004a9256bd018ce93f3e3ba07b577fa4a62",
+  "payload_url": "https://clickgraft.elusive.net/ClickGraft-python-3.13.9.zip",
+  "payload_zip_sha256": "3c9e8391ffd2fedf8f42709c5a092ab67dcfb8b10bc5a44ec19f556e5a56aa57"
 }

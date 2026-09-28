@@ -61,6 +61,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import sys
 import urllib.request
 
@@ -222,10 +223,21 @@ def _extract(pkg, workdir):
 def trim(framework, version):
     short = ".".join(version.split(".")[:2])
     base = os.path.join(framework, "Versions", short)
-    for name in ("Headers", "Resources"):
+    # The top-level aliases. "Resources" MUST survive: codesign and CFBundle
+    # follow Python.framework/Resources/Info.plist to identify the bundle, and
+    # without it `codesign --verify` reports "No such file or directory" against
+    # a directory that is plainly there (measured 28 September 2026, after an
+    # earlier version of this trim removed it). "Headers" is removed because the
+    # include/ it points at is removed below, and a dangling alias is worse than
+    # no alias.
+    for name in ("Headers",):
         target = os.path.join(framework, name)
         if os.path.islink(target) or os.path.exists(target):
             (os.remove if os.path.islink(target) else shutil.rmtree)(target)
+    for name in ("Headers",):
+        inner = os.path.join(base, name)
+        if os.path.islink(inner):
+            os.remove(inner)
     for pattern in TRIM_DIRS:
         shutil.rmtree(os.path.join(base, pattern.format(v=short)), ignore_errors=True)
     import glob
@@ -233,6 +245,22 @@ def trim(framework, version):
         for path in glob.glob(os.path.join(base, pattern.format(v=short))):
             os.remove(path)
     os.makedirs(os.path.join(base, "lib", f"python{short}", "site-packages"), exist_ok=True)
+
+    # Sweep up symlinks the trim just broke. A framework seals its symlinks, and
+    # ONE dangling link fails `codesign --verify` for the whole bundle -- with
+    # "No such file or directory" against the bundle path, naming nothing.
+    # Removing libncurses (for a _curses module that is also removed) left
+    # lib/libcurses.dylib pointing at it, and that alone was enough (measured
+    # 28 September 2026). Swept generally rather than by name, because the next
+    # thing added to TRIM_GLOBS will do the same and give the same useless error.
+    broken = 0
+    for walk_root, walk_dirs, walk_files in os.walk(framework):
+        for name in list(walk_files) + list(walk_dirs):
+            path = os.path.join(walk_root, name)
+            if os.path.islink(path) and not os.path.exists(path):
+                os.remove(path)
+                broken += 1
+    return broken
 
 
 def relocate(framework):
@@ -319,7 +347,9 @@ def ensure(cache=CACHE, say=print):
             shutil.copytree(src, dst, symlinks=True)
         else:
             shutil.copy2(src, dst)
-    trim(target, version)
+    broken = trim(target, version)
+    if broken:
+        say(f"  removed {broken} symlink(s) the trim left dangling")
     say(f"  trimmed to {subprocess.run(['du', '-sh', target], capture_output=True, text=True).stdout.split()[0]}")
     say(f"  rewrote {relocate(target)} absolute reference(s) to @loader_path")
 
@@ -333,11 +363,97 @@ def ensure(cache=CACHE, say=print):
     return target
 
 
+def signing_identity():
+    """The Developer ID the payload must carry, or None.
+
+    It is not optional and it is not cosmetic. Under the hardened runtime the app
+    will only load a dylib whose Team ID matches its own, so an ad-hoc-signed
+    framework does not load at all -- and says so in a way that never mentions
+    signing: "mapped file has no Team ID and is not a platform binary"
+    (measured on macOS 12.4, 28 September 2026).
+    """
+    override = os.environ.get("CODESIGN_IDENTITY")
+    if override:
+        return override
+    run = subprocess.run(["security", "find-identity", "-v", "-p", "codesigning"],
+                         capture_output=True, text=True)
+    for line in run.stdout.splitlines():
+        if "Developer ID Application" in line and '"' in line:
+            return line.split('"')[1]
+    return None
+
+
+def build_payload(out_zip, identity=None, say=print):
+    """The framework, signed with a Developer ID and archived, plus its sha256.
+
+    Signed on a COPY rather than in the cache. The cache is what framework_sha256
+    and payload_sha256 describe, and re-signing it would change both every time a
+    payload is built -- so the cache keeps its ad-hoc signatures and this works
+    on a staging copy.
+
+    ditto, not zip: the framework is full of symlinks (Versions/Current, and the
+    top-level aliases) and zipfile does not preserve them. That is the same
+    reason build.py uses `ditto -x -k` for Electron rather than Python's zipfile.
+    """
+    identity = identity or signing_identity()
+    if not identity:
+        raise SystemExit(
+            "No 'Developer ID Application' identity in the keychain.\n"
+            "The payload must carry one or the app cannot load it; see "
+            "signing_identity() for why.")
+
+    framework = ensure(say=say)
+    with tempfile.TemporaryDirectory(prefix="cg-payload-") as staging:
+        staged = os.path.join(staging, "Python.framework")
+        subprocess.run(["/usr/bin/ditto", framework, staged], check=True, capture_output=True)
+
+        # PSF's own bundle seal describes a framework this one no longer is:
+        # the trim removed 60 MB of it. Leaving it in place makes every later
+        # verification argue with a CodeResources from before the trim.
+        for version_dir in os.listdir(os.path.join(staged, "Versions")):
+            stale = os.path.join(staged, "Versions", version_dir, "_CodeSignature")
+            if os.path.isdir(stale) and not os.path.islink(
+                    os.path.join(staged, "Versions", version_dir)):
+                shutil.rmtree(stale, ignore_errors=True)
+
+        signed = 0
+        for walk_root, _dirs, files in os.walk(staged):
+            for name in files:
+                path = os.path.join(walk_root, name)
+                if os.path.islink(path) or not is_macho(path):
+                    continue
+                subprocess.run(["/usr/bin/codesign", "--force", "--timestamp",
+                                "--options", "runtime", "--sign", identity, path],
+                               check=True, capture_output=True)
+                signed += 1
+        subprocess.run(["/usr/bin/codesign", "--force", "--timestamp",
+                        "--options", "runtime", "--sign", identity, staged],
+                       check=True, capture_output=True)
+        verify = subprocess.run(["/usr/bin/codesign", "--verify", "--strict", staged],
+                                capture_output=True, text=True)
+        if verify.returncode:
+            raise SystemExit(f"the signed framework does not verify:\n{verify.stderr}")
+        say(f"  signed {signed} Mach-O file(s) plus the framework as {identity}")
+
+        if os.path.exists(out_zip):
+            os.remove(out_zip)
+        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
+                        staged, out_zip], check=True, capture_output=True)
+
+    digest = hashlib.sha256(open(out_zip, "rb").read()).hexdigest()
+    size = os.path.getsize(out_zip)
+    say(f"  {out_zip}  {size / 1048576:.1f} MB")
+    return digest
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--print-pin", action="store_true",
                         help="rebuild ignoring framework_sha256 and print the new one")
     parser.add_argument("--path", action="store_true", help="print the path and nothing else")
+    parser.add_argument("--payload", metavar="ZIP",
+                        help="build the signed archive the app downloads, and record its "
+                             "sha256 in the pin")
     args = parser.parse_args(argv)
 
     if args.print_pin:
@@ -355,6 +471,16 @@ def main(argv=None):
             f.write("\n")
         print(f"framework_sha256 {pin['framework_sha256']}")
         print(f"payload_sha256   {pin['payload_sha256']}")
+        return 0
+
+    if args.payload:
+        digest = build_payload(args.payload)
+        pin = load_pin()
+        pin["payload_zip_sha256"] = digest
+        with open(PIN, "w", encoding="utf-8") as f:
+            json.dump(pin, f, indent=2)
+            f.write("\n")
+        print(f"payload_zip_sha256 {digest}")
         return 0
 
     framework = ensure(say=(lambda _line: None) if args.path else print)
