@@ -70,9 +70,27 @@ fi
 echo "    profile '$PROFILE' found"
 
 # --- sign ------------------------------------------------------------------
-# Hardened runtime is mandatory for notarization. No entitlements are needed:
-# the launcher execs /usr/bin/python3, and after exec the process runs under
-# Apple's own signature and entitlements, not ours.
+# Hardened runtime is mandatory for notarization. No entitlements are needed,
+# but the REASON changed in 1.8.0 and the new one is more fragile, so it is
+# written down.
+#
+# It used to be that the launcher exec'd /usr/bin/python3 and the process then
+# ran under Apple's own signature. The app now carries its own interpreter, so
+# the hardened runtime applies library validation to it: every dylib it loads
+# must share the app's Team ID or be an Apple platform binary. That holds here
+# only because the loop below signs EVERY Mach-O in the bundle -- the framework
+# included -- with the same Developer ID.
+#
+# Ad-hoc signing therefore does not work, and fails in a way that does not
+# mention signing. Measured 28 September 2026 on macOS 12.4:
+#
+#   dyld: Library not loaded: @loader_path/../Python
+#   Reason: ... mapped file has no Team ID and is not a platform binary
+#           (signed with custom identity or adhoc?)
+#
+# If a future change ever needs mixed identities, the entitlement to add is
+# com.apple.security.cs.disable-library-validation -- and adding it should be a
+# deliberate decision, not a reflex, because it turns the check off entirely.
 echo "--> removing stale signatures and metadata"
 /usr/bin/xattr -cr "$APP"
 find "$APP" -name '.DS_Store' -delete 2>/dev/null || true

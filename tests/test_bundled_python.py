@@ -192,3 +192,21 @@ def test_preflight_survives_a_patch_only_manifest(capsys):
     out = capsys.readouterr().out
     assert "no graft (patch_only)" in out
     assert "ALL PREFLIGHT CHECKS PASSED" in out
+
+
+def test_the_release_signs_every_macho_in_the_framework():
+    """Library validation is what makes the bundled interpreter loadable.
+
+    Under the hardened runtime every dylib the app loads must carry the app's
+    own Team ID. That holds only because sign_and_notarize.sh walks the whole
+    bundle and signs each Mach-O with the same Developer ID; sign just the outer
+    app, or ad-hoc sign it, and dyld refuses the framework with a message that
+    never mentions signing ("no Team ID and is not a platform binary").
+    """
+    script = open(os.path.join(ROOT, "packaging", "sign_and_notarize.sh"),
+                  encoding="utf-8").read()
+    assert 'find "$APP/Contents" -type f -perm +111' in script, \
+        "the inner-to-outer signing walk is what makes the bundled Python loadable"
+    assert "Python.framework" not in script.split("--> signing")[1].split("codesign --verify")[0] \
+        or "! -path" not in script.split("--> signing")[1].split("codesign --verify")[0], \
+        "the signing walk must not exclude the framework"
