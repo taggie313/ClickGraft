@@ -690,3 +690,151 @@ def test_the_requirement_is_a_requirement_and_not_a_path():
     assert '"=anchor apple generic' in body.group(0), \
         "codesign -R needs a leading = or it reads the text as a filename"
     assert "subject.OU" in body.group(0)
+
+
+# --- what the review of the FIXES found ----------------------------------
+
+def test_the_install_lock_is_flock_and_never_removes_its_file():
+    """The first lock was O_EXCL plus a pid, with rules for taking over a stale
+    one. A verifier compiled that class verbatim and ran 400 barrier-synchronised
+    double-launches against a lock naming a dead pid: 16 had BOTH processes
+    believe they held it, because the takeover was removeItem-then-create and the
+    second process deleted the lock the first had just made.
+
+    flock has no takeover path at all -- the kernel releases it when the fd
+    closes or the process dies -- so the fix is the absence of that machinery,
+    and this checks the machinery has not crept back.
+    """
+    code = _swift_code()
+    body = re.search(r"final class Lock \{.*?\n    \}", code, re.S)
+    assert body, "Lock is gone"
+    text = body.group(0)
+    assert "flock(" in text, "the lock is not flock-based"
+    assert "LOCK_EX" in text and "LOCK_NB" in text
+    # The things that made the old one racy.
+    assert "removeItem" not in text, "removing the lock file reintroduces the race"
+    assert "kill(" not in text, "pid liveness is a takeover heuristic flock does not need"
+    assert "getpid()" not in text
+
+
+@needs_app
+def test_two_processes_cannot_both_hold_the_install_lock(payload, tmp_path):
+    """A smoke test, not the guarantee -- and the distinction is the point.
+
+    The old takeover raced 16 times in 400 barrier-synchronised trials, which a
+    verifier measured by compiling the Lock class into a standalone binary. At
+    ~4%, two app launches reproduce it about one run in twelve, so this test
+    passes against the BROKEN lock most of the time and would be false comfort
+    if it were the only check. test_the_install_lock_is_flock_and_never_removes
+    _its_file is the one that binds; this exercises the same path end to end and
+    catches a lock that is broken outright.
+
+    The lock file is planted first because both processes racing an EXISTING
+    lock is the case the old takeover got wrong.
+    """
+    import threading
+    home = tmp_path / "python"
+    home.mkdir()
+    # A lock left by something that is gone: what the old code tried to take over.
+    (home / ".installing").write_bytes(b"99998\n")
+
+    results = []
+    lock = threading.Lock()
+
+    def go():
+        r = _fetch(f"file://{payload}", home)
+        with lock:
+            results.append(r)
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=600)
+
+    assert len(results) == 2
+    why = "\n".join(out for _c, out in results)
+    version = _pin()["version"]
+    assert (home / version / ".pinned").exists(), f"neither fetch installed anything\n{why}"
+    seal = subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--strict",
+         str(home / version / "Python.framework")], capture_output=True, text=True)
+    assert seal.returncode == 0, f"installed a framework codesign refuses\n{seal.stderr}\n{why}"
+    assert not list(home.glob(".staging-*")), f"staging leaked\n{why}"
+
+
+@needs_app
+def test_an_unwritable_home_does_not_say_another_copy_is_fetching(payload, tmp_path):
+    """Telling someone whose home is unwritable to wait for another copy is
+    advice that can never come true, and every retry repeats it. The old lock
+    could not tell "busy" from "could not open the lock at all"."""
+    home = tmp_path / "python"
+    home.mkdir()
+    home.chmod(0o500)
+    try:
+        code, out = _fetch(f"file://{payload}", home)
+    finally:
+        home.chmod(0o700)
+    assert code == 1, out
+    assert "Another copy of ClickGraft is already fetching" not in out, out
+    assert "can't write to" in out or "Permission denied" in out, out
+
+
+def test_cancel_stops_the_install_and_not_only_the_download():
+    """cancel() used to touch the download task alone. accept() runs
+    synchronously in the delegate callback and consulted nothing, so Cancel
+    during "Unpacking" still installed 49 MB and wrote .pinned for a fetch the
+    person had backed out of -- while the button's comment said otherwise."""
+    code = _swift_code()
+    body = re.search(r"static func accept\(.*?\n    \}", code, re.S)
+    assert body, "accept() is gone"
+    assert body.group(0).count("isCancelling") >= 2, \
+        "accept() does not give up when the fetch was cancelled"
+    cancel = re.search(r"static func cancel\(\) \{.*?\n    \}", code, re.S)
+    assert cancel and "setCancelling(true)" in cancel.group(0)
+
+
+def test_the_fetchers_settled_flag_is_not_shared_across_queues_unguarded():
+    """It is written by cancel() on the main queue and by the delegate callbacks
+    on URLSession's queue. A cancelled fetch whose done() still fired would jump
+    the wizard to Requirements after the person backed out."""
+    code = _swift_code()
+    body = re.search(r"private final class Fetcher.*?\n    \}\n\}", code, re.S)
+    assert body, "Fetcher is gone"
+    assert "claimSettle()" in body.group(0), "settle() is not a single atomic claim"
+    assert "NSLock" in body.group(0)
+
+
+def test_robots_keeps_crawlers_off_the_download_people_actually_get():
+    """The page links the VERSIONED name, and summary.sh counts 200s on it, so a
+    rule covering only /ClickGraft.zip left the real download crawlable -- and
+    crawler traffic in the download count is the harm robots.txt was written for.
+    """
+    rules = [line.split(":", 1)[1].strip()
+             for line in open(os.path.join(ROOT, "site/robots.txt"), encoding="utf-8")
+             if line.startswith("Disallow:")]
+
+    def blocked(path):
+        return any(path.startswith(r) for r in rules)
+
+    assert blocked("/ClickGraft-1.7.0.zip")
+    assert blocked("/ClickGraft-1.7.0.zip.sha256")
+    assert blocked("/ClickGraft.zip")
+    assert blocked(f"/ClickGraft-python-{_pin()['version']}.zip")
+    assert blocked("/python-pin.json")
+    # And the page itself must stay indexable: that is how people find the tool.
+    assert not blocked("/")
+    assert not blocked("/es/")
+
+
+def test_the_deploy_looks_for_the_payload_of_the_version_it_is_publishing():
+    """redeploy.sh reads the pin out of the ZIP, then asked fetch_python for the
+    WORKING TREE's payload path -- the wrong question in exactly the case the
+    ZIP-pin fix exists for, sending it to the network for an archive it had."""
+    deploy = open(os.path.join(ROOT, "site/deploy/redeploy.sh"), encoding="utf-8").read()
+    assert '--payload-path "$PY_VERSION"' in deploy
+
+    sys.path.insert(0, os.path.join(ROOT, "packaging"))
+    import fetch_python
+    assert "3.13.8" in fetch_python.payload_path("3.13.8")
+    assert fetch_python.payload_path() == fetch_python.payload_path(_pin()["version"])

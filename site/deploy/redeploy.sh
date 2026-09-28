@@ -117,7 +117,10 @@ fi
 PY_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$PIN")"
 PY_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["payload_zip_sha256"])' "$PIN")"
 PY_NAME="ClickGraft-python-$PY_VERSION.zip"
-PAYLOAD="$(python3 "$ROOT/packaging/fetch_python.py" --payload-path)"
+# For the ZIP's Python, not the working tree's: those differ in exactly the case
+# this whole block exists for, and asking the wrong question meant a locally
+# built archive was never found and the script always went to the network.
+PAYLOAD="$(python3 "$ROOT/packaging/fetch_python.py" --payload-path "$PY_VERSION")"
 
 payload_sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
 

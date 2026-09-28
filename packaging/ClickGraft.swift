@@ -168,6 +168,7 @@ enum PythonPayload {
     enum Failure: Error {
         case noPin
         case busy
+        case cancelled
         case network(String)
         case mismatch(String, String)
         case unpack(String)
@@ -182,6 +183,10 @@ enum PythonPayload {
             case .busy:
                 return "Another copy of ClickGraft is already fetching it. Wait for that "
                      + "one to finish, then try again."
+            case .cancelled:
+                // Only reached by --fetch-python, which has no Cancel; the
+                // wizard has already settled and shown the offer again.
+                return "Stopped."
             case .network(let why):
                 return "The download didn't finish: \(why)"
             case .mismatch:
@@ -216,6 +221,24 @@ enum PythonPayload {
 
     private static var running: Fetcher?
 
+    /// Set by cancel(), cleared when a fetch starts.
+    ///
+    /// Cancel used to stop only the DOWNLOAD. accept() is called synchronously
+    /// from the delegate callback and consulted nothing, so pressing Cancel
+    /// during "Unpacking" still unpacked 49 MB, verified it and wrote .pinned
+    /// for a fetch the person had backed out of -- while the button's own
+    /// comment said nothing was left half-installed.
+    private static let cancelLock = NSLock()
+    private static var cancelling = false
+    static var isCancelling: Bool {
+        cancelLock.lock(); defer { cancelLock.unlock() }
+        return cancelling
+    }
+    private static func setCancelling(_ value: Bool) {
+        cancelLock.lock(); defer { cancelLock.unlock() }
+        cancelling = value
+    }
+
     /// Fetches, verifies and installs. Both closures are called on the main
     /// queue; `progress` runs 0...1. A second call while one is in flight is
     /// ignored, so a double-click cannot start two.
@@ -226,6 +249,7 @@ enum PythonPayload {
             return
         }
         guard running == nil else { return }
+        setCancelling(false)
         let f = Fetcher(pin: pin, progress: progress, done: done)
         running = f
         f.start()
@@ -234,6 +258,7 @@ enum PythonPayload {
     /// Stop a fetch in flight. Answers nothing back: the caller asked for this
     /// and has already moved on to another screen.
     static func cancel() {
+        setCancelling(true)
         running?.cancel()
         running = nil
     }
@@ -262,10 +287,11 @@ enum PythonPayload {
         // check the whole design rests on was void for that install, permanently,
         // because nothing re-runs it.
         let lock = Lock(parent + "/.installing")
-        guard lock.taken else {
-            throw Failure.busy
-        }
         defer { lock.release() }
+        if let problem = lock.problem {
+            throw Failure.broken("ClickGraft can't write to \(parent): \(problem)")
+        }
+        guard lock.taken else { throw Failure.busy }
 
         // A staging directory nobody else can be using, even so: the lock is
         // advisory and a stale one must not wedge the app forever. Unpacking
@@ -288,6 +314,9 @@ enum PythonPayload {
         guard fm.fileExists(atPath: framework) else {
             throw Failure.unpack("it did not contain an interpreter")
         }
+        // Checked here and again below: these are the two points after which
+        // giving up stops being free. The defer clears staging either way.
+        if isCancelling { throw Failure.cancelled }
         progress(0.7)
 
         // The second check. The sha256 says these are the bytes the release
@@ -304,6 +333,7 @@ enum PythonPayload {
                 ?? "it is not signed by whoever signed ClickGraft")
         }
         progress(0.85)
+        if isCancelling { throw Failure.cancelled }
 
         // Replace without a window where `dir` exists but holds nothing usable.
         // The old code removed `dir` and then moved staging in, so a move that
@@ -351,66 +381,58 @@ enum PythonPayload {
         }
     }
 
-    /// An O_EXCL lock file holding the owning pid, so one Mac installs one
-    /// interpreter at a time however many ClickGrafts are open.
+    /// One installer at a time, across processes, via flock(2).
     ///
-    /// O_EXCL because it is the only create that is atomic against another
-    /// process; a "does it exist" check followed by a create is the race it is
-    /// meant to close. A lock whose pid is gone is taken over rather than
-    /// obeyed -- a machine that crashed mid-install must not be locked out of
-    /// its own interpreter forever.
+    /// The first version of this was an O_EXCL lock file holding the owner's pid,
+    /// with liveness and age rules to take over a stale one. A review compiled
+    /// that class verbatim and ran 400 barrier-synchronised double-launches
+    /// against a lock naming a dead pid: 16 of them had BOTH processes believe
+    /// they held it. The takeover was removeItem-then-create, so the second
+    /// process deleted the lock the first had just created with O_EXCL and then
+    /// created its own. The lock whose entire purpose was to stop two installers
+    /// let two through, in exactly the case -- a crashed or force-quit fetch --
+    /// the takeover rules existed for.
+    ///
+    /// flock has no such path. The kernel owns the lock, releases it when the
+    /// file descriptor closes OR the process dies, and LOCK_NB means a second
+    /// holder is told no rather than waiting. There is nothing to take over, so
+    /// there is no takeover to get wrong: no pid to parse, no liveness probe, no
+    /// age rule, and the lock file itself is never removed (removing it is what
+    /// reintroduces the race).
     final class Lock {
-        private let path: String
+        private var fd: Int32 = -1
         private(set) var taken = false
-
-        /// How long a lock may sit before it is assumed abandoned. A dead owner
-        /// is normally detected by its pid, but pids are recycled: a lock left
-        /// by a process that died, whose number has since been reused by
-        /// something unrelated, would otherwise refuse this Mac its own
-        /// interpreter for ever. Half an hour is far longer than any install.
-        private static let stale: TimeInterval = 30 * 60
+        /// The lock could not be opened at all -- an unwritable directory, a
+        /// read-only volume, a path that is a file. Distinguished from "busy",
+        /// because telling someone whose home is unwritable to wait for another
+        /// copy to finish is advice that can never come true, and they will
+        /// retry for ever.
+        private(set) var problem: String?
 
         init(_ path: String) {
-            self.path = path
-            if claim() { taken = true; return }
-            guard abandoned() else { return }
-            try? FileManager.default.removeItem(atPath: path)
-            taken = claim()
-        }
-
-        /// Whether the lock on disk can be taken over.
-        private func abandoned() -> Bool {
-            let text = (try? String(contentsOfFile: path, encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let text = text, let owner = Int32(text) else {
-                // No readable pid. Only a crash between the create and the
-                // write leaves that, and refusing on it would wedge the app
-                // permanently on a file that names nobody.
-                return true
+            fd = open(path, O_CREAT | O_RDWR, 0o644)
+            guard fd >= 0 else {
+                problem = String(cString: strerror(errno))
+                return
             }
-            // kill(pid, 0) fails with ESRCH when there is no such process. It
-            // fails with EPERM when the process exists but belongs to someone
-            // else, which means NOT abandoned.
-            if kill(owner, 0) != 0 && errno == ESRCH { return true }
-            if let made = (try? FileManager.default.attributesOfItem(atPath: path))?[.creationDate]
-                    as? Date, Date().timeIntervalSince(made) > Lock.stale {
-                return true
+            if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+                taken = true
+                return
             }
-            return false
-        }
-
-        private func claim() -> Bool {
-            let fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
-            guard fd >= 0 else { return false }
-            var line = Array("\(getpid())\n".utf8)
-            _ = write(fd, &line, line.count)
+            // EWOULDBLOCK is the ordinary "someone else has it"; anything else
+            // is a real failure and is worth saying out loud.
+            if errno != EWOULDBLOCK {
+                problem = String(cString: strerror(errno))
+            }
             close(fd)
-            return true
+            fd = -1
         }
 
         func release() {
-            guard taken else { return }
-            try? FileManager.default.removeItem(atPath: path)
+            guard fd >= 0 else { return }
+            if taken { _ = flock(fd, LOCK_UN) }
+            close(fd)
+            fd = -1
         }
     }
 
@@ -472,7 +494,23 @@ enum PythonPayload {
         private let progress: (Double) -> Void
         private let done: (Result<String, Failure>) -> Void
         private var session: URLSession!
-        private var settled = false
+        // Written by cancel() on the main queue, read and written by the
+        // delegate callbacks on URLSession's queue, so it needs a lock rather
+        // than luck.
+        private let gate = NSLock()
+        private var settledFlag = false
+        private var settled: Bool {
+            get { gate.lock(); defer { gate.unlock() }; return settledFlag }
+            set { gate.lock(); defer { gate.unlock() }; settledFlag = newValue }
+        }
+
+        /// Claims the right to answer, once. Returns false if someone already has.
+        private func claimSettle() -> Bool {
+            gate.lock(); defer { gate.unlock() }
+            if settledFlag { return false }
+            settledFlag = true
+            return true
+        }
 
         init(pin: Pin, progress: @escaping (Double) -> Void,
              done: @escaping (Result<String, Failure>) -> Void) {
@@ -513,8 +551,7 @@ enum PythonPayload {
         }
 
         private func settle(_ r: Result<String, Failure>) {
-            guard !settled else { return }
-            settled = true
+            guard claimSettle() else { return }
             session.finishTasksAndInvalidate()
             DispatchQueue.main.async {
                 PythonPayload.running = nil

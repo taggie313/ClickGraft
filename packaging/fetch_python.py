@@ -484,8 +484,9 @@ def main(argv=None):
                         help="build the signed archive the app downloads, and record its "
                              "sha256 in the pin. Written beside the cached framework "
                              "unless a path is given")
-    parser.add_argument("--payload-path", action="store_true",
-                        help="print where --payload writes, and nothing else")
+    parser.add_argument("--payload-path", metavar="VERSION", nargs="?", const="",
+                        help="print where --payload writes for VERSION (default: the "
+                             "version in the pin), and nothing else")
     args = parser.parse_args(argv)
 
     if args.print_pin:
@@ -505,8 +506,11 @@ def main(argv=None):
         print(f"payload_sha256   {pin['payload_sha256']}")
         return 0
 
-    if args.payload_path:
-        print(payload_path())
+    if args.payload_path is not None:
+        # redeploy.sh asks for the version in the ZIP it is publishing, which is
+        # not always the one in the working tree -- and answering for the tree
+        # there sent it to the network for an archive it already had.
+        print(payload_path(args.payload_path or None))
         return 0
 
     if args.payload is not None:

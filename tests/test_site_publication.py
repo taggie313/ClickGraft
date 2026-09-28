@@ -313,3 +313,34 @@ def test_linux_refusals_of_renameat2_for_real(tmp_path):
     assert restored.returncode == 0, restored.stderr
     assert live_page(site) == 'ClickGraft 1'
     assert (site / 'collector/collector.py').read_text() == '1'
+
+
+def test_a_tree_without_a_pin_still_has_its_alias_and_pages_checked(tmp_path):
+    """Narrowing the pin requirement to versions that need one must not narrow
+    the checks that were never about the pin.
+
+    An early `return` did exactly that: a pre-1.8.0 tree with no python-pin.json
+    validated with ClickGraft.zip as a regular file rather than the symlink
+    CLAUDE.md requires for the download counters, and with {{VERSION}} still in
+    the page. That is the break-glass --restore path.
+    """
+    folder = staged(tmp_path, '.incoming-nopin', '1')
+    html = folder / 'html'
+    (html / 'python-pin.json').unlink()
+    (html / f'ClickGraft-python-{PYTHON_VERSION}.zip').unlink()
+    # Still fine without a pin: this version does not need one.
+    publish.validate(html)
+
+    # ...but the alias is still an alias.
+    alias = html / 'ClickGraft.zip'
+    target = os.readlink(alias)
+    alias.unlink()
+    alias.write_bytes(b'not a symlink')
+    with pytest.raises(ValueError, match='symlink'):
+        publish.validate(html)
+
+    alias.unlink()
+    alias.symlink_to(target)
+    (html / 'index.html').write_text('ClickGraft {{VERSION}}')
+    with pytest.raises(ValueError, match='placeholder'):
+        publish.validate(html)

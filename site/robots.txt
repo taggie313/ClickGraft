@@ -16,14 +16,17 @@
 
 User-agent: *
 Allow: /
+# /ClickGraft.zip is only an alias. The page's own button links the VERSIONED
+# name (ClickGraft-1.7.0.zip), so until this prefix was added the one download a
+# crawler could actually discover was the one no rule covered -- and summary.sh
+# counts 200s on that exact path, which is the harm described above.
 Disallow: /ClickGraft.zip
 Disallow: /ClickGraft.zip.sha256
+Disallow: /ClickGraft-
 Disallow: /appcast.json
-# The interpreter a Mac fetches when it has none of its own: 17 MB, thirty times
-# the app, and published under a name no page links to. A crawler taking it
-# wastes more bandwidth than everything else here put together, and the wildcard
-# covers the versioned names so this needs no edit when the Python moves.
-Disallow: /ClickGraft-python-
+# The interpreter a Mac fetches when it has none of its own is 17 MB, twenty
+# times the app; /ClickGraft- above already covers it and every future version.
+# The pin is tiny but there is no reason to crawl it either.
 Disallow: /python-pin.json
 
 Sitemap: https://clickgraft.elusive.net/sitemap.xml

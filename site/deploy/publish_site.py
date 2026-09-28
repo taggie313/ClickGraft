@@ -68,10 +68,15 @@ class NeedsOperator(RuntimeError):
         self.details = list(details)
 
 
-# The release that first shipped a Python pin. The same boundary as
-# packaging/check_release.py's PYTHON_PIN_FROM and site/deploy/healthcheck.sh's
-# NEEDS_PIN; changing one without the others is how a release slips past the
-# check that was added for it.
+# The release that first shipped a Python pin.
+#
+# This and site/deploy/healthcheck.sh's NEEDS_PIN key on the VERSION, because
+# neither has the release tag to ask. packaging/check_release.py deliberately
+# does NOT: it asks whether the tag committed packaging/python-pin.json, which
+# is the real question and the one a release numbered 1.7.1 from a tree that has
+# a pin gets right. So this is a floor, not the authority -- and the case it can
+# be wrong about (a sub-1.8.0 release that does carry a pin) is covered anyway,
+# because a tree that ships a pin takes the full path below whatever its number.
 PYTHON_PIN_FROM = (1, 8, 0)
 
 
@@ -131,6 +136,13 @@ def validate(html):
     pin_path = html / 'python-pin.json'
     needs_pin = _version_tuple(version) >= PYTHON_PIN_FROM
     if not needs_pin and not pin_path.exists():
+        # Nothing to check about the interpreter -- but everything BELOW this
+        # block still applies. Narrowing the pin requirement must not narrow the
+        # alias, placeholder and page checks with it: an early `return` here let
+        # a --restore of an older kept copy through with ClickGraft.zip as a
+        # regular file rather than the symlink CLAUDE.md requires for the
+        # download counters, and with {{VERSION}} still in the page.
+        _validate_pages(html, name)
         return
     try:
         pin = json.loads(pin_path.read_text())
@@ -151,6 +163,12 @@ def validate(html):
     if _sha256(payload) != payload_sha:
         raise ValueError(f'{payload.name} does not match the sha256 in python-pin.json, '
                          f'so every app that checks it would refuse it')
+    _validate_pages(html, name)
+
+
+def _validate_pages(html, name):
+    """The checks that have nothing to do with the interpreter, in one place so
+    no future early return can skip them again."""
     if not (html / 'ClickGraft.zip').is_symlink() or os.readlink(html / 'ClickGraft.zip') != name:
         raise ValueError('Download alias must be a relative symlink to the versioned ZIP')
     for page in ('index.html', 'es/index.html', 'sitemap.xml'):

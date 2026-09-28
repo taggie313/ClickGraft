@@ -60,8 +60,13 @@ ADVVER=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/appcast.json" \
 NEEDS_PIN=$(awk -v v="$ADVVER" 'BEGIN {
   n = split(v, a, "."); print (n >= 2 && (a[1] > 1 || (a[1] == 1 && a[2] >= 8))) ? 1 : 0 }')
 
+# The version is a floor, not the authority: whether an app needs an interpreter
+# is settled by whether its release committed a pin, which only the artifact gate
+# can see. So a version below the floor is reported as "not required" rather than
+# "not needed", and the elif below still hashes a pin the site serves early.
 if [ "$NEEDS_PIN" != 1 ]; then
-  printf '  - %-34s %s\n' "interpreter" "not needed: the site serves ${ADVVER:-an unreadable version}"
+  printf '  - %-34s %s\n' "interpreter" \
+    "not required by ${ADVVER:-an unreadable version}; checked below if served"
 fi
 
 PIN=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/python-pin.json")
