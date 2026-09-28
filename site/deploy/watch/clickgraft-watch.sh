@@ -93,6 +93,9 @@ events() {
       if (c != "browser" && c != "app") next
 
       kind = ""
+      # Digits in the version group, so the interpreter published as
+      # /ClickGraft-python-<v>.zip is not reported as someone downloading
+      # ClickGraft. Same rule as summary.sh; see the note there.
       if (c == "browser" && path ~ /^\/ClickGraft(-[0-9]+\.[0-9]+\.[0-9]+)?\.zip$/ && status == "200") kind = "download"
       # Same predicate as summary.sh. If these two disagree the daily digest and
       # fetch-stats.sh report different numbers for the same day.

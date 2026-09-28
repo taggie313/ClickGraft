@@ -109,22 +109,40 @@ They belong on the Done screen, where they're a result rather than a claim.
 
 **Heading:** What ClickGraft needs
 
-**Body:**
+**Body** *(rewritten for 1.8.0 — see below for what it said and why that had to
+go)*:
+
+> Nothing you have to install. ClickGraft needs a Mac with Apple Silicon and your
+> own copy of HP Click, and it brings the rest itself.
+
+**State — the only one left:**
+
+> ✓ **Everything ClickGraft needs is here.** Nothing to do.
+
+**What this screen used to say, and why it stopped being true.** Until 1.8.0 the
+body read:
 
 > ClickGraft uses a set of tools Apple ships for free, called the Command Line
 > Tools. Most Macs used for design or print work already have them.
 
-**State — present:**
+with a green panel when they were present and an orange one, plus install
+instructions, when they were not. Four changes removed every developer tool a
+build needed, and 1.8.0 removed the last one by letting ClickGraft fetch its own
+interpreter — so the screen was describing a requirement that no longer existed.
 
-> ✓ **Apple's Command Line Tools are installed.** Nothing to do.
+Worse than out of date: the panel was driven by `check_clt()`, whose list of
+required tools is now empty, so it is true on every Mac. A Mac with no developer
+tools at all was being told Apple's were installed and there was nothing to do.
+The two panels and the `Check again` button are gone, and `Continue` is no longer
+gated on that value — the processor is the only thing left that can stop a copy
+being made.
 
-**State — missing:**
-
-> **Apple's Command Line Tools aren't installed yet.**
->
-> They come from Apple, not from us. macOS will offer to install them the first
-> time it needs them — accept, wait for it to finish, then come back here. It's a
-> large download and can take several minutes.
+The "If you can't install them on this Mac" disclosure is **kept**, relabelled
+*If this is a Mac you don't administer*, and now always available rather than
+only when the tools were missing. What it says — check 4.11.31 first, ask IT to
+make one copy for everyone, or make it on a Mac of your own — is the most useful
+thing on the screen for someone who does not administer their Mac, and that has
+not changed.
 
 **State — present, but only because Xcode is waiting for its licence** *(1.5.6)*.
 Shown as a small line under the ✓ panel:
@@ -1360,6 +1378,65 @@ drawn before the attempt, so it starts again from Screen 2, as above.
 `launcher` fails a copy whose start-up script doesn't load every support file the
 copy needs (a `--no-preload` build, which is for diagnosis only); `verification`
 is the checks reporting a failure without naming one.
+
+### ClickGraft needs one more piece — new screen, before Screen 2
+
+Reached when this Mac has nothing the part of ClickGraft that does the work can
+run on. It comes *before* "What ClickGraft needs", because that screen reports
+what the work found and the work cannot start yet.
+
+> **ClickGraft needs one more piece**
+>
+> The part of ClickGraft that does the work needs a small program this Mac
+> doesn't have. ClickGraft can fetch it now: 17 MB, once, and never again.
+>
+> ✓ It goes in your own Library folder, alongside your other app settings.
+> Nothing is installed into macOS and nobody is asked for an administrator
+> password.
+>
+> ✓ ClickGraft knows what it should receive. This version records a fingerprint
+> of the exact file, checks what arrives against it, and installs nothing unless
+> they match.
+>
+> It comes from clickgraft.elusive.net, the same place ClickGraft itself came
+> from.
+>
+> ▸ Why this Mac and not others
+>
+> Buttons: `Quit` · `Fetch it` (primary)
+
+Under the disclosure:
+
+> Macs set up for software development already have this program, and ClickGraft
+> uses the one that's there. Most Macs used for design or print work don't, and
+> asking macOS for it means a download of several gigabytes behind an
+> administrator password — for one small piece of it.
+>
+> So ClickGraft fetches that piece instead. If you'd rather not download
+> anything, installing Apple's Command Line Tools also works: ClickGraft will
+> find them next time it opens.
+
+**While it runs** — a progress bar, and one line that changes:
+
+> Fetching · Checking what arrived · Unpacking · Checking macOS is happy with it
+
+Then straight on to "What ClickGraft needs" with no further click: the person
+asked for one thing and it happened, so stopping to say "done" would be a step
+that reports itself.
+
+**If it fails**, the same screen comes back with the reason in an orange box
+above the text, and `Fetch it` becomes `Try again`:
+
+| what went wrong | said as |
+|---|---|
+| the download didn't finish | "The download didn't finish: *reason*" |
+| what arrived didn't match | "What arrived isn't what this version of ClickGraft expects, so nothing was installed. Try again — if it keeps happening, something between this Mac and the download is changing it." |
+| it wouldn't unpack | "The download arrived but couldn't be unpacked: *reason*" |
+| macOS wouldn't vouch for it | "The download arrived but macOS wouldn't vouch for it, so nothing was installed: *reason*" |
+| it wouldn't install | "The download was fine but installing it failed: *reason*" |
+
+Not said on the screen: the two fingerprints. They mean nothing to the person
+reading, and the sentence already says what to do. They go in a report.
 
 ## Words to avoid
 

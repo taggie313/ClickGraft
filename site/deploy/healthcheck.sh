@@ -38,6 +38,58 @@ ZIPURL=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/appcast.json" \
 ZIPFILE="${ZIPURL##*/}"
 check "GET /$ZIPFILE"        200 "$(code -I "$BASE/$ZIPFILE")"
 check "GET /$ZIPFILE.sha256" 200 "$(code "$BASE/$ZIPFILE.sha256")"
+# The interpreter a Mac fetches when it has none of its own, and the pin that
+# names it. Both are checked because a Mac in that position cannot open
+# ClickGraft at all without them, and nothing else on this page would notice:
+# the download, the appcast and the page itself would all still be perfect.
+#
+# The pin is asked for first and the name taken from it, so this checks the file
+# that is really being fetched rather than a name composed here.
+# ...but only once a release needs it. ClickGraft started fetching an interpreter
+# in 1.8.0; before that it ran on Apple's developer tools, so demanding the file
+# while the site still serves 1.7.0 would print a red ✗ for a thing no released
+# app has ever asked for -- and a healthcheck that is always a bit red is one
+# nobody reads, which is the failure this whole script exists to prevent.
+# head -1: the FIRST "version", which is the one being advertised. The appcast
+# carries the whole release history under "releases", so without it this is every
+# version ClickGraft has ever had and the comparison below is made against a
+# dozen lines of them. (`p;q` does not work here -- sed would quit on line 1,
+# which is the opening brace.)
+ADVVER=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/appcast.json" \
+         | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' | head -1)
+NEEDS_PIN=$(awk -v v="$ADVVER" 'BEGIN {
+  n = split(v, a, "."); print (n >= 2 && (a[1] > 1 || (a[1] == 1 && a[2] >= 8))) ? 1 : 0 }')
+
+if [ "$NEEDS_PIN" != 1 ]; then
+  printf '  - %-34s %s\n' "interpreter" "not needed: the site serves ${ADVVER:-an unreadable version}"
+fi
+
+PIN=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/python-pin.json")
+PYVER=$(printf '%s' "$PIN" | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p')
+PYSHA=$(printf '%s' "$PIN" | sed -n 's/.*"payload_zip_sha256": *"\([^"]*\)".*/\1/p')
+if [ "$NEEDS_PIN" = 1 ]; then
+  check "GET /python-pin.json" 200 "$(code "$BASE/python-pin.json")"
+fi
+if [ "$NEEDS_PIN" = 1 ] && [ -n "$PYVER" ]; then
+  PYFILE="ClickGraft-python-$PYVER.zip"
+  check "GET /$PYFILE"       200 "$(code -I "$BASE/$PYFILE")"
+  check "GET /$PYFILE.sha256" 200 "$(code "$BASE/$PYFILE.sha256")"
+  # Fetched whole and hashed, not just HEADed. A truncated or replaced archive
+  # answers 200 and is then refused by every app that downloads it, which is a
+  # failure only the user would ever see.
+  got=$(curl -s --max-time 300 -A "$UA" "${MARK[@]}" "$BASE/$PYFILE" | shasum -a 256 | cut -d' ' -f1)
+  check "interpreter matches its pin" "$PYSHA" "$got"
+elif [ "$NEEDS_PIN" = 1 ]; then
+  printf '  ✗ %-34s %s\n' "python-pin.json" "unreadable: no version in it"; fail=1
+elif [ -n "$PYVER" ]; then
+  # Published early, before the release that needs it. Not a failure -- it is
+  # how the payload gets onto the site ahead of 1.8.0 -- but still checked,
+  # because a wrong one published now is a wrong one served later.
+  got=$(curl -s --max-time 300 -A "$UA" "${MARK[@]}" "$BASE/ClickGraft-python-$PYVER.zip" \
+        | shasum -a 256 | cut -d' ' -f1)
+  check "interpreter published early" "$PYSHA" "$got"
+fi
+
 check "POST /report"         200 "$(code -X POST --data-binary 'healthcheck' "$BASE/report")"
 check "GET /stats (must 404)" 404 "$(code "$BASE/stats/report.html")"
 

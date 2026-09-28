@@ -65,6 +65,14 @@ class NeedsOperator(RuntimeError):
         self.details = list(details)
 
 
+def _sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def validate(html):
     """Refuse a tree that would serve a broken page or a download that does not
     match its appcast. Runs before anything served changes."""
@@ -76,12 +84,33 @@ def validate(html):
     except (ValueError, KeyError, TypeError):
         raise ValueError(f'{appcast} is not an appcast with a version and a sha256') from None
     name = f'ClickGraft-{version}.zip'
-    digest = hashlib.sha256()
-    with (html / name).open('rb') as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b''):
-            digest.update(chunk)
-    if digest.hexdigest() != sha256:
+    if _sha256(html / name) != sha256:
         raise ValueError('Appcast checksum does not match the staged download')
+
+    # The interpreter every ClickGraft from 1.8.0 fetches when the Mac it is on
+    # has none of its own, and the pin that names it.
+    #
+    # Checked here, before anything served changes, because publication exchanges
+    # the whole of html/: a tree that merely left the file out would REMOVE it
+    # from the live site, and every Mac without Apple's Command Line Tools would
+    # stop being able to open ClickGraft -- with the page, the download and the
+    # appcast all still perfect, which is the shape of failure this file exists
+    # to refuse.
+    pin_path = html / 'python-pin.json'
+    try:
+        pin = json.loads(pin_path.read_text())
+        python_version, payload_sha = pin['version'], pin['payload_zip_sha256']
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ValueError(f'{pin_path.name} is not a pin naming a version and '
+                         f'a payload_zip_sha256') from None
+    payload = html / f'ClickGraft-python-{python_version}.zip'
+    if not payload.is_file():
+        raise ValueError(f'{payload.name} is missing. Every ClickGraft from 1.8.0 on a '
+                         f'Mac with no developer tools fetches it, and publishing '
+                         f'without it takes it off the site')
+    if _sha256(payload) != payload_sha:
+        raise ValueError(f'{payload.name} does not match the sha256 in python-pin.json, '
+                         f'so every app that checks it would refuse it')
     if not (html / 'ClickGraft.zip').is_symlink() or os.readlink(html / 'ClickGraft.zip') != name:
         raise ValueError('Download alias must be a relative symlink to the versioned ZIP')
     for page in ('index.html', 'es/index.html', 'sitemap.xml'):

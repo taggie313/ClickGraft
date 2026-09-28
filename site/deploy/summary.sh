@@ -99,6 +99,11 @@ awk -F'"' -v ours="$OURS" -v newest="$NEWEST" "$CLASSIFY"'
       # every historical log line still counts. A symlink and not a redirect
       # precisely so this stays one 200 per download - a 302 would log the old
       # path AND the new one and double every figure below.
+      # The version group is digits on purpose, so /ClickGraft-python-3.13.9.zip
+      # is NOT counted. That file is the interpreter a Mac fetches when it has
+      # none of its own -- one per machine, not one per person choosing to try
+      # ClickGraft -- and counting it would inflate downloads by every Mac that
+      # has no developer tools from Apple. test_visitor_classifier.py holds this.
       if (path ~ /^\/ClickGraft(-[0-9]+\.[0-9]+\.[0-9]+)?\.zip$/ && status == "200") dl[day]++
       # The HP forum sends no referrer at all (a no-referrer policy), so a
       # tagged link is the only way traffic from there can be told apart from

@@ -62,6 +62,53 @@ if [ ! -f "$ZIP" ]; then
   exit 1
 fi
 
+# The interpreter a Mac fetches when it has none of its own. It is published
+# beside the app and pinned by packaging/python-pin.json, which every ClickGraft
+# from 1.8.0 carries and reads.
+#
+# It has to be resolved BEFORE staging, and the deploy has to refuse without it,
+# because publication exchanges the whole of html/: a deploy that simply left it
+# out would delete it from the live site, and every Mac without Apple's Command
+# Line Tools would stop being able to open ClickGraft at all.
+#
+# It cannot be rebuilt to match. Signing writes a fresh signature each time, so
+# `fetch_python.py --payload` run twice gives two archives with two sha256s and
+# the pin names exactly one. So: use the built one if it is here, and otherwise
+# fetch the published one back off the site. That is safe for the same reason the
+# whole scheme is -- the pin fixes the hash, and this refuses anything else --
+# and it means a cleared ~/.cache does not cost a deploy.
+PIN="$ROOT/packaging/python-pin.json"
+PY_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$PIN")"
+PY_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["payload_zip_sha256"])' "$PIN")"
+PY_NAME="ClickGraft-python-$PY_VERSION.zip"
+PAYLOAD="$(python3 "$ROOT/packaging/fetch_python.py" --payload-path)"
+
+payload_sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
+
+if [ -f "$PAYLOAD" ] && [ "$(payload_sha "$PAYLOAD")" = "$PY_SHA" ]; then
+  echo "==> Python $PY_VERSION payload: built copy matches the pin"
+else
+  echo "==> Python $PY_VERSION payload: fetching the published copy"
+  TMP_PAYLOAD="$BUILD/$PY_NAME"
+  mkdir -p "$BUILD"
+  if ! curl -fsS --max-time 300 -H "X-ClickGraft-Check: 1" \
+       -o "$TMP_PAYLOAD" "${HEALTH_URL}$PY_NAME"; then
+    echo "✗ no payload locally and none published at ${HEALTH_URL}$PY_NAME." >&2
+    echo "  Build it with: python3 packaging/fetch_python.py --payload" >&2
+    echo "  Note that a rebuild has a NEW sha256, so the pin must be committed" >&2
+    echo "  and tagged with it before the release it belongs to." >&2
+    exit 1
+  fi
+  got="$(payload_sha "$TMP_PAYLOAD")"
+  if [ "$got" != "$PY_SHA" ]; then
+    echo "✗ the published payload is $got, but the pin names $PY_SHA." >&2
+    echo "  Publishing this would serve an interpreter every 1.8.0+ app refuses." >&2
+    exit 1
+  fi
+  PAYLOAD="$TMP_PAYLOAD"
+  echo "  the published copy matches the pin"
+fi
+
 # Checks the ZIP against the tag its own version names, v<version>, not HEAD:
 # a page-only commit after a release still deploys, and a ZIP that was not
 # built from the tagged sources does not. A 1.5.9-era ZIP needs the variable
@@ -125,6 +172,15 @@ sed -e "s|{{ZIP_SHA256}}|$SHA|g" \
 # Both names get a checksum file, naming the file the reader actually has.
 printf '%s  %s\n' "$SHA" "$ZIPNAME" > "$BUILD/html/$ZIPNAME.sha256"
 printf '%s  %s\n' "$SHA" "$ZIPNAME" > "$BUILD/html/ClickGraft.zip.sha256"
+
+# The interpreter, its checksum and the pin that names it. The pin is published
+# as well as carried inside the app so that anyone can check the fetch the same
+# way they check the download -- and so publish_site.py can refuse a tree whose
+# payload does not match it, which is what stops a site-only deploy quietly
+# removing the file every tool-less Mac needs.
+cp "$PAYLOAD" "$BUILD/html/$PY_NAME"
+printf '%s  %s\n' "$PY_SHA" "$PY_NAME" > "$BUILD/html/$PY_NAME.sha256"
+cp "$PIN" "$BUILD/html/python-pin.json"
 cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple-touch-icon.png" \
    "$SITE/clickgraft-favicon.ico" "$BUILD/html/"
 # Keeps crawlers off the download. Cloudflare serves a managed robots.txt of its
@@ -247,6 +303,10 @@ for name in "$ZIPNAME" ClickGraft.zip; do
   [ "$got" = "$SHA" ] || { echo "✗ edge serves $name with sha256 $got, not $SHA" >&2; exit 1; }
 done
 echo "✓ edge serves $ZIPNAME and ClickGraft.zip, both with that sha256"
+got="$(served "$PY_NAME" | sha_of || true)"
+[ "$got" = "$PY_SHA" ] \
+  || { echo "✗ edge serves $PY_NAME with sha256 ${got:-nothing}, not $PY_SHA" >&2; exit 1; }
+echo "✓ edge serves $PY_NAME, the interpreter the pin names"
 
 echo "==> verify ${HEALTH_URL}"
 sleep 4
@@ -278,6 +338,9 @@ got="$(curl -fsS --max-time 20 "${CHECK[@]}" "${HEALTH_URL}appcast.json" | offer
 echo "✓ the public appcast offers $VERSION"
 code=$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 30 "${CHECK[@]}" "${HEALTH_URL}ClickGraft.zip")
 [ "$code" = 200 ] && echo "✓ download reachable" || { echo "✗ ClickGraft.zip returned HTTP $code" >&2; exit 1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 30 "${CHECK[@]}" "${HEALTH_URL}$PY_NAME")
+[ "$code" = 200 ] && echo "✓ the interpreter is reachable" \
+  || { echo "✗ $PY_NAME returned HTTP $code. A Mac with no developer tools cannot start ClickGraft." >&2; exit 1; }
 # Check every endpoint a user's Mac touches, not just the two obvious ones.
 # A deploy once reported success while /report returned 404, and the first we
 # knew of it was a user whose bug report vanished.

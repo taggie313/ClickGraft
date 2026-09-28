@@ -63,16 +63,28 @@ echo "--> copying payload"
 /usr/bin/rsync -a "$ROOT/manifests" "$APP/Contents/Resources/"
 cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$APP/Contents/Resources/"
 
-# The interpreter the backend runs on. Every other developer tool has been
-# removed from what a user needs; this one could not be, because the backend IS
-# Python and /usr/bin/python3 is an xcrun shim with no system Python behind it
-# on macOS 27. Fetched, trimmed and made relocatable by fetch_python.py against
-# packaging/python-pin.json, cached between builds. It is the one thing in the
-# app that is not built from a file in this repository, which is why the pin is
-# a recorded source and check_release.py checks the framework against it.
-echo "--> bundling Python"
-PY_FRAMEWORK="$( "${GUARD_PY[@]}" "$HERE/fetch_python.py" --path )"
-/usr/bin/rsync -a "$PY_FRAMEWORK" "$APP/Contents/Frameworks/"
+# Which interpreter the backend runs on, decided at runtime by
+# Toolchain.resolveSource(). The app ships the *pin* and nothing else: 1.8.0
+# briefly bundled python.org's framework, which worked and took ClickGraft.zip
+# from 770 KB to 18 MB -- 17 MB charged to every user for a problem only a Mac
+# without Apple's Command Line Tools has. A Mac that needs one fetches it once
+# from the pin, into the user's own Application Support.
+#
+# The pin has to be inside the app for that: it names the archive, and its
+# sha256 is the only reason the fetch is trustworthy.
+echo "--> copying the Python pin"
+cp "$HERE/python-pin.json" "$APP/Contents/Resources/"
+
+# CLICKGRAFT_BUNDLE_PYTHON=1 builds one that carries the framework anyway, for
+# deploying to Macs with no internet -- the managed-estate case the Requirements
+# screen already talks the user through. Nothing in the release path sets it, and
+# check_release.py refuses an artifact built this way, because the download on
+# the site must be the small one.
+if [ "${CLICKGRAFT_BUNDLE_PYTHON:-0}" = "1" ]; then
+  echo "--> bundling Python (CLICKGRAFT_BUNDLE_PYTHON=1)"
+  PY_FRAMEWORK="$( "${GUARD_PY[@]}" "$HERE/fetch_python.py" --path )"
+  /usr/bin/rsync -a "$PY_FRAMEWORK" "$APP/Contents/Frameworks/"
+fi
 
 # Icon. Rendered from packaging/icon.svg if it is missing or older than the
 # source, so editing the SVG is enough — nobody has to remember a second step.

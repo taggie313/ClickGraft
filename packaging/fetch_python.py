@@ -383,6 +383,20 @@ def signing_identity():
     return None
 
 
+def payload_path(version=None, cache=CACHE):
+    """Where the built archive lives, when nobody says otherwise.
+
+    It needs a fixed home because it cannot be rebuilt to match: signing writes a
+    fresh signature every time, so `--payload` run twice produces two archives
+    with two different sha256s, and the pin names exactly one of them. The
+    published file has to BE the archive that was hashed, so the one that was
+    hashed has to be findable -- by the release, by the deploy, and by
+    tests/test_python_payload.py, which is otherwise reduced to skipping.
+    """
+    version = version or load_pin()["version"]
+    return os.path.join(cache, version, f"ClickGraft-python-{version}.zip")
+
+
 def build_payload(out_zip, identity=None, say=print):
     """The framework, signed with a Developer ID and archived, plus its sha256.
 
@@ -451,9 +465,12 @@ def main(argv=None):
     parser.add_argument("--print-pin", action="store_true",
                         help="rebuild ignoring framework_sha256 and print the new one")
     parser.add_argument("--path", action="store_true", help="print the path and nothing else")
-    parser.add_argument("--payload", metavar="ZIP",
+    parser.add_argument("--payload", metavar="ZIP", nargs="?", const="",
                         help="build the signed archive the app downloads, and record its "
-                             "sha256 in the pin")
+                             "sha256 in the pin. Written beside the cached framework "
+                             "unless a path is given")
+    parser.add_argument("--payload-path", action="store_true",
+                        help="print where --payload writes, and nothing else")
     args = parser.parse_args(argv)
 
     if args.print_pin:
@@ -473,14 +490,21 @@ def main(argv=None):
         print(f"payload_sha256   {pin['payload_sha256']}")
         return 0
 
-    if args.payload:
-        digest = build_payload(args.payload)
+    if args.payload_path:
+        print(payload_path())
+        return 0
+
+    if args.payload is not None:
+        out = args.payload or payload_path()
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        digest = build_payload(out)
         pin = load_pin()
         pin["payload_zip_sha256"] = digest
         with open(PIN, "w", encoding="utf-8") as f:
             json.dump(pin, f, indent=2)
             f.write("\n")
         print(f"payload_zip_sha256 {digest}")
+        print(f"wrote {out}")
         return 0
 
     framework = ensure(say=(lambda _line: None) if args.path else print)

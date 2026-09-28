@@ -16,6 +16,9 @@ publish = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publish)
 
 
+PYTHON_VERSION = '3.13.9'
+
+
 def staged(root, name, version):
     folder = root / name
     html = folder / 'html'
@@ -27,6 +30,15 @@ def staged(root, name, version):
     (html / archive).write_bytes(version.encode())
     (html / 'ClickGraft.zip').symlink_to(archive)
     (html / 'appcast.json').write_text(json.dumps({'version': version, 'sha256': hashlib.sha256(version.encode()).hexdigest()}))
+    # Since 1.8.0 a published tree also carries the interpreter a Mac fetches
+    # when it has none, and the pin naming it. validate() refuses a tree without
+    # them, because publication exchanges the whole of html/ and a tree that
+    # left them out would take them off the live site.
+    payload = b'not a real framework, but hashed like one'
+    (html / f'ClickGraft-python-{PYTHON_VERSION}.zip').write_bytes(payload)
+    (html / 'python-pin.json').write_text(json.dumps(
+        {'version': PYTHON_VERSION,
+         'payload_zip_sha256': hashlib.sha256(payload).hexdigest()}))
     (folder / 'collector').mkdir()
     (folder / 'collector/collector.py').write_text(version)
     (folder / 'summary.sh').write_text(version)

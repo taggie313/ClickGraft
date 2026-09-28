@@ -57,7 +57,8 @@ RECORD = 'Resources/build-source.json'
 # Copied into the app by name, as build_app.sh does it: repo path -> path under
 # Contents/. clickgraft/ and manifests/ are copied whole, into Resources/.
 COPIED = {'LICENSE': 'Resources/LICENSE', 'NOTICE': 'Resources/NOTICE',
-          'packaging/AppIcon.icns': 'Resources/AppIcon.icns'}
+          'packaging/AppIcon.icns': 'Resources/AppIcon.icns',
+          'packaging/python-pin.json': 'Resources/python-pin.json'}
 
 # The rest of a signed, stapled ClickGraft.app, as the real 1.5.9 ZIP has it
 # (read 22 Sep 2026): the launcher compiled from packaging/*.swift, the plist
@@ -67,21 +68,23 @@ PRODUCTS = frozenset({'Info.plist', 'MacOS/ClickGraft', '_CodeSignature/CodeReso
                       'CodeResources', RECORD})
 
 # Files the app is built FROM rather than copied from: build_app.sh writes the
-# Info.plist, and python-pin.json plus fetch_python.py decide which interpreter
-# is bundled. The pin has to be a recorded source or the tag would not fix the
-# Python the release ships.
-BUILT_FROM = ('packaging/build_app.sh', 'packaging/python-pin.json',
-              'packaging/fetch_python.py')
+# Info.plist, and fetch_python.py builds the archive the pin names. The pin
+# itself is COPIED -- it ships inside the app, because the app reads it to know
+# what to fetch -- and being a recorded source either way is what makes the tag
+# fix which interpreter a release will run on.
+BUILT_FROM = ('packaging/build_app.sh', 'packaging/fetch_python.py')
 
-# The interpreter ClickGraft carries. Not a source in this repository and not a
-# build product either: a pinned upstream artifact, checked against
-# packaging/python-pin.json rather than against the tag. check_bundled_python
-# does that; check_payload skips these paths so they are not reported as
-# thousands of unrecorded files.
+# An interpreter inside the app. A release must NOT have one: 1.8.0 bundled
+# python.org's framework, which worked and took the download from 770 KB to
+# 18 MB, so the app ships the pin and a Mac that needs an interpreter fetches it
+# once. CLICKGRAFT_BUNDLE_PYTHON=1 still builds a bundled copy for an estate
+# with no internet; check_python_pin refuses to let one be released, because
+# what the site serves has to be the small one. check_payload skips these paths
+# so that refusal is one line rather than four thousand.
 PYTHON_PREFIX = 'Frameworks/Python.framework/'
 
-# The release that first carried an interpreter.
-BUNDLED_PYTHON_FROM = (1, 8, 0)
+# The release that first shipped the pin, and stopped needing Apple's tools.
+PYTHON_PIN_FROM = (1, 8, 0)
 
 
 class Refused(Exception):
@@ -267,16 +270,16 @@ def _version(files):
     return short
 
 
-def _predates_bundled_python(version):
-    """Whether a ZIP of this version can legitimately carry no Python.
+def _predates_python_pin(version):
+    """Whether a ZIP of this version can legitimately carry no Python pin.
 
-    ClickGraft started bundling an interpreter in 1.8.0. Before that it ran on
-    /usr/bin/python3 and required Apple's Command Line Tools, so demanding a
-    framework from a 1.5.9 ZIP would refuse a release that was correct when it
-    was made -- the same reason _predates_records exists.
+    ClickGraft started shipping one in 1.8.0. Before that it ran on
+    /usr/bin/python3 and required Apple's Command Line Tools, so demanding a pin
+    from a 1.7.0 ZIP would refuse a release that was correct when it was made --
+    the same reason _predates_records exists.
     """
     try:
-        return tuple(int(part) for part in version.split('.')) < BUNDLED_PYTHON_FROM
+        return tuple(int(part) for part in version.split('.')) < PYTHON_PIN_FROM
     except ValueError:
         return False
 
@@ -318,14 +321,14 @@ def check_artifact(archive, root=ROOT, check_platform=True, allow_legacy=None, s
                       f'so nothing ties it to {tag}. To deploy it anyway, run with {LEGACY_ENV}={version}.')
     count = check_payload(files, expected, tag)
     say(f'  ✓ the app ships exactly the {count} files committed at {tag}, and nothing else')
-    # The Python is not one of those files: it is a pinned upstream artifact,
-    # and the pin IS one of them, so the tag still fixes it.
-    if _predates_bundled_python(version):
-        say(f'  - {version} predates the bundled Python; it needed the '
+    # The interpreter is not one of those files. The pin that names it is, so
+    # the tag fixes which one a Mac will fetch.
+    if _predates_python_pin(version):
+        say(f'  - {version} predates the Python pin; it needed the '
             f"Command Line Tools instead")
     else:
-        bundled = check_bundled_python(files, root)
-        say(f'  ✓ the bundled Python matches the pin the tag committed, {bundled} files')
+        pinned = check_python_pin(files, root)
+        say(f'  ✓ carries the Python {pinned} pin the tag committed, and no interpreter')
     if check_platform:
         _check_signature(archive, say)
 
@@ -417,46 +420,57 @@ def check_pngshim(root=ROOT):
                 differences)
 
 
-def check_bundled_python(files, root=ROOT):
-    """The Python inside the app is the one packaging/python-pin.json names.
+def check_python_pin(files, root=ROOT):
+    """The app carries the pin, and does not carry an interpreter.
 
-    Fifty megabytes of binaries nobody can diff, which is exactly the objection
-    that kept the libpng shim being compiled on the user's Mac. The answer is
-    the same shape: the tag fixes the pin, the pin fixes the framework, and a
-    release whose bundled Python is not the pinned one is refused.
+    Both halves matter, and they pull in opposite directions.
 
-    Compared by a fingerprint over (path, contents) rather than a tree hash,
-    because this side is enumerated from a ZIP and the pin was computed from a
-    directory. Paths under Versions/Current are dropped on both sides -- it is
-    a symlink to the real version directory, so whether an enumerator descended
-    into it says nothing about the framework.
+    The pin is what makes fetching one defensible: the tag fixes
+    packaging/python-pin.json, the pin fixes a sha256, and the app installs
+    nothing whose bytes do not match it. check_payload already proves the
+    shipped copy is the committed one, byte for byte, because the pin is a
+    recorded source -- so what is left here is to read it and refuse a pin that
+    could not actually be acted on.
+
+    The absence is the other half. 1.8.0 bundled the framework instead: 50 MB of
+    binaries nobody can diff, and 17 MB on every download for a problem only a
+    Mac without Apple's Command Line Tools has. CLICKGRAFT_BUNDLE_PYTHON=1 still
+    builds that app on purpose, for an estate with no internet, and this is what
+    stops one being published by accident in place of the small one.
     """
-    shipped = [(name[len(PYTHON_PREFIX):], data) for name, data in files.items()
-               if name.startswith(PYTHON_PREFIX)]
-    pin_path = Path(root) / 'packaging/python-pin.json'
+    bundled = [name for name in files if name.startswith(PYTHON_PREFIX)]
+    if bundled:
+        raise Refused(
+            f'The app carries a Python.framework ({len(bundled)} files). A released '
+            f'ClickGraft ships the pin and fetches an interpreter only on a Mac that '
+            f'needs one.',
+            ['built with CLICKGRAFT_BUNDLE_PYTHON=1, which is for deploying to an '
+             'estate with no internet, not for the download on the site'])
+
+    shipped = files.get(COPIED['packaging/python-pin.json'])
+    if shipped is None:
+        raise Refused(
+            'The app ships no python-pin.json, so a Mac with no interpreter has '
+            'nothing to fetch and ClickGraft cannot start on it at all.')
     try:
-        pin = json.loads(pin_path.read_text())
-    except (OSError, ValueError):
-        raise Refused(f'{pin_path} cannot be read, so nothing says which Python should ship.')
+        pin = json.loads(shipped)
+    except ValueError:
+        raise Refused('The python-pin.json inside the app is not readable JSON.')
 
-    if not shipped:
+    # A pin the app cannot act on is worse than none: it would reach the screen
+    # that offers the fetch and fail there, on a Mac that has no other way in.
+    missing = [key for key in ('version', 'payload_url', 'payload_zip_sha256')
+               if not pin.get(key)]
+    if missing:
         raise Refused(
-            'The app ships no Python.framework. Without it ClickGraft cannot start on a '
-            'Mac that has no developer tools, which is the whole reason it is bundled.')
-
-    sys.path.insert(0, str(Path(root) / 'packaging'))
-    from fetch_python import fingerprint
-    got = fingerprint(shipped)
-    want = pin.get('payload_sha256')
-    if not want:
-        raise Refused('python-pin.json has no payload_sha256. Re-pin with '
-                      'python3 packaging/fetch_python.py --print-pin')
-    if got != want:
-        raise Refused(
-            f"The bundled Python is not the one python-pin.json names "
-            f"({pin.get('version', '?')}).",
-            [f'the app ships {got}', f'the pin says  {want}'])
-    return len(shipped)
+            f"The pin inside the app cannot be acted on: no {', '.join(missing)}.",
+            ['rebuild the archive and re-pin with '
+             'python3 packaging/fetch_python.py --payload dist/ClickGraft-python.zip'])
+    if len(pin['payload_zip_sha256']) != 64:
+        raise Refused('The pin\'s payload_zip_sha256 is not a sha256.')
+    if not pin['payload_url'].startswith('https://'):
+        raise Refused(f"The pin fetches over {pin['payload_url'].split(':')[0]}, not https.")
+    return pin['version']
 
 
 def source_gate(root=ROOT, say=print):
@@ -489,9 +503,8 @@ def source_gate(root=ROOT, say=print):
         if differences:
             raise Refused('The source record in the app does not match the working tree.', differences)
         count = check_payload(files, recorded, 'its source record')
-        bundled = check_bundled_python(files, root)
-    say(f'  ✓ the bundled Python is the {json.loads((Path(root) / "packaging/python-pin.json").read_text())["version"]} '
-        f'the pin names, {bundled} files')
+        pinned = check_python_pin(files, root)
+    say(f'  ✓ carries the Python {pinned} pin, and no interpreter of its own')
     say(f'  ✓ universal app built, shipping exactly its {count} recorded files. It was a '
         'throwaway: sign a fresh build_app.sh output, not this one')
 

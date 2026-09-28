@@ -13,7 +13,321 @@
 //   ./packaging/build_app.sh
 
 import AppKit
+import CryptoKit
 import Foundation
+
+// MARK: - The interpreter
+
+/// The Python the backend runs on, and where it comes from.
+///
+/// ClickGraft *is* Python: the app is a front end that spawns
+/// `python3 -m clickgraft.cli agent`. /usr/bin/python3 is not a Python -- on
+/// macOS 27 it is a 200,560-byte xcrun shim with 78 hard links, the same inode
+/// as clang, lipo and otool, and /System/Library/Frameworks/Python.framework is
+/// gone. On a Mac without Apple's Command Line Tools, running it is what brings
+/// up macOS's offer to install them: a multi-gigabyte download behind an
+/// administrator password, which on a managed Mac is someone else's to give.
+/// ClickGraft could not start at all.
+///
+/// Bundling python.org's framework fixed that, and charged every user 17 MB of
+/// every download for a problem most of them do not have: ClickGraft.zip went
+/// 770 KB -> 18 MB. So the app carries the *pin* and fetches the framework
+/// once, on the Macs that need one, into the user's own Application Support.
+///
+/// What makes the fetch defensible is not the transport. python-pin.json is a
+/// recorded source: the release tag fixes the file, the file fixes the sha256,
+/// and nothing is unpacked until the bytes match it. HTTPS decides whether the
+/// download succeeds, never whether it is trusted.
+enum PythonPayload {
+    struct Pin {
+        let version: String
+        let url: URL
+        let sha256: String
+    }
+
+    /// Resources/python-pin.json, which build_app.sh copies from packaging/.
+    /// nil from a source checkout, where there is no app around this code and
+    /// /usr/bin/python3 is right there and working.
+    static let pin: Pin? = {
+        guard let path = Bundle.main.path(forResource: "python-pin", ofType: "json"),
+              let data = FileManager.default.contents(atPath: path),
+              let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let version = o["version"] as? String,
+              let sha = o["payload_zip_sha256"] as? String,
+              let published = o["payload_url"] as? String,
+              !sha.isEmpty
+        else { return nil }
+        // Overridable so the whole path -- fetch, hash, unpack, and each way it
+        // refuses -- can be exercised against a local file, including before
+        // one is published.
+        let from = ProcessInfo.processInfo.environment["CLICKGRAFT_PYTHON_PAYLOAD_URL"]
+            ?? published
+        guard let url = URL(string: from) else { return nil }
+        return Pin(version: version, url: url, sha256: sha.lowercased())
+    }()
+
+    /// Where an installed one lives. Keyed by version, so a new pin does not
+    /// land on top of the framework the running app is using.
+    static func home(_ pin: Pin) -> String {
+        // Overridable because nothing else can move it: FileManager finds the
+        // real Application Support whatever HOME says, so without this a test
+        // would install over the copy the developer's own ClickGraft is using.
+        if let root = ProcessInfo.processInfo.environment["CLICKGRAFT_PYTHON_HOME"] {
+            return root + "/" + pin.version
+        }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support")
+        return base.path + "/ClickGraft/python/" + pin.version
+    }
+
+    /// The interpreter this Mac already fetched, or nil.
+    ///
+    /// The marker is what makes this safe to trust without re-hashing 51 MB on
+    /// every launch: it is written last, after the unpack, the signature check
+    /// and the move all passed, so an install that was interrupted leaves a
+    /// directory this refuses rather than one it runs.
+    static var installed: String? {
+        guard let pin = pin else { return nil }
+        let dir = home(pin)
+        let exe = dir + "/Python.framework/Versions/Current/bin/python3"
+        guard FileManager.default.isExecutableFile(atPath: exe),
+              let stamp = try? String(contentsOfFile: dir + "/.pinned", encoding: .utf8),
+              stamp.trimmingCharacters(in: .whitespacesAndNewlines) == pin.sha256
+        else { return nil }
+        return exe
+    }
+
+    enum Failure: Error {
+        case noPin
+        case network(String)
+        case mismatch(String, String)
+        case unpack(String)
+        case signature(String)
+        case broken(String)
+
+        /// docs/wizard-copy.md, "ClickGraft needs one more piece".
+        var text: String {
+            switch self {
+            case .noPin:
+                return "This copy of ClickGraft doesn't know what to fetch."
+            case .network(let why):
+                return "The download didn't finish: \(why)"
+            case .mismatch:
+                return "What arrived isn't what this version of ClickGraft expects, so "
+                     + "nothing was installed. Try again \u{2014} if it keeps happening, "
+                     + "something between this Mac and the download is changing it."
+            case .unpack(let why):
+                return "The download arrived but couldn't be unpacked: \(why)"
+            case .signature(let why):
+                return "The download arrived but macOS wouldn't vouch for it, so nothing "
+                     + "was installed: \(why)"
+            case .broken(let why):
+                return "The download was fine but installing it failed: \(why)"
+            }
+        }
+
+        /// For a report. Deliberately not on the screen: two hashes mean nothing
+        /// to the person reading, and the sentence above says what to do.
+        var detail: String? {
+            if case .mismatch(let want, let got) = self {
+                return "expected \(want)\ngot      \(got)"
+            }
+            return nil
+        }
+    }
+
+    private static var running: Fetcher?
+
+    /// Fetches, verifies and installs. Both closures are called on the main
+    /// queue; `progress` runs 0...1. A second call while one is in flight is
+    /// ignored, so a double-click cannot start two.
+    static func install(progress: @escaping (Double) -> Void,
+                        done: @escaping (Result<String, Failure>) -> Void) {
+        guard let pin = pin else {
+            DispatchQueue.main.async { done(.failure(.noPin)) }
+            return
+        }
+        guard running == nil else { return }
+        let f = Fetcher(pin: pin, progress: progress, done: done)
+        running = f
+        f.start()
+    }
+
+    /// Everything between "the bytes arrived" and "there is an interpreter".
+    /// Runs off the main queue, throws Failure.
+    static func accept(_ zip: URL, pin: Pin, progress: (Double) -> Void) throws -> String {
+        let fm = FileManager.default
+        let got = try sha256(zip)
+        guard got == pin.sha256 else { throw Failure.mismatch(pin.sha256, got) }
+        progress(0.35)
+
+        let dir = home(pin)
+        let staging = dir + ".staging"
+        try? fm.removeItem(atPath: staging)
+        try? fm.createDirectory(atPath: (dir as NSString).deletingLastPathComponent,
+                                withIntermediateDirectories: true)
+
+        // ditto, not unzip: it is what made the archive, and it keeps the
+        // symlinks a framework is built out of. Like codesign below it is a real
+        // binary in /usr/bin -- one hard link, not one of the 78-link xcrun
+        // shims -- so neither needs a developer tool to be installed.
+        let unpacked = shell("/usr/bin/ditto", ["-x", "-k", zip.path, staging])
+        guard unpacked.status == 0 else {
+            try? fm.removeItem(atPath: staging)
+            throw Failure.unpack(unpacked.problem ?? "ditto exited \(unpacked.status)")
+        }
+        let framework = staging + "/Python.framework"
+        guard fm.fileExists(atPath: framework) else {
+            try? fm.removeItem(atPath: staging)
+            throw Failure.unpack("it did not contain an interpreter")
+        }
+        progress(0.7)
+
+        // The second, independent check. The sha256 says these are the bytes the
+        // release named; this says macOS's own verifier accepts them and the
+        // Developer ID signature is intact, which is what lets the interpreter
+        // load its own support files once it runs.
+        //
+        // It is not a defence against someone who can already write to
+        // ~/Library/Application Support: nothing re-checks the installed
+        // framework later, and anyone who can rewrite it there can run code as
+        // this user by easier routes anyway. It is here to catch a bad unpack
+        // and a signature that has stopped verifying.
+        let signed = shell("/usr/bin/codesign", ["--verify", "--strict", framework])
+        guard signed.status == 0 else {
+            try? fm.removeItem(atPath: staging)
+            throw Failure.signature(signed.problem ?? "codesign exited \(signed.status)")
+        }
+        progress(0.85)
+
+        try? fm.removeItem(atPath: dir)
+        do { try fm.moveItem(atPath: staging, toPath: dir) }
+        catch { throw Failure.broken(error.localizedDescription) }
+
+        let exe = dir + "/Python.framework/Versions/Current/bin/python3"
+        guard fm.isExecutableFile(atPath: exe) else {
+            throw Failure.broken("what came out has no python3 in it")
+        }
+        do { try pin.sha256.write(toFile: dir + "/.pinned", atomically: true, encoding: .utf8) }
+        catch { throw Failure.broken(error.localizedDescription) }
+        progress(1.0)
+        return exe
+    }
+
+    /// Streamed: the payload is 16 MB and reading it whole to hash it would
+    /// hold all of it in memory for no reason.
+    static func sha256(_ file: URL) throws -> String {
+        guard let h = FileHandle(forReadingAtPath: file.path) else {
+            throw Failure.unpack("the download could not be reopened")
+        }
+        defer { try? h.close() }
+        var digest = SHA256()
+        while true {
+            let chunk = h.readData(ofLength: 1 << 20)
+            if chunk.isEmpty { break }
+            digest.update(data: chunk)
+        }
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// status, and the last non-empty line of stderr if there was one.
+    private static func shell(_ tool: String, _ args: [String])
+        -> (status: Int32, problem: String?) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = args
+        let err = Pipe()
+        p.standardError = err
+        p.standardOutput = Pipe()
+        do { try p.run() } catch { return (-1, error.localizedDescription) }
+        let data = err.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let lines = String(decoding: data, as: UTF8.self)
+            .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return (p.terminationStatus, lines.last)
+    }
+
+    /// Holds the URLSession alive for the length of one download, and does the
+    /// work in its delegate callbacks.
+    private final class Fetcher: NSObject, URLSessionDownloadDelegate {
+        private let pin: Pin
+        private let progress: (Double) -> Void
+        private let done: (Result<String, Failure>) -> Void
+        private var session: URLSession!
+        private var settled = false
+
+        init(pin: Pin, progress: @escaping (Double) -> Void,
+             done: @escaping (Result<String, Failure>) -> Void) {
+            self.pin = pin
+            self.progress = progress
+            self.done = done
+            super.init()
+            let cfg = URLSessionConfiguration.ephemeral
+            cfg.timeoutIntervalForRequest = 60
+            cfg.timeoutIntervalForResource = 900
+            // Said, not left to a default. The site's own figures depend on
+            // telling this apart from a person downloading ClickGraft: the
+            // access log is classified by user agent, and one fetch per
+            // tool-less Mac counted as a download would inflate the one number
+            // worth having (site/deploy/visitor-classify.awk, and the path rule
+            // in summary.sh as a second line of defence).
+            let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"]
+                as? String ?? "0"
+            cfg.httpAdditionalHeaders = ["User-Agent": "ClickGraft/\(version) (interpreter)"]
+            session = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+        }
+
+        func start() { session.downloadTask(with: pin.url).resume() }
+
+        private func settle(_ r: Result<String, Failure>) {
+            guard !settled else { return }
+            settled = true
+            session.finishTasksAndInvalidate()
+            DispatchQueue.main.async {
+                PythonPayload.running = nil
+                self.done(r)
+            }
+        }
+
+        // Downloading is most of the wait, so it gets most of the bar.
+        func urlSession(_ s: URLSession, downloadTask: URLSessionDownloadTask,
+                        didWriteData bytesWritten: Int64,
+                        totalBytesWritten: Int64,
+                        totalBytesExpectedToWrite: Int64) {
+            guard totalBytesExpectedToWrite > 0 else { return }
+            let f = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+            DispatchQueue.main.async { self.progress(f * 0.7) }
+        }
+
+        func urlSession(_ s: URLSession, task: URLSessionTask,
+                        didCompleteWithError error: Error?) {
+            if let e = error { settle(.failure(.network(e.localizedDescription))) }
+        }
+
+        func urlSession(_ s: URLSession, downloadTask: URLSessionDownloadTask,
+                        didFinishDownloadingTo location: URL) {
+            // The file is deleted the moment this returns, so everything that
+            // reads it has to happen here rather than after.
+            if let http = downloadTask.response as? HTTPURLResponse,
+               http.statusCode != 200 {
+                settle(.failure(.network("the download answered \(http.statusCode)")))
+                return
+            }
+            do {
+                let exe = try PythonPayload.accept(location, pin: pin) { f in
+                    DispatchQueue.main.async { self.progress(0.7 + f * 0.3) }
+                }
+                settle(.success(exe))
+            } catch let f as Failure {
+                settle(.failure(f))
+            } catch {
+                settle(.failure(.broken(error.localizedDescription)))
+            }
+        }
+    }
+}
 
 // MARK: - Backend bridge
 
@@ -38,34 +352,138 @@ enum Toolchain {
     /// Overridable so both outcomes can be exercised on a Mac whose licence is
     /// already accepted: point CLICKGRAFT_PYTHON at a stand-in that prints the
     /// licence message and exits 69, and CLICKGRAFT_CLT_DIR somewhere empty.
-    static var python: String {
-        if let override = ProcessInfo.processInfo.environment["CLICKGRAFT_PYTHON"] {
-            return override
+    /// Where the interpreter came from. Named rather than implied, because
+    /// which one it is decides what the Requirements screen can say and whether
+    /// there is anything to fetch.
+    enum Source {
+        case override(String)     // CLICKGRAFT_PYTHON, for tests
+        case bundled(String)      // carried inside the app
+        case fetched(String)      // fetched once into Application Support
+        case system               // /usr/bin/python3, with tools behind it
+        case none                 // nothing to run: PythonPayload has the answer
+
+        /// What to run, or nil when there is nothing.
+        var path: String? {
+            switch self {
+            case .override(let p), .bundled(let p), .fetched(let p): return p
+            case .system: return "/usr/bin/python3"
+            case .none: return nil
+            }
         }
-        // The Python ClickGraft carries, when there is one. /usr/bin/python3 is
-        // not a Python: on macOS 27 it is a 200,560-byte xcrun shim with 78
-        // hard links, the same inode as clang, and there is no system Python
-        // behind it -- /System/Library/Frameworks/Python.framework is gone. A
-        // Mac without Apple's Command Line Tools could not start ClickGraft at
-        // all, whatever the backend did, so the backend brings its own.
-        //
-        // Running from a source checkout there is no bundled framework, and
-        // /usr/bin/python3 is right there and working. Falling back keeps that
-        // case simple rather than making development need a build step.
+
+        /// For --fetch-python and the report. Not for a screen: the wizard never
+        /// tells anyone which interpreter it found.
+        var name: String {
+            switch self {
+            case .override: return "CLICKGRAFT_PYTHON"
+            case .bundled: return "bundled in the app"
+            case .fetched: return "fetched by ClickGraft"
+            case .system: return "/usr/bin/python3"
+            case .none: return "none"
+            }
+        }
+    }
+
+    private static var cachedSource: Source?
+    static var source: Source {
+        if let c = cachedSource { return c }
+        let s = resolveSource()
+        cachedSource = s
+        return s
+    }
+
+    /// The path to run. "/usr/bin/python3" for `.none` as well, so every caller
+    /// that only wants a path keeps working; ask `needsPython` before starting
+    /// anything that has to succeed.
+    static var python: String { source.path ?? "/usr/bin/python3" }
+
+    /// Nothing on this Mac can run the backend, and one can be fetched.
+    static var needsPython: Bool {
+        if case .none = source { return PythonPayload.pin != nil }
+        return false
+    }
+
+    private static func resolveSource() -> Source {
+        if let o = ProcessInfo.processInfo.environment["CLICKGRAFT_PYTHON"] {
+            return .override(o)
+        }
+        // An app that carries one. build_app.sh stopped bundling the framework
+        // in 1.8.0 -- it was 17 MB of every download for a problem most Macs do
+        // not have -- but CLICKGRAFT_BUNDLE_PYTHON=1 still builds one that does,
+        // which is what an IT department deploying to Macs with no internet
+        // wants. Checked first so such a build never reaches the network.
         let bundled = Bundle.main.bundlePath
             + "/Contents/Frameworks/Python.framework/Versions/Current/bin/python3"
-        if FileManager.default.isExecutableFile(atPath: bundled) {
-            return bundled
-        }
-        return "/usr/bin/python3"
+        if FileManager.default.isExecutableFile(atPath: bundled) { return .bundled(bundled) }
+
+        if let fetched = PythonPayload.installed { return .fetched(fetched) }
+
+        // /usr/bin/python3 last, and only when something is behind it. Asking
+        // the filesystem rather than running it is the whole point: running a
+        // shim with nothing behind it is what raises macOS's offer to install
+        // the Command Line Tools, and sparing that offer to someone who does
+        // not need it is why ClickGraft fetches an interpreter at all.
+        //
+        // Running from a source checkout lands here, where /usr/bin/python3 is
+        // right there and working, so development needs no build step.
+        if systemPythonWorks() { return .system }
+        return .none
     }
+
+    /// Whether /usr/bin/python3 can actually run -- established without running
+    /// it blind. The shim forwards to whatever `xcode-select` points at, so if
+    /// no developer directory holds a python3 there is nothing to forward to and
+    /// nothing worth provoking. Once one exists, running it is safe and settles
+    /// the licence question too.
+    ///
+    /// xcode-select itself is a real binary (one hard link, not one of the 78
+    /// that share the shim's inode), so asking it costs nothing.
+    static func systemPythonWorks() -> Bool {
+        // Set on a Mac that HAS the tools, to reach the path taken by one that
+        // does not. The same reason CLICKGRAFT_CLT_DIR exists: the outcome worth
+        // testing is the one the test machine cannot be in.
+        if ProcessInfo.processInfo.environment["CLICKGRAFT_NO_SYSTEM_PYTHON"] == "1" {
+            return false
+        }
+        let fm = FileManager.default
+        let dirs = [cltDir, selectedDeveloperDir()].compactMap { $0 }
+        guard dirs.contains(where: { fm.isExecutableFile(atPath: $0 + "/usr/bin/python3") })
+        else { return false }
+        // The literal path, never Toolchain.python: that resolves through this,
+        // and asking it here would recurse forever.
+        if runPython(at: "/usr/bin/python3", [:]).status == 0 { return true }
+        // It ran and refused. The one refusal worth surviving is Xcode's
+        // outstanding licence, which probe() clears by pointing the shim at the
+        // Command Line Tools instead; state/developerDir do that for every
+        // later call, so agreeing here is agreeing with them.
+        return fm.isExecutableFile(atPath: cltDir + "/usr/bin/python3")
+            && runPython(at: "/usr/bin/python3", ["DEVELOPER_DIR": cltDir]).status == 0
+    }
+
+    /// `xcode-select -p`, or nil when it names nothing.
+    static func selectedDeveloperDir() -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        p.arguments = ["-p"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        let path = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : path
+    }
+
     static var cltDir: String {
         ProcessInfo.processInfo.environment["CLICKGRAFT_CLT_DIR"]
             ?? "/Library/Developer/CommandLineTools"
     }
 
     private static var cached: State?
-    static func refresh() { cached = nil }
+    static func refresh() { cached = nil; cachedSource = nil }
     static var state: State {
         if let c = cached { return c }
         let s = probe()
@@ -76,8 +494,13 @@ enum Toolchain {
     static var developerDir: String? { state == .commandLineTools ? cltDir : nil }
 
     private static func run(_ extra: [String: String]) -> (status: Int32, stderr: String) {
+        return runPython(at: python, extra)
+    }
+
+    private static func runPython(at path: String, _ extra: [String: String])
+        -> (status: Int32, stderr: String) {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: python)
+        p.executableURL = URL(fileURLWithPath: path)
         p.arguments = ["-c", ""]
         var env = ProcessInfo.processInfo.environment
         for (k, v) in extra { env[k] = v }
@@ -589,6 +1012,96 @@ final class Wizard: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: 2a — Fetching the interpreter
+
+    /// Why the last fetch failed, so the screen can come back with it.
+    var pythonProblem: PythonPayload.Failure?
+
+    /// This Mac has nothing the backend can run on, so nothing has run yet.
+    ///
+    /// Before Requirements, which reports what the backend found and therefore
+    /// cannot be drawn until there is a backend. docs/wizard-copy.md,
+    /// "ClickGraft needs one more piece".
+    @objc func showNeedPython() {
+        var rows: [NSView] = [UI.title("ClickGraft needs one more piece")]
+        if let problem = pythonProblem {
+            var inner: [NSView] = [UI.point(problem.text, "")]
+            if let detail = problem.detail {
+                inner.append(Disclosure { detail })
+            }
+            rows.append(UI.panel(inner, tint: NSColor.systemOrange.withAlphaComponent(0.13)))
+        }
+        rows += [
+            UI.body("The part of ClickGraft that does the work needs a small program this "
+                    + "Mac doesn't have. ClickGraft can fetch it now: 17 MB, once, and "
+                    + "never again."),
+            UI.panel([
+                UI.point("It goes in your own Library folder, alongside your other app "
+                         + "settings.",
+                         "Nothing is installed into macOS and nobody is asked for an "
+                         + "administrator password."),
+                UI.point("ClickGraft knows what it should receive.",
+                         "This version records a fingerprint of the exact file, checks what "
+                         + "arrives against it, and installs nothing unless they match."),
+            ], tint: NSColor.systemGreen.withAlphaComponent(0.10)),
+            UI.small("It comes from clickgraft.elusive.net, the same place ClickGraft itself "
+                     + "came from."),
+            Disclosure(label: "Why this Mac and not others") { """
+                Macs set up for software development already have this program, and \
+                ClickGraft uses the one that's there. Most Macs used for design or print \
+                work don't, and asking macOS for it means a download of several gigabytes \
+                behind an administrator password — for one small piece of it.
+
+                So ClickGraft fetches that piece instead. If you'd rather not download \
+                anything, installing Apple's Command Line Tools also works: ClickGraft will \
+                find them next time it opens.
+                """ },
+        ]
+        present(rows, buttons: [
+            UI.button("Quit", self, #selector(quit)),
+            UI.spacer(),
+            UI.button(pythonProblem == nil ? "Fetch it" : "Try again",
+                      self, #selector(fetchPython), primary: true),
+        ])
+    }
+
+    @objc func fetchPython() {
+        pythonProblem = nil
+        let b = NSProgressIndicator()
+        b.isIndeterminate = false
+        b.minValue = 0; b.maxValue = 1
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.widthAnchor.constraint(equalToConstant: UI.width - UI.margin * 2 - 10).isActive = true
+        bar = b
+        let cap = UI.body("Fetching")
+        caption = cap
+        present([UI.title("ClickGraft needs one more piece"), b, cap],
+                buttons: [UI.spacer()])
+
+        PythonPayload.install(progress: { [weak self] f in
+            self?.bar?.doubleValue = f
+            // The same four words the copy promises, driven off the one number
+            // the fetch actually knows.
+            self?.caption?.stringValue =
+                f < 0.7 ? "Fetching"
+                : f < 0.75 ? "Checking what arrived"
+                : f < 0.9 ? "Unpacking"
+                : "Checking macOS is happy with it"
+        }, done: { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success:
+                // Straight on: they asked for one thing and it happened, so a
+                // screen saying so would be a step that only reports itself.
+                Toolchain.refresh()
+                self.showRequirements()
+            case .failure(let problem):
+                self.pythonProblem = problem
+                self.showNeedPython()
+            }
+        })
+    }
+
     // MARK: 2 — Requirements
 
     /// The macOS every copy ClickGraft can make needs, for the one screen that
@@ -630,6 +1143,13 @@ final class Wizard: NSObject, NSApplicationDelegate {
         }
         // Probed afresh each time, so Check again notices an accepted licence.
         Toolchain.refresh()
+        // Before Toolchain.state, which runs the interpreter to probe it: with
+        // nothing behind /usr/bin/python3 that run IS macOS's offer to install
+        // the Command Line Tools, and not raising it is the point.
+        if Toolchain.needsPython {
+            showNeedPython()
+            return
+        }
         if Toolchain.state == .xcodeLicenceNeeded {
             showXcodeLicence()
             return
@@ -651,40 +1171,37 @@ final class Wizard: NSObject, NSApplicationDelegate {
             showLeftover()
             return
         }
-        let ok = e["clt"] as? Bool ?? false
         // Default true: if an older backend omits the key, fail open rather
         // than blocking every user on a missing field.
         let silicon = e["apple_silicon"] as? Bool ?? true
 
         var rows: [NSView] = [
             UI.title("What ClickGraft needs"),
-            UI.body("ClickGraft uses a set of tools Apple ships for free, called the Command "
-                    + "Line Tools. Most Macs used for design or print work already have them."),
+            // Not "Apple's Command Line Tools" any more, and this screen said so
+            // for a while after it stopped being true. What it showed was worse
+            // than out of date: e["clt"] comes from check_clt(), whose list of
+            // required tools is now empty, so it is true on every Mac -- and the
+            // screen told a Mac with no developer tools at all that Apple's were
+            // installed and there was nothing to do.
+            UI.body("Nothing you have to install. ClickGraft needs a Mac with Apple Silicon "
+                    + "and your own copy of HP Click, and it brings the rest itself."),
+            UI.panel([UI.point("Everything ClickGraft needs is here.", "Nothing to do.")],
+                     tint: NSColor.systemGreen.withAlphaComponent(0.10)),
         ]
-        if ok {
-            rows.append(UI.panel([UI.point("Apple's Command Line Tools are installed.",
-                                           "Nothing to do.")],
-                                 tint: NSColor.systemGreen.withAlphaComponent(0.10)))
-            // Said, not hidden: the tools list below will show the Command Line
-            // Tools rather than Xcode, and a report should be able to explain why.
-            if Toolchain.state == .commandLineTools {
-                rows.append(UI.small("Xcode on this Mac is waiting for its licence to be "
-                                     + "accepted, so ClickGraft is using the Command Line "
-                                     + "Tools instead. Nothing for you to do."))
-            }
-        } else {
-            rows.append(UI.panel([
-                UI.point("Apple's Command Line Tools aren't installed yet.", ""),
-                UI.small("They come from Apple, not from us. macOS will offer to install them "
-                         + "the first time it needs them — accept, wait for it to finish, then "
-                         + "come back here. It's a large download and can take several minutes."),
-            ], tint: NSColor.systemOrange.withAlphaComponent(0.12)))
-            // Installing them asks for an administrator password, which on a
-            // managed Mac the person sitting at it does not have. Saying only
-            // "macOS will offer to install them" leaves them at a dead end, so
-            // name the ways round it -- starting with the one that needs no
-            // tools and no copy at all.
-            rows.append(Disclosure(label: "If you can't install them on this Mac") { [weak self] in
+        // Said, not hidden: the tools list in the detail below will name the
+        // Command Line Tools rather than Xcode, and a report should be able to
+        // explain why.
+        if Toolchain.state == .commandLineTools {
+            rows.append(UI.small("Xcode on this Mac is waiting for its licence to be "
+                                 + "accepted, so ClickGraft is using the Command Line "
+                                 + "Tools instead. Nothing for you to do."))
+        }
+        do {
+            // Kept, and now always reachable. It used to appear only when the
+            // Command Line Tools were missing, which no longer happens -- and
+            // what it says is the most useful thing on the screen for anyone on
+            // a Mac they do not administer, which is who it was written for.
+            rows.append(Disclosure(label: "If this is a Mac you don't administer") { [weak self] in
                 let dropped = (self?.candidates.first {
                     ($0["reason"] as? String) == "hp_native"
                 }?["printers_dropped"] as? [String]) ?? []
@@ -772,24 +1289,29 @@ final class Wizard: NSObject, NSApplicationDelegate {
                 cb,
             ], tint: NSColor.systemOrange.withAlphaComponent(0.13)))
         }
-        rows.append(Disclosure(label: "What ClickGraft uses them for") { [weak self] in
+        // "them" used to mean the Command Line Tools, which the body above named.
+        // It no longer does, and a label with no antecedent is how a screen goes
+        // quietly wrong: it read "What ClickGraft uses them for" above a
+        // paragraph that had stopped mentioning any them.
+        rows.append(Disclosure(label: "What ClickGraft uses on this Mac") { [weak self] in
             let tools = (self?.env["tools"] as? [String: String]) ?? [:]
             let list = tools.sorted { $0.key < $1.key }
                 .map { "\($0.key.padding(toLength: 20, withPad: " ", startingAt: 0))"
                      + "\($0.value.isEmpty ? "not found" : $0.value)" }
                 .joined(separator: "\n")
-            return "Nothing, any more. Making a copy needs no tool from this list: "
-                 + "reading your app, rewriting the copy's libraries and signing it are "
-                 + "all done without them. What still needs them is ClickGraft itself \u{2014} "
-                 + "it starts through /usr/bin/python3, which Apple ships as part of the "
-                 + "same set.\n\n" + list
+            return "No developer tools. Reading your app, rewriting the copy's support "
+                 + "files and signing it are all done by ClickGraft itself. What it uses "
+                 + "are three programs that come with macOS, and an interpreter to run "
+                 + "on, which on this Mac is \(Toolchain.source.name).\n\n" + list
         })
 
         let next = UI.button("Continue", self, #selector(showChoose), primary: true)
-        next.isEnabled = ok && (silicon || allowIntelHost)
-        var buttons: [NSView] = [UI.button("Back", self, #selector(showWelcome))]
-        if !ok { buttons.append(UI.button("Check again", self, #selector(showRequirements))) }
-        buttons += [UI.spacer(), next]
+        // No longer gated on e["clt"]: with nothing required from Apple's tools
+        // that value is true on every Mac, so gating on it only ever looked like
+        // a check. What can still stop a copy being made is the processor.
+        next.isEnabled = silicon || allowIntelHost
+        let buttons: [NSView] = [UI.button("Back", self, #selector(showWelcome)),
+                                 UI.spacer(), next]
         present(rows, buttons: buttons)
     }
 
@@ -2458,6 +2980,11 @@ final class Wizard: NSObject, NSApplicationDelegate {
         if Toolchain.state == .commandLineTools {
             out += "developer tools: Command Line Tools (Xcode licence not accepted)\n"
         }
+        // Which interpreter ran the build. Since 1.8.0 there are four
+        // possibilities and they behave differently -- a fetched one is a
+        // different 3.13.9 from whatever Apple's tools provide -- so a report
+        // that does not say which is missing the first thing to ask about.
+        out += "interpreter: \(Toolchain.source.name)\n"
         return out
     }
 
@@ -2939,6 +3466,56 @@ final class Wizard: NSObject, NSApplicationDelegate {
 }
 
 // MARK: - main
+
+// The one thing ClickGraft does without opening a window.
+//
+// It is here because the wizard is otherwise the only way to reach the code that
+// downloads and unpacks an interpreter, which makes the part of ClickGraft that
+// fetches something from the internet the only part no test can drive.
+// tests/test_python_payload.py drives this.
+//
+// It also answers the managed estate the Requirements screen talks through: one
+// command per Mac, no window, no administrator password, and nothing left to
+// download by the time anyone opens the app.
+//
+//   ClickGraft.app/Contents/MacOS/ClickGraft --fetch-python [--force]
+if CommandLine.arguments.contains("--fetch-python") {
+    func say(_ line: String) { print(line); fflush(stdout) }
+    func fail(_ line: String) {
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
+    if !CommandLine.arguments.contains("--force"), let have = Toolchain.source.path {
+        say("nothing to fetch: \(Toolchain.source.name) (\(have))")
+        exit(0)
+    }
+    guard PythonPayload.pin != nil else {
+        fail("this build names no interpreter to fetch (no python-pin.json)")
+        exit(2)
+    }
+
+    var code: Int32 = 1
+    var step = ""
+    PythonPayload.install(progress: { f in
+        let now = f < 0.7 ? "fetching" : f < 0.75 ? "checking what arrived"
+                : f < 0.9 ? "unpacking" : "checking the signature"
+        if now != step { step = now; say(now) }
+    }, done: { result in
+        switch result {
+        case .success(let exe):
+            say("ok: \(exe)")
+            code = 0
+        case .failure(let why):
+            fail(why.text)
+            if let detail = why.detail { fail(detail) }
+            code = 1
+        }
+        CFRunLoopStop(CFRunLoopGetMain())
+    })
+    // install() answers on the main queue, which is only drained while this runs.
+    CFRunLoopRun()
+    exit(code)
+}
 
 let app = NSApplication.shared
 let delegate = Wizard()

@@ -28,7 +28,9 @@ _fp = _fetch_python.fingerprint(list(BUNDLED_PY.items()))
 PIN_JSON = json.dumps({'version': '3.13.9',
                        'url': 'https://example/python-3.13.9-macos11.pkg',
                        'pkg_sha256': '0' * 64,
-                       'payload_sha256': _fp}) + '\n'
+                       'payload_sha256': _fp,
+                       'payload_url': 'https://example/ClickGraft-python-3.13.9.zip',
+                       'payload_zip_sha256': '1' * 64}) + '\n'
 
 spec = importlib.util.spec_from_file_location(
     'release_gate', Path(__file__).resolve().parents[1] / 'packaging/check_release.py')
@@ -104,7 +106,6 @@ def build_zip(repo, version=VERSION, record=True, add=None, change=None, drop=No
     for name in source:
         if gate.app_path(name):
             files[gate.app_path(name)] = (repo / name).read_bytes()
-    files.update({gate.PYTHON_PREFIX + name: data for name, data in BUNDLED_PY.items()})
     files.update({name: text.encode() for name, text in (add or {}).items()})
     files.update({name: text.encode() for name, text in (change or {}).items()})
     for name in drop or ():
@@ -151,10 +152,34 @@ def test_tagged_zip_passes_after_a_later_site_only_commit(tmp_path):
     lines = check(archive, repo)
     assert lines[0] == f'  ✓ ClickGraft {VERSION}, and v{VERSION} builds {VERSION}'
     # 13, not 11: since 1.8.0 packaging/python-pin.json and fetch_python.py are
-    # recorded sources too, because they decide which interpreter ships.
+    # recorded sources too, because they decide which interpreter a Mac fetches.
     assert any('all 13 sources match' in line for line in lines)
-    assert any('exactly the 8 files committed' in line for line in lines)
-    assert any('bundled Python matches the pin' in line for line in lines)
+    # 9, not 8: the pin ships inside the app, because the app reads it to know
+    # what to fetch.
+    assert any('exactly the 9 files committed' in line for line in lines)
+    assert any('carries the Python 3.13.9 pin the tag committed, and no interpreter'
+               in line for line in lines)
+
+
+def test_zip_that_carries_an_interpreter_is_refused(tmp_path):
+    """CLICKGRAFT_BUNDLE_PYTHON=1 builds an app with the framework inside it, for
+    deploying to an estate with no internet. What the site serves has to be the
+    small one -- 770 KB against 18 MB -- so publishing the other by mistake is
+    refused here rather than discovered by everyone who downloads it."""
+    repo = released(tmp_path)
+    archive = build_zip(repo, add={gate.PYTHON_PREFIX + name: data.decode()
+                                   for name, data in BUNDLED_PY.items()})
+    with pytest.raises(gate.Refused, match='carries a Python.framework'):
+        check(archive, repo)
+
+
+def test_zip_that_carries_no_pin_is_refused(tmp_path):
+    """The other way round: without the pin, a Mac that has no interpreter has
+    nothing to fetch and cannot open ClickGraft at all."""
+    repo = released(tmp_path)
+    archive = build_zip(repo, drop=['Resources/python-pin.json'])
+    with pytest.raises(gate.Refused):
+        check(archive, repo)
 
 
 @pytest.mark.parametrize('stale', ['clickgraft/data/printers-4.8.117.json', 'clickgraft/shims/pngshim.c',
@@ -277,7 +302,7 @@ def test_legacy_zip_passes_when_allowed_for_its_version(tmp_path, monkeypatch, c
     assert gate.main(argv) == 0
     out = capsys.readouterr().out
     assert f'  - no source record: {LEGACY} predates them and was allowed on request' in out
-    assert f'exactly the 8 files committed at v{LEGACY}' in out
+    assert f'exactly the 9 files committed at v{LEGACY}' in out
 
 
 def test_legacy_allowance_still_checks_the_payload(tmp_path):

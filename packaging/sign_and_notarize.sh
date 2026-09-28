@@ -71,22 +71,27 @@ echo "    profile '$PROFILE' found"
 
 # --- sign ------------------------------------------------------------------
 # Hardened runtime is mandatory for notarization. No entitlements are needed,
-# but the REASON changed in 1.8.0 and the new one is more fragile, so it is
-# written down.
+# and the reason is worth writing down because it moved twice in one day.
 #
-# It used to be that the launcher exec'd /usr/bin/python3 and the process then
-# ran under Apple's own signature. The app now carries its own interpreter, so
-# the hardened runtime applies library validation to it: every dylib it loads
-# must share the app's Team ID or be an Apple platform binary. That holds here
-# only because the loop below signs EVERY Mach-O in the bundle -- the framework
-# included -- with the same Developer ID.
+# A released app carries no interpreter: it ships packaging/python-pin.json and a
+# Mac without Apple's developer tools fetches one into its own Application
+# Support. So the loop below normally signs the launcher and nothing else, and the
+# interpreter is signed where it is built, by fetch_python.build_payload.
 #
-# Ad-hoc signing therefore does not work, and fails in a way that does not
-# mention signing. Measured 28 September 2026 on macOS 12.4:
+# What matters either way is that the interpreter and the support files it loads
+# carry ONE Developer ID. Under the hardened runtime a Python.framework is subject
+# to library validation: every dylib loaded must share the loading binary's Team
+# ID or be an Apple platform binary. Ad-hoc signing therefore does not work, and
+# fails in a way that never mentions signing. Measured 28 September 2026 on
+# macOS 12.4:
 #
 #   dyld: Library not loaded: @loader_path/../Python
 #   Reason: ... mapped file has no Team ID and is not a platform binary
 #           (signed with custom identity or adhoc?)
+#
+# CLICKGRAFT_BUNDLE_PYTHON=1 puts the framework back inside the app, for an estate
+# with no internet. The loop below then covers it too, with the same identity, for
+# the same reason -- and check_release.py refuses to release such a build.
 #
 # If a future change ever needs mixed identities, the entitlement to add is
 # com.apple.security.cs.disable-library-validation -- and adding it should be a
@@ -94,10 +99,11 @@ echo "    profile '$PROFILE' found"
 echo "--> removing stale signatures and metadata"
 /usr/bin/xattr -cr "$APP"
 find "$APP" -name '.DS_Store' -delete 2>/dev/null || true
-# Not inside the bundled Python: its __pycache__ IS the stdlib, precompiled.
-# Deleting it would make the interpreter recompile every module on every launch
-# -- it cannot write .pyc back into a signed bundle -- and would change the
-# framework from the one packaging/python-pin.json names.
+# Not inside a Python.framework, when a CLICKGRAFT_BUNDLE_PYTHON=1 build has one:
+# its __pycache__ IS the stdlib, precompiled. Deleting it would make the
+# interpreter recompile every module on every launch -- it cannot write .pyc back
+# into a signed bundle -- and would change the framework from the one
+# packaging/python-pin.json names.
 find "$APP" -name '__pycache__' -type d \
      ! -path "*/Python.framework/*" -exec rm -rf {} + 2>/dev/null || true
 

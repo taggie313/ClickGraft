@@ -1,10 +1,14 @@
-"""The Python ClickGraft carries inside itself.
+"""The Python ClickGraft fetches, as a framework on disk.
 
 Every other developer tool was removed from what a user needs. This one could
 not be: the backend IS Python, and /usr/bin/python3 on macOS 27 is a 200,560-byte
 xcrun shim with 78 hard links -- the same inode as clang -- with no system Python
-behind it. So ClickGraft brings an interpreter, and these hold the two things
-that make that defensible: it is pinned, and the pin is checked.
+behind it.
+
+These hold the framework itself: pinned, relocatable, able to verify HTTPS, and
+signed so it can be loaded. tests/test_python_payload.py holds the other half --
+what the app does with it, and every way it refuses the wrong one -- since 1.8.0
+stopped carrying the framework and started fetching it.
 """
 
 import importlib.util
@@ -40,14 +44,6 @@ def test_the_pin_says_which_python_and_proves_it():
     assert len(pin["pkg_sha256"]) == 64 and len(pin["payload_sha256"]) == 64
 
 
-def test_the_pin_is_a_recorded_source():
-    """Or the release tag would not fix which Python ships."""
-    gate = _gate()
-    record = gate.source_record(ROOT)
-    assert "packaging/python-pin.json" in record
-    assert "packaging/fetch_python.py" in record
-
-
 # --- what the fingerprint deliberately does and does not cover --------------
 
 def test_fingerprint_ignores_macho_because_signing_rewrites_it():
@@ -74,23 +70,10 @@ def test_fingerprint_is_order_independent():
     assert fetch_python.fingerprint(a) == fetch_python.fingerprint(sorted(a))
 
 
-# --- the gate ---------------------------------------------------------------
-
-def test_the_gate_refuses_an_app_with_no_python():
-    gate = _gate()
-    with pytest.raises(gate.Refused) as e:
-        gate.check_bundled_python({"Resources/clickgraft/cli.py": b"x"}, ROOT)
-    assert "no Python.framework" in str(e.value)
-
-
-def test_the_gate_refuses_a_python_that_is_not_the_pinned_one():
-    """The control. A gate that only ever passes is not a gate."""
-    gate = _gate()
-    files = {gate.PYTHON_PREFIX + "Versions/3.13/lib/python3.13/os.py": b"not the real stdlib"}
-    with pytest.raises(gate.Refused) as e:
-        gate.check_bundled_python(files, ROOT)
-    assert "not the one python-pin.json names" in str(e.value)
-    assert any("the pin says" in line for line in e.value.details)
+# --- the gate ----------------------------------------------------------------
+# What the gate now says about the app -- that it ships the pin and carries no
+# interpreter -- lives in tests/test_python_payload.py, with the rest of the
+# fetch it governs. Nothing here duplicates it.
 
 
 # --- the cached framework, when there is one --------------------------------
@@ -194,19 +177,25 @@ def test_preflight_survives_a_patch_only_manifest(capsys):
     assert "ALL PREFLIGHT CHECKS PASSED" in out
 
 
-def test_the_release_signs_every_macho_in_the_framework():
-    """Library validation is what makes the bundled interpreter loadable.
+def test_the_payload_build_signs_every_macho_and_the_framework():
+    """Signing is what makes the fetched interpreter usable at all.
 
-    Under the hardened runtime every dylib the app loads must carry the app's
-    own Team ID. That holds only because sign_and_notarize.sh walks the whole
-    bundle and signs each Mach-O with the same Developer ID; sign just the outer
-    app, or ad-hoc sign it, and dyld refuses the framework with a message that
-    never mentions signing ("no Team ID and is not a platform binary").
+    Ad-hoc signing does not: python3 dies with a message that never mentions
+    signing ("mapped file has no Team ID and is not a platform binary"), because
+    under the hardened runtime the support files it loads must carry its own Team
+    ID. That holds only because build_payload walks the framework and signs each
+    Mach-O with the same Developer ID before sealing the bundle.
+
+    It is also what the app's own check rests on: it runs codesign --verify on
+    what it unpacked, and refuses an interpreter macOS will not vouch for
+    (tests/test_python_payload.py proves that refusal binds).
     """
-    script = open(os.path.join(ROOT, "packaging", "sign_and_notarize.sh"),
+    source = open(os.path.join(ROOT, "packaging", "fetch_python.py"),
                   encoding="utf-8").read()
-    assert 'find "$APP/Contents" -type f -perm +111' in script, \
-        "the inner-to-outer signing walk is what makes the bundled Python loadable"
-    assert "Python.framework" not in script.split("--> signing")[1].split("codesign --verify")[0] \
-        or "! -path" not in script.split("--> signing")[1].split("codesign --verify")[0], \
-        "the signing walk must not exclude the framework"
+    body = source[source.index("def build_payload("):]
+    body = body[:body.index("\ndef ")] if "\ndef " in body else body
+    assert "is_macho(path)" in body, "it must find every Mach-O, not a fixed list"
+    assert body.count('"--options", "runtime"') >= 2, \
+        "each Mach-O and then the framework, both with the hardened runtime"
+    assert '"--verify", "--strict"' in body, \
+        "an unverifiable payload must fail the build, not a user's fetch"

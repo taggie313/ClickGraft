@@ -46,7 +46,8 @@ that one piece.
 
 ## Requirements
 
-**macOS 15 or later, and Xcode Command Line Tools.** That is the entire list.
+**macOS 15 or later, and your own HP Click.** That is the entire list. Nothing
+from Apple, no Homebrew, no compiler, no `pip install`.
 
 **macOS 15 or later** to run the copy, and on a Mac with Apple Silicon to make
 it. (An Intel Mac can make one for another Mac on the macOS it has.) HP's own
@@ -54,24 +55,39 @@ it. (An Intel Mac can make one for another Mac on the macOS it has.) HP's own
 OpenSSL in 4.10.42), and Homebrew publishes three of the four libraries the copy
 adds only for macOS 15 and later. The copy's `Info.plist` states it, so macOS
 itself won't open the copy on an older Mac, and ClickGraft says so before it
-asks for the Command Line Tools or downloads anything. On macOS 12 to 14, look at
+downloads anything. On macOS 12 to 14, look at
 HP Click 4.11.31 instead: HP's own Apple Silicon build, which needs no copy and
 which HP lists for macOS 12 to 26. It doesn't support the five DesignJets that
 only 4.8.117 does.
 
-**The Command Line Tools** provide the `python3` ClickGraft runs on, plus
-`codesign`, `install_name_tool`, `lipo`, `otool`, `vtool` and `nm`. No Homebrew.
-No compiler. No `pip install`.
+**No developer tools, since 1.8.0.** ClickGraft used to need Apple's Command
+Line Tools for `python3`, `codesign`, `install_name_tool`, `lipo`, `otool`,
+`vtool` and `nm`. Four changes removed every one of them: `clickgraft/macho_read.py`
+reads Mach-O headers directly, `clickgraft/macho_write.py` rewrites install names
+and rpaths, the libpng shim ships prebuilt instead of being compiled on your Mac,
+and `codesign`, `ditto` and `file` — the three still used — come with macOS
+itself rather than with the developer tools.
 
-**You probably don't have to install it yourself.** `/usr/bin/python3` is one of
-the Command Line Tools stubs, so opening ClickGraft on a Mac that lacks them
-makes macOS offer its own installer automatically — accept it, wait for it to
-finish (it is a large download, several minutes on a good connection), and
-ClickGraft opens. Confirmed on a clean Mac.
+**The one that could not be removed is `python3`, because ClickGraft is written
+in it.** `/usr/bin/python3` is not a Python: on macOS 27 it is a 200,560-byte
+`xcrun` shim sharing one inode with 77 other stubs, and
+`/System/Library/Frameworks/Python.framework` is gone. Running it on a Mac
+without the developer tools is what raises Apple's installer — several
+gigabytes, behind an administrator password that on a managed Mac belongs to
+somebody else.
 
-If you decline that installer, ClickGraft cannot start and will appear to do
-nothing when opened. Reopen it to get the prompt back, or install the tools
-yourself with `xcode-select --install`.
+So ClickGraft asks the filesystem instead of running the shim, and on a Mac with
+nothing behind it, offers to fetch its own interpreter: 17 MB, once, into
+`~/Library/Application Support/ClickGraft`. Nothing is installed into macOS and
+nothing asks for a password. `packaging/python-pin.json` ships inside the app and
+names the exact archive and its SHA-256; what arrives is checked against that and
+against macOS's own signature check, and installed only if both pass. The pin is
+a recorded source, so the release tag fixes which interpreter a given ClickGraft
+will fetch. It is published beside the download, with the pin next to it, so you
+can check it yourself.
+
+If you already have the Command Line Tools, ClickGraft uses the `python3` that is
+already there and fetches nothing.
 
 You also need your own **legally installed HP Click 4.10.42, 4.8.118 or
 4.8.117**. ClickGraft ships no HP software and cannot obtain it for you.
