@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Every Python runtime archive the site must keep serving, and which",
+    "ClickGraft releases need each one.",
+    "",
+    "Each released app embeds an immutable URL and SHA-256 in its own",
+    "python-pin.json. Publication used to stage only the runtime for the app",
+    "being published and then exchange the whole of html/, so shipping a new",
+    "payload took the old one off the site: an app that had not yet fetched an",
+    "interpreter got a 404, or -- for a same-version re-sign -- bytes whose",
+    "hash it refuses. Older payloads survived in .previous-* backups but were",
+    "no longer served at the URLs older apps ask for.",
+    "",
+    "So retention is declared here and merged additively at deploy time. A",
+    "registered path may never acquire different bytes; retirement is a",
+    "deliberate later decision, not a side effect of shipping.",
+    "",
+    "path is a bare filename, never a URL or a path with separators. Future",
+    "entries use ClickGraft-python-<version>-<sha256>.zip; the legacy name is",
+    "accepted exactly as it is, because 1.8.0 and 1.8.1 embed it."
+  ],
+  "schema": 1,
+  "artifacts": [
+    {
+      "path": "ClickGraft-python-3.13.9.zip",
+      "python_version": "3.13.9",
+      "sha256": "3c9e8391ffd2fedf8f42709c5a092ab67dcfb8b10bc5a44ec19f556e5a56aa57",
+      "releases": ["1.8.0", "1.8.1", "1.8.2"]
+    }
+  ]
+}

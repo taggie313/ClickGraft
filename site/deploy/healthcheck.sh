@@ -84,12 +84,41 @@ if [ "$NEEDS_PIN" = 1 ] && [ -n "$PYVER" ]; then
   # failure only the user would ever see.
   got=$(curl -s --max-time 300 -A "$UA" "${MARK[@]}" "$BASE/$PYFILE" | shasum -a 256 | cut -d' ' -f1)
   check "interpreter matches its pin" "$PYSHA" "$got"
-elif [ "$NEEDS_PIN" = 1 ]; then
+fi
+
+# EVERY retained runtime, not only the one this release advertises. That is the
+# whole point of the inventory: an app shipped against an older payload still
+# asks for it by name, and the site has to answer. Checking only the current
+# pin is exactly how the previous behaviour looked correct while older apps
+# got a 404.
+INV=$(curl -s --max-time 30 -A "$UA" "${MARK[@]}" "$BASE/runtime-inventory.json")
+if printf '%s' "$INV" | grep -q '"artifacts"'; then
+  check "GET /runtime-inventory.json" 200 "$(code "$BASE/runtime-inventory.json")"
+  printf '%s' "$INV" \
+    | tr '{' '\n' | grep '"path"' \
+    | sed -n 's/.*"path": *"\([^"]*\)".*"sha256": *"\([^"]*\)".*/\1 \2/p' \
+    | while read -r rname rsha; do
+        [ -n "$rname" ] || continue
+        rgot=$(curl -s --max-time 300 -A "$UA" "${MARK[@]}" "$BASE/$rname" \
+               | shasum -a 256 | cut -d' ' -f1)
+        if [ "$rgot" = "$rsha" ]; then printf '  ✓ %-34s %s\n' "retained $rname" "${rsha:0:16}…"
+        else printf '  ✗ %-34s got %s, wanted %s\n' "retained $rname" "$rgot" "$rsha"
+             echo "RETAINED_FAILURE" >> /tmp/cg-health-retained.$$
+        fi
+      done
+  # The while loop runs in a subshell because of the pipe, so `fail=1` inside it
+  # would be lost when the pipeline ends. The marker file crosses that boundary.
+  if [ -f /tmp/cg-health-retained.$$ ]; then rm -f /tmp/cg-health-retained.$$; fail=1; fi
+fi
+
+# The two remaining cases for the ADVERTISED pin, now that the retained set is
+# checked above on its own terms.
+if [ "$NEEDS_PIN" = 1 ] && [ -z "$PYVER" ]; then
   printf '  ✗ %-34s %s\n' "python-pin.json" "unreadable: no version in it"; fail=1
-elif [ -n "$PYVER" ]; then
+elif [ "$NEEDS_PIN" != 1 ] && [ -n "$PYVER" ]; then
   # Published early, before the release that needs it. Not a failure -- it is
-  # how the payload gets onto the site ahead of 1.8.0 -- but still checked,
-  # because a wrong one published now is a wrong one served later.
+  # how the payload gets onto the site ahead of the release -- but still
+  # checked, because a wrong one published now is a wrong one served later.
   got=$(curl -s --max-time 300 -A "$UA" "${MARK[@]}" "$BASE/ClickGraft-python-$PYVER.zip" \
         | shasum -a 256 | cut -d' ' -f1)
   check "interpreter published early" "$PYSHA" "$got"

@@ -28,6 +28,9 @@ import fcntl
 import hashlib
 import json
 import os
+import sys as _sys
+_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import runtime_store
 from pathlib import Path
 import re
 import shutil
@@ -36,7 +39,16 @@ import uuid
 
 # Installed beside html/ on every publication. This script is one of them so
 # the README's --restore command can run from the site directory.
-FILES = ('collector/collector.py', 'summary.sh', 'visitor-classify.awk', 'publish_site.py')
+FILES = ('collector/collector.py', 'summary.sh', 'visitor-classify.awk',
+         'publish_site.py', 'runtime_store.py')
+
+# The subset that is TOOLING rather than content: the publisher and the helper
+# it imports. A rollback restores the page and the app selection; it must not
+# hand the site back to the publisher that was current when the backup was
+# taken, because a pre-1.8.2 one knows nothing about the runtime store and the
+# first rollback would quietly stop retaining. The collector and the log
+# scripts are versioned with the site and do roll back.
+TOOLING = ('publish_site.py', 'runtime_store.py')
 
 # How many .previous-* copies to keep. Ten, because 8 to 10 Sep 2026 had five
 # releases (1.5.0 to 1.5.4) and nine commits to site/ in three days: a bad
@@ -303,6 +315,48 @@ def _locked(root):
         yield
 
 
+def _retain_runtimes(incoming, root, say):
+    """Merge the requested runtime inventory into the durable one, and put every
+    retained artifact into the tree about to go live.
+
+    Under the publication lock, before anything served changes. The order is
+    deliberate: merge (which refuses a conflicting hash), then ingest, then
+    verify the whole store, then populate. A refusal at any point happens while
+    the live tree is still the old one.
+
+    No network here. An archive that is not already in the store must have been
+    staged into the incoming directory; fetching inside the lock would hold it
+    across an unbounded wait.
+    """
+    requested = runtime_store.load(incoming / runtime_store.INVENTORY)
+    durable = runtime_store.load(root / runtime_store.INVENTORY)
+    if not requested and not durable:
+        # Nothing has ever been registered: a pre-1.8.2 deploy of a pre-1.8.2
+        # site. Leave it exactly as it was.
+        return None
+
+    merged = runtime_store.merge(durable, requested)
+
+    staged = incoming / 'runtime-archives'
+    for name, entry in sorted(merged.items()):
+        if runtime_store.store_path(root, entry['sha256']).exists():
+            continue
+        source = staged / name
+        if not source.exists():
+            raise ValueError(
+                f'{name} is registered for retention but is neither in the runtime '
+                f'store nor staged at {source}. Stage it and deploy again; the site '
+                f'has not been changed.')
+        runtime_store.ingest(root, source, entry['sha256'])
+
+    retained = runtime_store.verify_store(root, merged)
+    (root / runtime_store.INVENTORY).write_text(runtime_store.dump(merged))
+    runtime_store.populate(incoming / 'html', root, merged)
+    say(f'  ✓ {len(merged)} runtime artifact(s) retained, '
+        f'{retained / 1048576:.0f} MB in the store')
+    return merged
+
+
 def _publish(incoming, root, say, spare=(), done='published'):
     """The publication itself, with the lock held.
 
@@ -311,6 +365,9 @@ def _publish(incoming, root, say, spare=(), done='published'):
     own. Keeps it whenever it may hold the only copy of the previous site."""
     current = root / 'html'
     try:
+        # Runtimes first: it decides what html/ must contain, and validate()
+        # then checks the completed tree rather than the one that arrived.
+        _retain_runtimes(incoming, root, say)
         validate(incoming / 'html')
         previous = {}
         for name in FILES:
@@ -487,6 +544,18 @@ def restore(backup, root, say=print):
     with _locked(root):
         try:
             shutil.copytree(backup, incoming, symlinks=True)
+            # Operational tooling is NOT rollback content. A kept copy carries
+            # the publish_site.py and helpers that were current when it was
+            # made; restoring those would put yesterday's publisher in charge
+            # of today's retention, and a pre-1.8.2 one knows nothing about the
+            # runtime store -- so the first rollback would quietly stop
+            # retaining. The page and the app selection roll back; the tools
+            # that manage the site do not.
+            for name in TOOLING:
+                live = root / name
+                if live.exists():
+                    (incoming / name).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(live, incoming / name)
         except BaseException:
             _discard(incoming)
             raise

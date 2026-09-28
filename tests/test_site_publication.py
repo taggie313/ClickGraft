@@ -44,6 +44,7 @@ def staged(root, name, version):
     (folder / 'summary.sh').write_text(version)
     (folder / 'visitor-classify.awk').write_text(version)
     (folder / 'publish_site.py').write_text(version)
+    (folder / 'runtime_store.py').write_text(version)
     return folder
 
 
@@ -396,3 +397,159 @@ def test_the_version_cutoff_is_the_one_that_decides(tmp_path):
     (old / 'html' / 'python-pin.json').unlink()
     (old / 'html' / f'ClickGraft-python-{PYTHON_VERSION}.zip').unlink()
     publish.validate(old / 'html')               # fine: 1.7.0 fetches nothing
+
+
+# --- R1/R4: runtimes survive publication and rollback ----------------------
+# Against the real publish()/restore(), on temporary directories, because the
+# review reproduced the defect that way and a unit test of the merge alone
+# would not have caught it.
+
+import hashlib as _hashlib
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "site" / "deploy"))
+import runtime_store as rs                                        # noqa: E402
+
+
+def _runtime(tmp, name, body, version="3.13.9", releases=("1.8.2",)):
+    sha = _hashlib.sha256(body).hexdigest()
+    src = tmp / (name + ".src")
+    src.write_bytes(body)
+    return {"path": name, "python_version": version, "sha256": sha,
+            "releases": list(releases)}, src
+
+
+def _staged_with_runtime(root, name, version, runtimes, tmp):
+    """A staged tree that also asks for runtimes to be retained.
+
+    The first runtime is the one this app advertises, so its pin has to name
+    it: validate() checks html/python-pin.json against the archive in the tree,
+    and retention replaces that archive with the store's copy.
+    """
+    folder = staged(root, name, version)
+    html = folder / "html"
+    # staged() writes its own stand-in payload and pin; retention supplies both.
+    for stale in html.glob("ClickGraft-python-*.zip"):
+        stale.unlink()
+    inv, archives = {}, folder / "runtime-archives"
+    archives.mkdir()
+    for entry, src in runtimes:
+        inv[entry["path"]] = entry
+        shutil.copyfile(src, archives / entry["path"])
+    (folder / rs.INVENTORY).write_text(rs.dump(inv))
+    advertised = runtimes[0][0]
+    (html / "python-pin.json").write_text(json.dumps(
+        {"version": advertised["python_version"],
+         "payload_zip_sha256": advertised["sha256"],
+         "payload_url": "https://clickgraft.elusive.net/" + advertised["path"]}))
+    return folder
+
+
+def test_r1_a_later_release_does_not_take_the_earlier_runtime_off_the_site(tmp_path):
+    """R1. Publish A, then B with a DIFFERENT runtime, and both pinned URLs
+    must still return exactly their own bytes. Before 1.8.2 the second deploy
+    exchanged html/ and the first artifact simply stopped being served."""
+    a_entry, a_src = _runtime(tmp_path, "ClickGraft-python-3.13.9.zip", b"runtime A")
+    first = _staged_with_runtime(tmp_path, ".incoming-a", "1.8.2",
+                                 [(a_entry, a_src)], tmp_path)
+    publish.publish(first, tmp_path)
+    assert (tmp_path / "html" / a_entry["path"]).read_bytes() == b"runtime A"
+
+    b_entry, b_src = _runtime(tmp_path, "ClickGraft-python-3.14.0.zip", b"runtime B",
+                              version="3.14.0", releases=["1.9.0"])
+    second = _staged_with_runtime(tmp_path, ".incoming-b", "1.9.0",
+                                  [(b_entry, b_src)], tmp_path)
+    publish.publish(second, tmp_path)
+
+    live = tmp_path / "html"
+    assert (live / b_entry["path"]).read_bytes() == b"runtime B"
+    assert (live / a_entry["path"]).read_bytes() == b"runtime A", (
+        "the earlier release's runtime is no longer served -- every copy of it "
+        "that has not yet fetched an interpreter now gets a 404")
+
+
+def test_r3_live_a_conflicting_hash_is_refused_before_anything_changes(tmp_path):
+    """R3. A re-signed payload under a name apps already trust. The live tree
+    must be untouched afterwards."""
+    a_entry, a_src = _runtime(tmp_path, "ClickGraft-python-3.13.9.zip", b"runtime A")
+    publish.publish(_staged_with_runtime(tmp_path, ".incoming-a", "1.8.2",
+                                         [(a_entry, a_src)], tmp_path), tmp_path)
+    before = (tmp_path / "html" / "index.html").read_text()
+
+    clash, clash_src = _runtime(tmp_path, "ClickGraft-python-3.13.9.zip", b"RE-SIGNED")
+    bad = _staged_with_runtime(tmp_path, ".incoming-clash", "1.8.3",
+                               [(clash, clash_src)], tmp_path)
+    with pytest.raises(rs.InventoryError, match="cannot change its bytes"):
+        publish.publish(bad, tmp_path)
+    assert (tmp_path / "html" / "index.html").read_text() == before, "the site changed"
+    assert (tmp_path / "html" / a_entry["path"]).read_bytes() == b"runtime A"
+
+
+def test_r4_rollback_keeps_the_union_of_runtimes(tmp_path):
+    """R4. Restoring an earlier page must not be a runtime garbage collection:
+    the page selection goes back, the retained artifacts do not."""
+    a_entry, a_src = _runtime(tmp_path, "ClickGraft-python-3.13.9.zip", b"runtime A")
+    publish.publish(_staged_with_runtime(tmp_path, ".incoming-a", "1.8.2",
+                                         [(a_entry, a_src)], tmp_path), tmp_path)
+
+    b_entry, b_src = _runtime(tmp_path, "ClickGraft-python-3.14.0.zip", b"runtime B",
+                              version="3.14.0", releases=["1.9.0"])
+    backup = publish.publish(_staged_with_runtime(tmp_path, ".incoming-b", "1.9.0",
+                                                  [(b_entry, b_src)], tmp_path), tmp_path)
+    assert live_page(tmp_path) == "ClickGraft 1.9.0"
+
+    publish.restore(backup, tmp_path)
+    assert live_page(tmp_path) == "ClickGraft 1.8.2", "the page did not roll back"
+    live = tmp_path / "html"
+    assert (live / a_entry["path"]).read_bytes() == b"runtime A"
+    assert (live / b_entry["path"]).read_bytes() == b"runtime B", (
+        "rolling the page back retired the newer runtime, so any app already "
+        "shipped against it can no longer fetch one")
+
+
+def test_r5_pruning_kept_copies_cannot_touch_the_store(tmp_path):
+    """R5. The store lives outside html/ and outside .previous-* precisely so
+    retention survives the backup policy."""
+    a_entry, a_src = _runtime(tmp_path, "ClickGraft-python-3.13.9.zip", b"runtime A")
+    publish.publish(_staged_with_runtime(tmp_path, ".incoming-a", "1.8.2",
+                                         [(a_entry, a_src)], tmp_path), tmp_path)
+    stored = rs.store_path(tmp_path, a_entry["sha256"])
+    assert stored.exists()
+
+    for i in range(publish.KEEP + 3):
+        e, s = _runtime(tmp_path, "ClickGraft-python-3.13.9.zip", b"runtime A")
+        publish.publish(_staged_with_runtime(tmp_path, f".incoming-{i}", "1.8.2",
+                                             [(e, s)], tmp_path), tmp_path)
+    kept = leftovers(tmp_path, ".previous-")
+    assert len(kept) <= publish.KEEP, kept
+    assert stored.exists(), "pruning kept copies removed a retained runtime"
+    assert (tmp_path / "html" / a_entry["path"]).read_bytes() == b"runtime A"
+
+
+def test_a_pre_inventory_site_is_left_exactly_as_it_was(tmp_path):
+    """Nothing registered, nothing to retain: a pre-1.8.2 deploy of a pre-1.8.2
+    site must not grow a store or an inventory it never asked for."""
+    publish.publish(staged(tmp_path, ".incoming-old", "1"), tmp_path)
+    assert not (tmp_path / rs.STORE_DIR).exists()
+    assert not (tmp_path / rs.INVENTORY).exists()
+
+
+def test_r4_rollback_keeps_current_tooling_not_the_backups(tmp_path):
+    """R4's other half. A kept copy carries the publisher that was current when
+    it was made; restoring that would put a pre-1.8.2 publish_site.py -- one
+    that knows nothing about the runtime store -- in charge of retention, so
+    the first rollback would quietly stop retaining."""
+    first = staged(tmp_path, ".incoming-one", "1")
+    publish.publish(first, tmp_path)
+    backup = publish.publish(staged(tmp_path, ".incoming-two", "2"), tmp_path)
+    # The site's tooling moves on after that backup was taken.
+    (tmp_path / "publish_site.py").write_text("current tooling")
+    (tmp_path / "runtime_store.py").write_text("current helper")
+
+    publish.restore(backup, tmp_path)
+    assert (tmp_path / "publish_site.py").read_text() == "current tooling", \
+        "rollback replaced the publisher with the one inside the backup"
+    assert (tmp_path / "runtime_store.py").read_text() == "current helper"
+    # ...but content still rolls back. summary.sh and the collector are
+    # versioned with the site, and the spec names only the publisher and its
+    # helper as tooling.
+    assert (tmp_path / "summary.sh").read_text() == "1"

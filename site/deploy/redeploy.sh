@@ -217,9 +217,37 @@ printf '%s  %s\n' "$SHA" "$ZIPNAME" > "$BUILD/html/ClickGraft.zip.sha256"
 # way they check the download -- and so publish_site.py can refuse a tree whose
 # payload does not match it, which is what stops a site-only deploy quietly
 # removing the file every tool-less Mac needs.
-cp "$PAYLOAD" "$BUILD/html/$PY_NAME"
-printf '%s  %s\n' "$PY_SHA" "$PY_NAME" > "$BUILD/html/$PY_NAME.sha256"
+# The runtime is staged for RETENTION, not copied straight into the page tree.
+#
+# publish_site.py merges site/deploy/runtime-inventory.json into the durable
+# inventory under the publication lock, ingests any archive it does not already
+# hold into SITE/runtime-store/<sha256>.zip, and then populates the incoming
+# html/ with every retained artifact. That is what keeps 1.8.0's and 1.8.1's
+# pinned URL serving their exact bytes after a later payload ships: before
+# 1.8.2 the exchange simply took the old one off the site.
+#
+# The checksum sidecar and the published inventory are written by populate(),
+# so nothing is placed in html/ here.
+mkdir -p "$BUILD/runtime-archives"
+cp "$PAYLOAD" "$BUILD/runtime-archives/$PY_NAME"
+cp "$ROOT/site/deploy/runtime-inventory.json" "$BUILD/runtime-inventory.json"
 cp "$PIN" "$BUILD/html/python-pin.json"
+
+# The inventory has to name the artifact this ZIP's pin asks for, or the app
+# being published would advertise a runtime the site is not retaining.
+python3 - "$BUILD/runtime-inventory.json" "$PY_NAME" "$PY_SHA" <<'PYEOF' || exit 1
+import json, sys
+inv, name, sha = sys.argv[1], sys.argv[2], sys.argv[3]
+entries = {a["path"]: a for a in json.load(open(inv))["artifacts"]}
+found = entries.get(name)
+if found is None:
+    raise SystemExit(f"\u2717 runtime-inventory.json does not list {name}, which this "
+                     f"release's pin asks for. Add it before deploying.")
+if found["sha256"] != sha:
+    raise SystemExit(f"\u2717 runtime-inventory.json says {name} is {found['sha256']}, "
+                     f"but this release's pin says {sha}.")
+PYEOF
+echo "    runtime $PY_NAME staged for retention"
 cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple-touch-icon.png" \
    "$SITE/clickgraft-favicon.ico" "$BUILD/html/"
 # Keeps crawlers off the download. Cloudflare serves a managed robots.txt of its
@@ -262,6 +290,9 @@ printf '%s\n' "$(cd "$ROOT" && git rev-parse --short HEAD)" > "$BUILD/html/.buil
 echo "    site $(du -h "$BUILD/html/index.html" | cut -f1), download $(du -h "$BUILD/html/$ZIPNAME" | cut -f1)"
 
 cp "$HERE/publish_site.py" "$BUILD/publish_site.py"
+# publish_site.py imports it, so shipping one without the other leaves a site
+# that cannot publish at all.
+cp "$HERE/runtime_store.py" "$BUILD/runtime_store.py"
 # The same check the container will run, here, before anything is uploaded —
 # and through publish_site.py's own main, so a refusal is one ✗ line like every
 # other refusal in this script rather than a Python traceback mid-deploy.
