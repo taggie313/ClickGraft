@@ -597,6 +597,20 @@ def check_python_pin(files, root=ROOT, require_pin=True):
 
 
 def source_gate(root=ROOT, say=print):
+    """Build the candidate, then test THAT.
+
+    Until 1.8.2 this ran pytest first and compiled afterwards, and the
+    behavioural tests read a hardcoded dist/ClickGraft.app. The documented
+    release order builds dist/ *after* this gate, so the app under test was
+    normally the previous release: a Swift change could be checked against an
+    older executable while the structural tests read newer source, and with no
+    dist/ at all the behavioural tests skipped and a green pytest approved the
+    release (F3).
+
+    Now the candidate is built into a temporary directory first, its source
+    record is checked, and its path is handed to pytest with --release-check, so
+    a missing candidate, payload or signing identity fails instead of skipping.
+    """
     if sys.platform != 'darwin':
         raise Refused('The release gate needs macOS. The portable tests alone cannot approve a release.')
     from tests.test_clickgraft import find_stock_bundle
@@ -607,16 +621,15 @@ def source_gate(root=ROOT, say=print):
     say('  ✓ every manifest passes the patch guard')
     check_pngshim(root)
     say('  ✓ the shipped PNG shim is what pngshim.c compiles to')
-    if subprocess.run([sys.executable, '-m', 'pytest', '-q', '-rs', 'tests'], cwd=str(root)).returncode:
-        raise Refused('The tests failed. Their output is above.')
-    say('  ✓ the tests passed. Read every skipped case listed above')
+
     with tempfile.TemporaryDirectory(prefix='cg-release-build-') as folder:
         # Through its own #!/bin/bash, as a release runs it. A bash 5 earlier
         # in PATH compares mtimes to the sub-second, and on a fresh clone
         # (22 Sep 2026) that made build_app.sh regenerate the icon.
         if subprocess.run([str(root / 'packaging/build_app.sh'), folder], cwd=str(root)).returncode:
             raise Refused('build_app.sh failed. Its output is above.')
-        contents = Path(folder) / 'ClickGraft.app/Contents'
+        candidate = Path(folder) / 'ClickGraft.app'
+        contents = candidate / 'Contents'
         files = {path.relative_to(contents).as_posix(): path.read_bytes()
                  for path in contents.rglob('*') if path.is_file()}
         if RECORD not in files:
@@ -626,10 +639,23 @@ def source_gate(root=ROOT, say=print):
         if differences:
             raise Refused('The source record in the app does not match the working tree.', differences)
         count = check_payload(files, recorded, 'its source record')
+        signed = check_signed_machos(files, recorded, root)
         pinned = check_python_pin(files, root)
-    say(f'  ✓ carries the Python {pinned} pin, and no interpreter of its own')
-    say(f'  ✓ universal app built, shipping exactly its {count} recorded files. It was a '
-        'throwaway: sign a fresh build_app.sh output, not this one')
+        say(f'  ✓ universal candidate built: {count} recorded files, the Python {pinned} pin, '
+            f'and no interpreter of its own')
+        say(f'  ✓ the {signed} Mach-O the release signs is the program this tree builds')
+
+        # The candidate, explicitly. Never dist/: that is the app this release
+        # is about to replace.
+        say(f'  → testing the candidate at {candidate}')
+        run = subprocess.run(
+            [sys.executable, '-m', 'pytest', '-q', '-rs', 'tests',
+             '--clickgraft-app', str(candidate), '--release-check'],
+            cwd=str(root))
+        if run.returncode:
+            raise Refused('The tests failed against the candidate. Their output is above.')
+    say('  ✓ the tests passed against the candidate. Read every skipped case listed above')
+    say('    that build was a throwaway: sign a fresh build_app.sh output, not it')
 
 
 def _report(refused):

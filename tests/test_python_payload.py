@@ -31,14 +31,13 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SWIFT = os.path.join(ROOT, "packaging", "ClickGraft.swift")
-APP = os.path.join(ROOT, "dist", "ClickGraft.app")
-EXE = os.path.join(APP, "Contents", "MacOS", "ClickGraft")
-SHIPPED_PIN = os.path.join(APP, "Contents", "Resources", "python-pin.json")
 REPO_PIN = os.path.join(ROOT, "packaging", "python-pin.json")
 
-needs_app = pytest.mark.skipif(
-    not os.path.exists(EXE),
-    reason="needs a built app: ./packaging/build_app.sh")
+# The candidate is an input, not a constant. It arrives through the
+# clickgraft_app / clickgraft_exe / shipped_pin fixtures in conftest.py, so the
+# release gate can build a fresh app and hand this suite its path. Freezing
+# dist/ here is what let the gate test last release's executable while the
+# structural tests read this release's source (F3).
 
 
 def _swift():
@@ -72,7 +71,7 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _fetch(url, home, app=EXE, force=True, extra=None):
+def _fetch(url, home, app, force=True, extra=None):
     """Run the app's windowless fetch. Returns (returncode, output)."""
     env = dict(os.environ,
                CLICKGRAFT_PYTHON_HOME=str(home),
@@ -108,57 +107,33 @@ def _repin(app_dir, sha):
 
 # --- fixtures ---------------------------------------------------------------
 
-@pytest.fixture(scope="session")
-def payload():
-    """The archive the pin names -- the built one, not a rebuild.
-
-    It cannot be rebuilt to match: signing writes a fresh signature each time, so
-    two runs of `fetch_python.py --payload` produce two different sha256s and the
-    pin names exactly one. So this looks for the built archive where --payload
-    leaves it, and skips rather than quietly testing a different file. A
-    stand-in would be worse than a skip: a synthetic archive could not exercise
-    the signature check at all, which is the check with the least cover.
-    """
-    if sys.platform != "darwin":
-        pytest.skip("the payload is signed with a Developer ID, which needs macOS")
-    sys.path.insert(0, os.path.join(ROOT, "packaging"))
-    import fetch_python
-    built = fetch_python.payload_path()
-    if not os.path.exists(built):
-        pytest.skip(f"no built payload at {built}; "
-                    f"run python3 packaging/fetch_python.py --payload")
-    if _sha256(built) != _pin()["payload_zip_sha256"]:
-        pytest.skip(f"{built} is not the archive the pin names; rebuild and re-pin "
-                    f"with python3 packaging/fetch_python.py --payload")
-    return built
+# The `payload` fixture lives in conftest.py now, with the candidate fixtures.
+# A module-level copy shadowed it, so --clickgraft-payload was silently ignored
+# and a deliberately wrong archive still passed a release-mode run.
 
 
 @pytest.fixture
-def app_copy(tmp_path):
+def app_copy(tmp_path, clickgraft_app):
     """A throwaway copy of the built app, so a test may edit its pin."""
-    if not os.path.exists(APP):
-        pytest.skip("needs a built app: ./packaging/build_app.sh")
     dest = tmp_path / "app"
     dest.mkdir()
-    shutil.copytree(APP, dest / "ClickGraft.app", symlinks=True)
+    shutil.copytree(clickgraft_app, dest / "ClickGraft.app", symlinks=True)
     return str(dest)
 
 
 # --- what the app ships -----------------------------------------------------
 
-@needs_app
-def test_the_app_ships_the_pin_and_carries_no_interpreter():
-    assert os.path.exists(SHIPPED_PIN), "a Mac with no interpreter would have nothing to fetch"
-    bundled = os.path.join(APP, "Contents", "Frameworks", "Python.framework")
+def test_the_app_ships_the_pin_and_carries_no_interpreter(clickgraft_app, shipped_pin):
+    assert os.path.exists(shipped_pin), "a Mac with no interpreter would have nothing to fetch"
+    bundled = os.path.join(clickgraft_app, "Contents", "Frameworks", "Python.framework")
     assert not os.path.exists(bundled), \
         "built with CLICKGRAFT_BUNDLE_PYTHON=1; that build is for an estate with no internet"
 
 
-@needs_app
-def test_the_pin_in_the_app_is_the_one_in_the_repo():
+def test_the_pin_in_the_app_is_the_one_in_the_repo(shipped_pin):
     """check_payload proves this for a release. Held here too, because every
     other test in this file trusts the shipped copy."""
-    assert _sha256(SHIPPED_PIN) == _sha256(REPO_PIN)
+    assert _sha256(shipped_pin) == _sha256(REPO_PIN)
 
 
 def test_the_pin_fetches_over_https():
@@ -169,8 +144,7 @@ def test_the_pin_fetches_over_https():
 
 # --- how the interpreter is chosen -----------------------------------------
 
-@needs_app
-def test_a_mac_with_its_own_interpreter_fetches_nothing(tmp_path):
+def test_a_mac_with_its_own_interpreter_fetches_nothing(tmp_path, exe):
     """CLICKGRAFT_PYTHON_HOME is set even though this should never reach it.
 
     Without it the test passes on a developer's Mac only because
@@ -180,7 +154,7 @@ def test_a_mac_with_its_own_interpreter_fetches_nothing(tmp_path):
     must not write outside tmp_path on any machine that runs it.
     """
     run = subprocess.run(
-        [EXE, "--fetch-python"], capture_output=True, text=True, timeout=120,
+        [exe, "--fetch-python"], capture_output=True, text=True, timeout=120,
         env=dict(os.environ,
                  CLICKGRAFT_PYTHON_HOME=str(tmp_path / "never-used"),
                  CLICKGRAFT_PYTHON_PAYLOAD_URL="file:///nowhere-at-all.zip"))
@@ -232,27 +206,25 @@ def test_the_wizard_asks_before_it_starts_the_backend():
 
 # --- fetching it ------------------------------------------------------------
 
-@needs_app
-def test_it_fetches_verifies_and_installs(payload, tmp_path):
+def test_it_fetches_verifies_and_installs(payload, tmp_path, exe):
     home = tmp_path / "python"
-    code, out = _fetch(f"file://{payload}", home)
+    code, out = _fetch(f"file://{payload}", home, exe)
     assert code == 0, out
-    exe = home / _pin()["version"] / "Python.framework/Versions/Current/bin/python3"
-    assert exe.exists(), out
-    run = subprocess.run([str(exe), "-c", "import sys; print(sys.version.split()[0])"],
+    installed = home / _pin()["version"] / "Python.framework/Versions/Current/bin/python3"
+    assert installed.exists(), out
+    run = subprocess.run([str(installed), "-c", "import sys; print(sys.version.split()[0])"],
                          capture_output=True, text=True,
                          env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
     assert run.stdout.strip() == _pin()["version"], run.stderr
 
 
-@needs_app
-def test_the_fetched_interpreter_runs_the_backend(payload, tmp_path):
+def test_the_fetched_interpreter_runs_the_backend(payload, tmp_path, exe):
     """The whole point. An interpreter that installs but cannot start the
     backend has moved the failure, not fixed it."""
     home = tmp_path / "python"
-    assert _fetch(f"file://{payload}", home)[0] == 0
-    exe = home / _pin()["version"] / "Python.framework/Versions/Current/bin/python3"
-    run = subprocess.run([str(exe), "-m", "clickgraft.cli", "agent", "env"],
+    assert _fetch(f"file://{payload}", home, exe)[0] == 0
+    installed = home / _pin()["version"] / "Python.framework/Versions/Current/bin/python3"
+    run = subprocess.run([str(installed), "-m", "clickgraft.cli", "agent", "env"],
                          cwd=ROOT, capture_output=True, text=True, timeout=300,
                          env=dict(os.environ, PYTHONPATH=ROOT, PYTHONDONTWRITEBYTECODE="1"))
     assert run.returncode == 0, run.stderr
@@ -260,37 +232,34 @@ def test_the_fetched_interpreter_runs_the_backend(payload, tmp_path):
     assert any(e.get("type") == "env" for e in events), run.stdout[:400]
 
 
-@needs_app
-def test_a_second_launch_does_not_fetch_again(payload, tmp_path):
+def test_a_second_launch_does_not_fetch_again(payload, tmp_path, exe):
     home = tmp_path / "python"
-    assert _fetch(f"file://{payload}", home)[0] == 0
+    assert _fetch(f"file://{payload}", home, exe)[0] == 0
     # No --force, and a URL that would fail if it were used.
-    code, out = _fetch("file:///nowhere/at/all.zip", home, force=False)
+    code, out = _fetch("file:///nowhere/at/all.zip", home, exe, force=False)
     assert code == 0, out
     assert "nothing to fetch: fetched by ClickGraft" in out
 
 
-@needs_app
-def test_an_install_that_did_not_finish_is_not_trusted(payload, tmp_path):
+def test_an_install_that_did_not_finish_is_not_trusted(payload, tmp_path, exe):
     """The marker is written last, after the unpack, the signature and the move.
     Without it there is an interpreter on disk that no check ever passed, and
     running that is worse than fetching again."""
     home = tmp_path / "python"
-    assert _fetch(f"file://{payload}", home)[0] == 0
+    assert _fetch(f"file://{payload}", home, exe)[0] == 0
     marker = home / _pin()["version"] / ".pinned"
     assert marker.exists()
     marker.unlink()
-    code, out = _fetch("file:///nowhere/at/all.zip", home, force=False)
+    code, out = _fetch("file:///nowhere/at/all.zip", home, exe, force=False)
     assert code == 1, "it trusted an interpreter with no marker\n" + out
     assert "nothing to fetch" not in out
 
 
 # --- and every way it refuses ----------------------------------------------
 
-@needs_app
-def test_one_changed_byte_is_refused_and_nothing_is_installed(payload, tmp_path):
+def test_one_changed_byte_is_refused_and_nothing_is_installed(payload, tmp_path, exe):
     home = tmp_path / "python"
-    assert _fetch(f"file://{payload}", home)[0] == 0
+    assert _fetch(f"file://{payload}", home, exe)[0] == 0
     good = (home / _pin()["version"] / ".pinned").read_text()
 
     tampered = tmp_path / "tampered.zip"
@@ -298,7 +267,7 @@ def test_one_changed_byte_is_refused_and_nothing_is_installed(payload, tmp_path)
     data[len(data) // 2] ^= 0xFF
     tampered.write_bytes(bytes(data))
 
-    code, out = _fetch(f"file://{tampered}", home)
+    code, out = _fetch(f"file://{tampered}", home, exe)
     assert code == 1, out
     assert "isn't what this version of ClickGraft expects" in out
     assert (home / _pin()["version"] / ".pinned").read_text() == good, \
@@ -308,7 +277,6 @@ def test_one_changed_byte_is_refused_and_nothing_is_installed(payload, tmp_path)
     assert not list(home.glob(".staging-*")), "it left a half-unpacked copy behind"
 
 
-@needs_app
 def test_an_archive_with_no_interpreter_in_it_is_refused(app_copy, tmp_path):
     """Past the hash, by pinning the wrong archive. Only a release mistake could
     do that -- which is the point: it is refused rather than installed."""
@@ -320,12 +288,11 @@ def test_an_archive_with_no_interpreter_in_it_is_refused(app_copy, tmp_path):
                     str(junk / "NotPython"), str(archive)], check=True, capture_output=True)
 
     app = _repin(app_copy, _sha256(str(archive)))
-    code, out = _fetch(f"file://{archive}", tmp_path / "python", app=app)
+    code, out = _fetch(f"file://{archive}", tmp_path / "python", app)
     assert code == 1, out
     assert "did not contain an interpreter" in out
 
 
-@needs_app
 def test_a_framework_whose_seal_is_broken_is_refused(payload, app_copy, tmp_path):
     """The control for the signature check, and the reason it is not decorative.
 
@@ -347,15 +314,14 @@ def test_a_framework_whose_seal_is_broken_is_refused(payload, app_copy, tmp_path
                    check=True, capture_output=True)
 
     app = _repin(app_copy, _sha256(str(archive)))
-    code, out = _fetch(f"file://{archive}", tmp_path / "python", app=app)
+    code, out = _fetch(f"file://{archive}", tmp_path / "python", app)
     assert code == 1, out
     assert "wouldn't vouch for it" in out
 
 
-@needs_app
-def test_a_download_that_is_not_there_is_refused_in_words():
+def test_a_download_that_is_not_there_is_refused_in_words(exe, tmp_path):
     code, out = _fetch("https://clickgraft.elusive.net/there-is-no-such-payload.zip",
-                       "/tmp/never-used-because-this-fails")
+                       tmp_path / "never-used-because-this-fails", exe)
     assert code == 1, out
     assert "didn't finish" in out and "404" in out
 
@@ -422,8 +388,7 @@ def test_the_gate_accepts_the_app_this_repo_builds():
 # commit that added the test. They are controls first and regression tests
 # second: every one of them failed against a5b2ec8.
 
-@needs_app
-def test_two_fetches_at_once_still_leave_a_working_interpreter(payload, tmp_path):
+def test_two_fetches_at_once_still_leave_a_working_interpreter(payload, tmp_path, exe):
     """Two processes fetching at once shared one <version>.staging path.
 
     Measured against the a5b2ec8 build, 20 staggered double-launches: 10 installed
@@ -451,7 +416,7 @@ def test_two_fetches_at_once_still_leave_a_working_interpreter(payload, tmp_path
         def go(delay):
             if delay:
                 time.sleep(delay)
-            results.append(_fetch(url, home))
+            results.append(_fetch(url, home, exe))
 
         threads = [threading.Thread(target=go, args=(d,)) for d in (0, stagger)]
         for t in threads:
@@ -461,8 +426,8 @@ def test_two_fetches_at_once_still_leave_a_working_interpreter(payload, tmp_path
         assert len(results) == 2, "a fetch never returned"
         why = "\n".join(out for _c, out in results)
 
-        exe = home / version / "Python.framework/Versions/Current/bin/python3"
-        assert exe.exists(), (
+        installed = home / version / "Python.framework/Versions/Current/bin/python3"
+        assert installed.exists(), (
             f"stagger {stagger}s: two fetches at once left no interpreter at all\n{why}")
         seal = subprocess.run(
             ["/usr/bin/codesign", "--verify", "--strict", str(home / version / "Python.framework")],
@@ -478,8 +443,7 @@ def test_two_fetches_at_once_still_leave_a_working_interpreter(payload, tmp_path
             assert "Another copy of ClickGraft is already fetching" in why, why
 
 
-@needs_app
-def test_a_fetch_sweeps_staging_left_by_an_earlier_run(payload, tmp_path):
+def test_a_fetch_sweeps_staging_left_by_an_earlier_run(payload, tmp_path, exe):
     """Each leftover is ~49 MB.
 
     Note what this does and does not claim. A SIGKILL does not run Swift's
@@ -497,7 +461,7 @@ def test_a_fetch_sweeps_staging_left_by_an_earlier_run(payload, tmp_path):
     also = home / ".replaced-0000dead-beef-0000-0000-000000000001"
     also.mkdir()
 
-    assert _fetch(f"file://{payload}", home)[0] == 0
+    assert _fetch(f"file://{payload}", home, exe)[0] == 0
     assert not stale.exists(), "an interrupted run's staging was left to accumulate"
     assert not also.exists(), "a displaced copy was left behind"
     assert not list(home.glob(".staging-*"))
@@ -662,31 +626,18 @@ def test_the_real_pin_names_the_file_the_deploy_publishes():
 
 # --- the fetched interpreter has to be OURS, not merely intact ------------
 
-def _developer_id():
-    run = subprocess.run(["security", "find-identity", "-v", "-p", "codesigning"],
-                         capture_output=True, text=True)
-    for line in run.stdout.splitlines():
-        if "Developer ID Application" in line:
-            return line.split('"')[1]
-    return None
-
-
 @pytest.fixture
-def signed_app(tmp_path):
+def signed_app(tmp_path, clickgraft_app, developer_id):
     """A copy of the built app signed with the Developer ID.
 
     The build_app.sh output is unsigned, so it has no Team ID and trusted()
     deliberately falls back to a bare seal check -- which means the unsigned
     build cannot exercise the thing these tests are about.
     """
-    if not os.path.exists(APP):
-        pytest.skip("needs a built app: ./packaging/build_app.sh")
-    identity = _developer_id()
-    if not identity:
-        pytest.skip("no Developer ID Application identity in the keychain")
+    identity = developer_id
     dest = tmp_path / "signed"
     dest.mkdir()
-    shutil.copytree(APP, dest / "ClickGraft.app", symlinks=True)
+    shutil.copytree(clickgraft_app, dest / "ClickGraft.app", symlinks=True)
     for target in (dest / "ClickGraft.app/Contents/MacOS/ClickGraft", dest / "ClickGraft.app"):
         # --timestamp=none: signing here must not need Apple's timestamp server.
         run = subprocess.run(["/usr/bin/codesign", "--force", "--timestamp=none",
@@ -696,7 +647,6 @@ def signed_app(tmp_path):
     return str(dest / "ClickGraft.app/Contents/MacOS/ClickGraft")
 
 
-@needs_app
 def test_an_interpreter_signed_by_someone_else_is_refused(signed_app, payload, tmp_path):
     """The marker decides nothing an attacker could not decide too.
 
@@ -712,7 +662,7 @@ def test_an_interpreter_signed_by_someone_else_is_refused(signed_app, payload, t
     rather than only checking the seal.
     """
     home = tmp_path / "python"
-    assert _fetch(f"file://{payload}", home, app=signed_app)[0] == 0
+    assert _fetch(f"file://{payload}", home, signed_app)[0] == 0
     version = _pin()["version"]
     framework = home / version / "Python.framework"
 
@@ -727,12 +677,11 @@ def test_an_interpreter_signed_by_someone_else_is_refused(signed_app, payload, t
 
     # Offered the plant and a download that cannot succeed: it must go looking
     # for a real one rather than run what is there.
-    code, out = _fetch("file:///nowhere-at-all.zip", home, app=signed_app, force=False)
+    code, out = _fetch("file:///nowhere-at-all.zip", home, signed_app, force=False)
     assert code == 1, "the app ran an interpreter signed by someone else\n" + out
     assert "nothing to fetch" not in out, out
 
 
-@needs_app
 def test_the_real_interpreter_is_accepted_by_a_signed_app(signed_app, payload, tmp_path):
     """The control. A check that refuses everything is not a check -- and an
     earlier draft of this did exactly that: codesign -R reads its argument as a
@@ -740,8 +689,8 @@ def test_the_real_interpreter_is_accepted_by_a_signed_app(signed_app, payload, t
     'invalid requirement specification', including ClickGraft's own.
     """
     home = tmp_path / "python"
-    assert _fetch(f"file://{payload}", home, app=signed_app)[0] == 0
-    code, out = _fetch("file:///nowhere-at-all.zip", home, app=signed_app, force=False)
+    assert _fetch(f"file://{payload}", home, signed_app)[0] == 0
+    code, out = _fetch("file:///nowhere-at-all.zip", home, signed_app, force=False)
     assert code == 0, out
     assert "nothing to fetch: fetched by ClickGraft" in out, out
 
@@ -789,8 +738,7 @@ def test_the_install_lock_is_flock_and_never_removes_its_file():
     assert "getpid()" not in text
 
 
-@needs_app
-def test_a_second_installer_is_told_to_wait(payload, tmp_path):
+def test_a_second_installer_is_told_to_wait(payload, tmp_path, exe):
     """Deterministic, because the racing version is not.
 
     An audit built a lock that excludes nobody -- flock's return value discarded,
@@ -803,7 +751,7 @@ def test_a_second_installer_is_told_to_wait(payload, tmp_path):
     fd = os.open(str(home / ".installing"), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        code, out = _fetch(f"file://{payload}", home)
+        code, out = _fetch(f"file://{payload}", home, exe)
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
@@ -814,12 +762,11 @@ def test_a_second_installer_is_told_to_wait(payload, tmp_path):
     assert not list(home.glob(".staging-*")), "it unpacked anyway"
 
     # The control: with the lock released, the same fetch succeeds.
-    code, out = _fetch(f"file://{payload}", home)
+    code, out = _fetch(f"file://{payload}", home, exe)
     assert code == 0, out
 
 
-@needs_app
-def test_two_processes_cannot_both_hold_the_install_lock(payload, tmp_path):
+def test_two_processes_cannot_both_hold_the_install_lock(payload, tmp_path, exe):
     """A smoke test, not the guarantee -- and the distinction is the point.
 
     The old takeover raced 16 times in 400 barrier-synchronised trials, which a
@@ -843,7 +790,7 @@ def test_two_processes_cannot_both_hold_the_install_lock(payload, tmp_path):
     lock = threading.Lock()
 
     def go():
-        r = _fetch(f"file://{payload}", home)
+        r = _fetch(f"file://{payload}", home, exe)
         with lock:
             results.append(r)
 
@@ -864,8 +811,7 @@ def test_two_processes_cannot_both_hold_the_install_lock(payload, tmp_path):
     assert not list(home.glob(".staging-*")), f"staging leaked\n{why}"
 
 
-@needs_app
-def test_an_unwritable_home_does_not_say_another_copy_is_fetching(payload, tmp_path):
+def test_an_unwritable_home_does_not_say_another_copy_is_fetching(payload, tmp_path, exe):
     """Telling someone whose home is unwritable to wait for another copy is
     advice that can never come true, and every retry repeats it. The old lock
     could not tell "busy" from "could not open the lock at all"."""
@@ -873,7 +819,7 @@ def test_an_unwritable_home_does_not_say_another_copy_is_fetching(payload, tmp_p
     home.mkdir()
     home.chmod(0o500)
     try:
-        code, out = _fetch(f"file://{payload}", home)
+        code, out = _fetch(f"file://{payload}", home, exe)
     finally:
         home.chmod(0o700)
     assert code == 1, out
@@ -951,7 +897,7 @@ def test_the_deploy_looks_for_the_payload_of_the_version_it_is_publishing():
     assert fetch_python.payload_path() == fetch_python.payload_path(_pin()["version"])
 
 
-def test_running_the_interpreter_to_check_it_would_break_its_own_seal(payload, tmp_path):
+def test_running_the_interpreter_to_check_it_would_break_its_own_seal(payload, tmp_path, exe):
     """The mechanism behind the re-fetch loop 1.8.0 shipped.
 
     Toolchain.probe() runs the interpreter with `-c ""` to see whether it works.
@@ -971,10 +917,10 @@ def test_running_the_interpreter_to_check_it_would_break_its_own_seal(payload, t
     fact underneath it, in both directions.
     """
     home = tmp_path / "python"
-    assert _fetch(f"file://{payload}", home)[0] == 0
+    assert _fetch(f"file://{payload}", home, exe)[0] == 0
     version = _pin()["version"]
     framework = home / version / "Python.framework"
-    exe = framework / "Versions/Current/bin/python3"
+    installed = framework / "Versions/Current/bin/python3"
 
     def sealed():
         return subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(framework)],
@@ -983,7 +929,7 @@ def test_running_the_interpreter_to_check_it_would_break_its_own_seal(payload, t
     assert sealed(), "the freshly installed framework is already unsealed"
 
     # With the variable: what ClickGraft must do.
-    subprocess.run([str(exe), "-c", ""], capture_output=True,
+    subprocess.run([str(installed), "-c", ""], capture_output=True,
                    env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
     assert sealed(), "even with PYTHONDONTWRITEBYTECODE the framework was dirtied"
     assert (home / version / ".pinned").exists()
@@ -992,7 +938,7 @@ def test_running_the_interpreter_to_check_it_would_break_its_own_seal(payload, t
     # it, the same command breaks the seal.
     env = dict(os.environ)
     env.pop("PYTHONDONTWRITEBYTECODE", None)
-    subprocess.run([str(exe), "-c", ""], capture_output=True, env=env)
+    subprocess.run([str(installed), "-c", ""], capture_output=True, env=env)
     assert not sealed(), (
         "running the interpreter without PYTHONDONTWRITEBYTECODE no longer dirties "
         "it -- if the payload now ships a complete __pycache__, this test and the "
