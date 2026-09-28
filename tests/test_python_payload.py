@@ -949,3 +949,62 @@ def test_the_deploy_looks_for_the_payload_of_the_version_it_is_publishing():
     import fetch_python
     assert "3.13.8" in fetch_python.payload_path("3.13.8")
     assert fetch_python.payload_path() == fetch_python.payload_path(_pin()["version"])
+
+
+def test_running_the_interpreter_to_check_it_would_break_its_own_seal(payload, tmp_path):
+    """The mechanism behind the re-fetch loop 1.8.0 shipped.
+
+    Toolchain.probe() runs the interpreter with `-c ""` to see whether it works.
+    That imports `encodings`, and an interpreter allowed to write .pyc puts them
+    INSIDE the framework, which breaks its code signature -- so trusted() then
+    refuses the interpreter ClickGraft installed seconds earlier and every launch
+    fetches 17 MB again, silently.
+
+    Caught by driving the released build against the live site: the app fetched
+    an interpreter, showed Requirements (which calls probe()), and asking the
+    same app again answered "fetching".
+
+    Note what this does NOT do: --fetch-python never calls probe(), so it cannot
+    reproduce the loop end to end -- an earlier version of this test claimed to
+    and passed against the unfixed build. What binds the call sites is
+    test_every_way_the_app_runs_python_refuses_to_write_bytecode; this holds the
+    fact underneath it, in both directions.
+    """
+    home = tmp_path / "python"
+    assert _fetch(f"file://{payload}", home)[0] == 0
+    version = _pin()["version"]
+    framework = home / version / "Python.framework"
+    exe = framework / "Versions/Current/bin/python3"
+
+    def sealed():
+        return subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(framework)],
+                              capture_output=True).returncode == 0
+
+    assert sealed(), "the freshly installed framework is already unsealed"
+
+    # With the variable: what ClickGraft must do.
+    subprocess.run([str(exe), "-c", ""], capture_output=True,
+                   env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+    assert sealed(), "even with PYTHONDONTWRITEBYTECODE the framework was dirtied"
+    assert (home / version / ".pinned").exists()
+
+    # The control, so the assertion above is known to be load-bearing: without
+    # it, the same command breaks the seal.
+    env = dict(os.environ)
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    subprocess.run([str(exe), "-c", ""], capture_output=True, env=env)
+    assert not sealed(), (
+        "running the interpreter without PYTHONDONTWRITEBYTECODE no longer dirties "
+        "it -- if the payload now ships a complete __pycache__, this test and the "
+        "reason for the fix should both be revisited")
+
+
+def test_every_way_the_app_runs_python_refuses_to_write_bytecode():
+    """Agent.process had it; runPython did not, and runPython runs first."""
+    code = _swift_code()
+    for func in (r"private static func runPython\(.*?\n    \}",
+                 r"private func process\(_ args: \[String\]\) -> Process \{.*?\n    \}"):
+        body = re.search(func, code, re.S)
+        assert body, func
+        assert 'PYTHONDONTWRITEBYTECODE' in body.group(0), \
+            f"this path can dirty a signed framework: {func}"

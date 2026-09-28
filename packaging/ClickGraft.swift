@@ -771,6 +771,17 @@ enum Toolchain {
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = ["-c", ""]
         var env = ProcessInfo.processInfo.environment
+        // Even to ask "does this run?". `python3 -c ""` imports encodings, and
+        // an interpreter allowed to write .pyc puts them inside the framework
+        // -- which breaks its code signature, so trusted() then refuses the
+        // interpreter ClickGraft itself just installed and the next launch
+        // fetches 17 MB again. For ever.
+        //
+        // Found by running the shipped 1.8.0 against the live site: the app
+        // fetched an interpreter, probe() ran it one screen later, and asking
+        // the same app about it again answered "fetching". Agent.process sets
+        // this for the same reason; this path did not, and this path runs first.
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         for (k, v) in extra { env[k] = v }
         p.environment = env
         let err = Pipe()

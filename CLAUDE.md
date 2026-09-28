@@ -106,6 +106,30 @@ that report and nothing else.
 rejects anything with an arm64 slice, because that is a ClickGraft output
 rather than a build source. Without one the suite skips rather than fails.
 
+## Scratch builds
+
+`build_app.sh` output is **ad-hoc signed**. macOS calls an ad-hoc-signed app
+that carries a quarantine flag *"damaged and can't be opened"* and offers to
+move it to the Trash — indistinguishable, to the person reading it, from
+malware.
+
+On 28 Sep 2026 a day of building test copies left **29** of them in a scratch
+directory, and one produced that dialog on the maintainer's own Mac. Nothing was
+wrong with any of them; they were throwaway builds nobody had deleted.
+
+So: build a copy, use it, delete it **in the same step**. Do not leave `.app`
+bundles lying in a scratch directory at the end of a task, and strip quarantine
+from anything that picked it up:
+
+```bash
+xattr -dr com.apple.quarantine "$SCRATCH" && find "$SCRATCH" -name '*.app' -prune -exec rm -rf {} +
+```
+
+This applies to agents doing mutation testing as much as to a person at the
+keyboard — most of those 29 were made by review agents that had been told not to
+fabricate bundles, and were building the real app instead, which is not the same
+rule and not obviously covered by it.
+
 ## Checking your work
 
 `site/deploy/healthcheck.sh` prints `✗` lines and a `FAILURES ABOVE` summary.

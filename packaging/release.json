@@ -15,5 +15,5 @@
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "recommended",
-  "summary": "ClickGraft no longer needs Apple's developer tools. On a Mac that doesn't have them, it offers to fetch one small program of its own — 17 MB, once, into your own Library folder — instead of sending you to install several gigabytes behind an administrator password you may not have. If your Mac already has the tools, nothing changes: it uses those and downloads nothing. The screen that used to ask for them now says what ClickGraft actually needs, which on most Macs is nothing at all — it had been telling some Macs the tools were installed when they were not."
+  "summary": "Fixes a fault in 1.8.0: on a Mac that had fetched the small program ClickGraft needs, it fetched it again every time you opened it. Checking that the program worked was enough to make ClickGraft stop trusting it, so it downloaded another 17 MB on every launch. It now keeps the one it has. If you are already on 1.8.0, updating stops the repeated downloads; the copy you have is fine and nothing needs to be made again."
 }
