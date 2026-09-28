@@ -30,6 +30,7 @@
       Run by build_app.sh. Writes the source record into the app.
 """
 import argparse
+import platform
 import hashlib
 import json
 import os
@@ -658,6 +659,143 @@ def source_gate(root=ROOT, say=print):
     say('    that build was a throwaway: sign a fresh build_app.sh output, not it')
 
 
+def bootstrap_gate(archive, root=ROOT, say=print, evidence=None):
+    """Run the startup cases against the exact signed ZIP.
+
+    The artifact gate proves the package is the app its tag builds, signed,
+    stapled and accepted by Gatekeeper. It proves nothing about whether the
+    thing starts. The source gate now tests a candidate, but that candidate is
+    an ad-hoc-signed throwaway -- the binary that ships is a different file,
+    signed and notarised after it.
+
+    So this extracts the ZIP that is about to be published, unmodified, and
+    drives its own --check-startup against an isolated cache. Nothing here
+    edits the app: a test that needs to re-pin or re-sign belongs in the source
+    gate, and its result is not evidence for this ZIP.
+
+    The archive is hashed before and after. A run whose ZIP changed underneath
+    it is not evidence for either version.
+    """
+    archive = Path(archive)
+    before = _sha256(archive.read_bytes())
+    cases, skips = [], []
+
+    with tempfile.TemporaryDirectory(prefix='cg-bootstrap-') as folder:
+        folder = Path(folder)
+        unpacked, cache = folder / 'app', folder / 'cache'
+        unpacked.mkdir(); cache.mkdir()
+        if subprocess.run(['/usr/bin/ditto', '-x', '-k', str(archive), str(unpacked)],
+                          capture_output=True).returncode:
+            raise Refused('the release ZIP could not be expanded')
+        exe = unpacked / 'ClickGraft.app/Contents/MacOS/ClickGraft'
+        if not exe.exists():
+            raise Refused('the release ZIP holds no ClickGraft.app/Contents/MacOS/ClickGraft')
+
+        def run(name, args, env_extra, want, note):
+            env = dict(os.environ, **env_extra)
+            done = subprocess.run([str(exe), *args], env=env, capture_output=True,
+                                  text=True, timeout=900)
+            ok = done.returncode == want
+            cases.append({'id': name, 'result': 'pass' if ok else 'fail',
+                          'exit': done.returncode, 'expected': want, 'note': note})
+            return ok, done
+
+        # B1 -- a signed app with no interpreter available reports that, and
+        # does NOT fetch one behind the caller.
+        empty = cache / 'none'
+        empty.mkdir()
+        ok, done = run('B1-needs-runtime', ['--check-startup'],
+                       {'CLICKGRAFT_NO_SYSTEM_PYTHON': '1',
+                        'CLICKGRAFT_PYTHON_HOME': str(empty),
+                        'CLICKGRAFT_PYTHON_PAYLOAD_URL': 'file:///nowhere-at-all.zip'},
+                       2, 'reports needs-runtime without fetching')
+        if ok and any(empty.iterdir()):
+            cases[-1]['result'] = 'fail'
+            cases[-1]['note'] = 'it fetched a runtime without being asked'
+
+        # B2/B3 -- fetch once from the pinned archive, then start twice with the
+        # endpoint unreachable, so reuse is proved rather than assumed.
+        sys.path.insert(0, str(Path(root) / 'packaging'))
+        import fetch_python
+        built = fetch_python.payload_path()
+        pin = json.loads((Path(root) / 'packaging/python-pin.json').read_text())
+        runtime_sha = pin['payload_zip_sha256']
+        if not os.path.exists(built) or _sha256(Path(built).read_bytes()) != runtime_sha:
+            skips.append('B2/B3: the pinned runtime archive is not available locally')
+        else:
+            home = cache / 'real'
+            home.mkdir()
+            run('B2-fetch', ['--fetch-python'],
+                {'CLICKGRAFT_NO_SYSTEM_PYTHON': '1',
+                 'CLICKGRAFT_PYTHON_HOME': str(home),
+                 'CLICKGRAFT_PYTHON_PAYLOAD_URL': f'file://{built}'},
+                0, 'installs the pinned runtime')
+            for attempt in (1, 2):
+                run(f'B3-startup-{attempt}', ['--check-startup'],
+                    {'CLICKGRAFT_NO_SYSTEM_PYTHON': '1',
+                     'CLICKGRAFT_PYTHON_HOME': str(home),
+                     'CLICKGRAFT_PYTHON_PAYLOAD_URL':
+                         'https://127.0.0.1:1/unreachable.zip'},
+                    0, 'starts without fetching again')
+            framework = home / pin['version'] / 'Python.framework'
+            sealed = subprocess.run(
+                ['/usr/bin/codesign', '--verify', '--strict', str(framework)],
+                capture_output=True).returncode == 0
+            cases.append({'id': 'B4-seal-intact',
+                          'result': 'pass' if sealed else 'fail',
+                          'note': 'the runtime is still sealed after two startups'})
+
+    after = _sha256(archive.read_bytes())
+    if before != after:
+        raise Refused('the ZIP changed while it was being verified; this run is '
+                      'evidence for neither version.')
+
+    failed = [c for c in cases if c['result'] == 'fail']
+    for case in cases:
+        say(f"  {'✓' if case['result'] == 'pass' else '✗'} {case['id']}: {case['note']}")
+    for note in skips:
+        say(f'  - {note}')
+    if failed:
+        raise Refused('the signed app did not start correctly.',
+                      [f"{c['id']}: exit {c.get('exit')}, wanted {c.get('expected')}"
+                       for c in failed])
+
+    record = {'zip_sha256': before, 'runtime_sha256': runtime_sha,
+              'version': _version(_zip_contents(archive)),
+              'host': f'{platform.system()} {platform.release()} {platform.machine()}',
+              'cases': cases, 'skips': skips}
+    if evidence:
+        Path(evidence).write_text(json.dumps(record, indent=2) + '\n')
+        say(f'  ✓ bootstrap evidence written to {evidence}')
+    return record
+
+
+def check_evidence(archive, evidence, say=print):
+    """A bootstrap result is evidence for exactly one ZIP.
+
+    Deployment may verify recorded evidence instead of re-running the startup
+    cases, but only against the archive it was produced from. A version string
+    is not enough: two builds of 1.8.2 are both "1.8.2" and only one of them
+    was started.
+    """
+    archive, evidence = Path(archive), Path(evidence)
+    try:
+        record = json.loads(evidence.read_text())
+    except (OSError, ValueError):
+        raise Refused(f'{evidence} is not readable bootstrap evidence.')
+    got = _sha256(archive.read_bytes())
+    if record.get('zip_sha256') != got:
+        raise Refused(
+            'the bootstrap evidence is for a different ZIP.',
+            [f"evidence: {record.get('zip_sha256')}", f"this ZIP: {got}"])
+    failed = [c['id'] for c in record.get('cases', []) if c.get('result') != 'pass']
+    if failed or not record.get('cases'):
+        raise Refused('the recorded bootstrap run did not pass.', failed)
+    say(f"  ✓ bootstrap evidence matches this ZIP ({len(record['cases'])} cases, "
+        f"host {record.get('host', 'unrecorded')})")
+    return record
+
+
 def _report(refused):
     print(f'  ✗ {refused}', file=sys.stderr)
     for line in refused.details[:12]:
@@ -673,6 +811,10 @@ def main(argv=None):
     parser.add_argument('--allow-legacy-artifact', metavar='VERSION', default=os.environ.get(LEGACY_ENV) or None,
                         help=f'accept a ZIP of this version without a source record (also ${LEGACY_ENV})')
     parser.add_argument('--record', metavar='PATH', help='write the source record (build_app.sh does this)')
+    parser.add_argument('--bootstrap', action='store_true',
+                        help='with --artifact, also start the signed app and prove it works')
+    parser.add_argument('--evidence', metavar='PATH',
+                        help='with --bootstrap, write the machine-readable result')
     args = parser.parse_args(argv)
     # Line by line. Piped (22 Sep 2026), stdout was held back and the ✗ on
     # stderr printed above the ✓ lines that led to it.
@@ -684,6 +826,12 @@ def main(argv=None):
         elif args.artifact:
             print(f'==> checking {args.artifact} against its release tag')
             check_artifact(args.artifact, ROOT, allow_legacy=args.allow_legacy_artifact, say=print)
+            if args.bootstrap:
+                # After the artifact checks, never instead of them: this proves
+                # the signed app starts, which says nothing about whether it is
+                # the app its tag builds.
+                print('==> starting the signed app')
+                bootstrap_gate(args.artifact, ROOT, say=print, evidence=args.evidence)
             print('    ready to distribute')
         else:
             print('==> release gate: patch guard, tests and a throwaway build')

@@ -50,9 +50,15 @@ matched the source.
 8. `git tag -a vX.Y.Z` and push the tag **before** deploying: the appcast's
    release history is built from tags, reading each tag's `release.json`, and
    the gate resolves the zip's version to that tag.
-9. `python3 packaging/check_release.py --artifact dist/ClickGraft.zip` — the
-   same check `redeploy.sh` runs: version, recorded sources, payload,
-   signature, stapling, Gatekeeper.
+9. `python3 packaging/check_release.py --artifact dist/ClickGraft.zip --bootstrap
+   --evidence dist/bootstrap.json` — the checks `redeploy.sh` runs (version,
+   recorded sources, payload, signature, stapling, Gatekeeper), and then the
+   signed app is actually started: it must report `needs-runtime` without
+   fetching, install the pinned runtime once, start twice more with the
+   download endpoint unreachable, and leave the runtime sealed. The artifact
+   checks say the package is the app its tag builds; only this says it works.
+   The evidence names the ZIP's sha256, so it is evidence for that archive and
+   no other.
 10. `./site/deploy/redeploy.sh` — its healthcheck lists the GitHub release as
     "not created yet"; that is the next step, not a failure. A `✗` there is real.
 11. `gh release create vX.Y.Z dist/ClickGraft.zip` with a title of the form
@@ -63,6 +69,20 @@ its own tag, not against HEAD. Zips released before 1.6.0 carry no source
 record, so redeploying one needs
 `CLICKGRAFT_ALLOW_LEGACY_ARTIFACT=<version> ./site/deploy/redeploy.sh`,
 naming that exact version.
+
+`redeploy.sh` stages the runtime for **retention**, not straight into the page
+tree: `publish_site.py` merges `site/deploy/runtime-inventory.json` into the
+durable inventory under the publication lock, ingests anything new into
+`SITE/runtime-store/<sha256>.zip`, and then fills the incoming `html/` with
+every retained artifact. Add an entry to `runtime-inventory.json` before
+shipping a new payload — the deploy refuses if the inventory does not name the
+artifact the release's pin asks for. A registered name can never change its
+bytes; publish a revision under a new name.
+
+To roll back: `python3 publish_site.py --restore SITE/.previous-<stamp> SITE`,
+run from the **current** site directory. Never execute a `publish_site.py` from
+inside a backup — the publisher and `runtime_store.py` are current tooling and
+are deliberately not restored, because a pre-1.8.2 one would stop retaining.
 
 The interpreter is published beside the app as
 `ClickGraft-python-<python version>.zip`, with `python-pin.json` next to it so

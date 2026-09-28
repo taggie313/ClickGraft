@@ -247,6 +247,80 @@ enum Toolchain {
     }
 }
 
+/// Starting up, as one callable sequence.
+///
+/// The wizard's first screens resolve an interpreter, probe it, and ask the
+/// backend for its environment. Nothing could exercise that from outside the
+/// app: `--fetch-python` installs a runtime and stops, so it never runs
+/// probe() and never starts the backend -- which is why 1.8.0's re-fetch loop
+/// survived the suite and was found only by driving the released app against
+/// the live site.
+///
+/// So the sequence lives here, and `--check-startup` runs exactly it. It goes
+/// through Agent rather than spawning python itself, which is the point: Agent
+/// sets PYTHONPATH and PYTHONDONTWRITEBYTECODE, and a diagnostic that built its
+/// own invocation would stop reflecting the one that matters the moment those
+/// diverge.
+///
+/// It never consents to a download. With no usable interpreter it answers
+/// `needs-runtime` and stops; a caller that wants one asks for it explicitly.
+enum Startup {
+    struct Result {
+        /// ok | needs-runtime | backend-failed
+        let outcome: String
+        let source: String
+        let path: String?
+        let detail: String?
+
+        var json: String {
+            func quote(_ s: String?) -> String {
+                guard let s = s else { return "null" }
+                var out = ""
+                for c in s.unicodeScalars {
+                    switch c {
+                    case "\"": out += "\\\""
+                    case "\\": out += "\\\\"
+                    case "\n": out += "\\n"
+                    default: out.unicodeScalars.append(c)
+                    }
+                }
+                return "\"" + out + "\""
+            }
+            return "{\"outcome\": \(quote(outcome)), \"source\": \(quote(source)), "
+                 + "\"path\": \(quote(path)), \"detail\": \(quote(detail))}"
+        }
+
+        /// 0 ok, 2 no runtime (a state, not a fault), 1 anything wrong.
+        var exitCode: Int32 {
+            switch outcome {
+            case "ok": return 0
+            case "needs-runtime": return 2
+            default: return 1
+            }
+        }
+    }
+
+    static func check() -> Result {
+        Toolchain.refresh()
+        if Toolchain.needsPython {
+            return Result(outcome: "needs-runtime", source: "none", path: nil,
+                          detail: "no interpreter is available and none was fetched")
+        }
+        let resources = URL(fileURLWithPath: Bundle.main.bundlePath)
+            .appendingPathComponent("Contents/Resources")
+        let source = Toolchain.source
+        guard let answer = Agent(resources: resources).once(["env"]),
+              let env = answer["env"] as? [String: Any] else {
+            return Result(outcome: "backend-failed", source: source.name,
+                          path: source.path,
+                          detail: "the backend did not answer")
+        }
+        let silicon = env["apple_silicon"] as? Bool ?? false
+        return Result(outcome: "ok", source: source.name, path: source.path,
+                      detail: "backend answered; apple_silicon=\(silicon)")
+    }
+}
+
 final class Agent {
     let resources: URL
     init(resources: URL) { self.resources = resources }
@@ -3224,6 +3298,19 @@ final class Wizard: NSObject, NSApplicationDelegate {
 // download by the time anyone opens the app.
 //
 //   ClickGraft.app/Contents/MacOS/ClickGraft --fetch-python [--force]
+// Start up the way the wizard does, and say what happened, without a window.
+//
+//   ClickGraft.app/Contents/MacOS/ClickGraft --check-startup
+//
+// Exits 0 when the backend answered, 2 when no interpreter is available (a
+// state, not a fault -- and it does NOT fetch one), 1 otherwise. Prints one
+// JSON object so a test can read the outcome rather than parse prose.
+if CommandLine.arguments.contains("--check-startup") {
+    let result = Startup.check()
+    print(result.json)
+    exit(result.exitCode)
+}
+
 if CommandLine.arguments.contains("--fetch-python") {
     func say(_ line: String) { print(line); fflush(stdout) }
     func fail(_ line: String) {

@@ -1436,6 +1436,20 @@ Under the disclosure:
 
 > Fetching · Checking what arrived · Unpacking · Checking macOS is happy with it
 
+**Cancel** *(1.8.2)*. The button is there throughout. Pressing it does not
+return to the offer straight away, because the work may be inside a `ditto` or
+a signature check that cannot be interrupted — and offering Fetch again while
+the previous attempt still held its files is how a cancelled attempt used to
+install anyway. The bar stays, the button goes, and the line becomes:
+
+> Stopping… Finishing the current step.
+
+and the offer returns only once cleanup is done. If the install has already
+begun replacing the interpreter, cancelling is refused and the line says so
+instead of claiming something untrue:
+
+> Finishing the last step. This one can't be stopped now.
+
 Then straight on to "What ClickGraft needs" with no further click: the person
 asked for one thing and it happened, so stopping to say "done" would be a step
 that reports itself.
