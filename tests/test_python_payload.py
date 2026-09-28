@@ -30,7 +30,13 @@ import sys
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SWIFT = os.path.join(ROOT, "packaging", "ClickGraft.swift")
+# Both Swift sources the app is built from. PythonPayload moved into its own
+# file in 1.8.2 so the installer could be compiled into a test harness; a
+# source-text assertion has to follow it, or it silently stops reading the code
+# it names.
+SWIFT_FILES = [os.path.join(ROOT, "packaging", "ClickGraft.swift"),
+               os.path.join(ROOT, "packaging", "PythonPayload.swift")]
+SWIFT = SWIFT_FILES[0]
 REPO_PIN = os.path.join(ROOT, "packaging", "python-pin.json")
 
 # The candidate is an input, not a constant. It arrives through the
@@ -41,8 +47,12 @@ REPO_PIN = os.path.join(ROOT, "packaging", "python-pin.json")
 
 
 def _swift():
-    with open(SWIFT, encoding="utf-8") as f:
-        return f.read()
+    """Every Swift source the app is compiled from, concatenated."""
+    out = []
+    for path in SWIFT_FILES:
+        with open(path, encoding="utf-8") as f:
+            out.append(f.read())
+    return "\n".join(out)
 
 
 def _swift_code():
@@ -830,18 +840,56 @@ def test_an_unwritable_home_does_not_say_another_copy_is_fetching(payload, tmp_p
     assert "can't write to" in out, out
 
 
-def test_cancel_stops_the_install_and_not_only_the_download():
-    """cancel() used to touch the download task alone. accept() runs
-    synchronously in the delegate callback and consulted nothing, so Cancel
-    during "Unpacking" still installed 49 MB and wrote .pinned for a fetch the
-    person had backed out of -- while the button's comment said otherwise."""
+def test_cancellation_belongs_to_one_attempt():
+    """F1. Cancellation used to be a process-global Boolean that install() reset.
+
+    A cancelled attempt could still be inside ditto or codesign; pressing Fetch
+    again set that shared flag false, and the cancelled attempt's next check saw
+    the NEW attempt's value and carried on to install and write .pinned. A
+    review reproduced it by compiling this installer into a harness:
+
+        cancel-only: ORIGINAL: cancelled              MARKER: false
+        retry:       ORIGINAL: installed after cancel MARKER: true
+
+    The behaviour is now owned by an Operation, and tests/swift/ drives it
+    deterministically. This holds the shape so the global cannot come back.
+    """
+    code = _swift_code()
+    assert "private static var cancelling" not in code, \
+        "the process-global cancellation flag is back"
+    assert "setCancelling" not in code
+
+    body = re.search(r"static func accept\(.*?\n    \}", code, re.S)
+    assert body, "accept() is gone"
+    assert "operation: Operation" in body.group(0), \
+        "accept does not take the attempt it belongs to"
+    assert "operation.isCancelled" in body.group(0)
+    assert "operation.admitCommit()" in body.group(0), \
+        "nothing arbitrates cancel against commit"
+
+    # cancel() must not hand ownership away: the worker still holds the lock
+    # and its staging directory, and clearing `running` here is what let a
+    # retry start a second worker against the first one's files.
+    cancel = re.search(r"static func cancel\(\) -> Bool \{.*?\n    \}", code, re.S)
+    assert cancel, "cancel() is gone"
+    assert "running = nil" not in cancel.group(0), \
+        "cancel() releases ownership before the worker has cleaned up"
+    assert "finishedStopping" in code
+
+
+def test_the_marker_is_prepared_in_staging_not_written_after_the_move():
+    """A marker inside staging is never a usable installation; it becomes one
+    only in the same rename that publishes the interpreter. Writing it after
+    the move left an ordering where the destination existed without one."""
     code = _swift_code()
     body = re.search(r"static func accept\(.*?\n    \}", code, re.S)
     assert body, "accept() is gone"
-    assert body.group(0).count("isCancelling") >= 2, \
-        "accept() does not give up when the fetch was cancelled"
-    cancel = re.search(r"static func cancel\(\) \{.*?\n    \}", code, re.S)
-    assert cancel and "setCancelling(true)" in cancel.group(0)
+    text = body.group(0)
+    prepare = text.index('staging + "/.pinned"')
+    admit = text.index("operation.admitCommit()")
+    assert prepare < admit, "the marker is prepared after commit is admitted"
+    assert 'dir + "/.pinned", atomically' not in text, \
+        "the marker is written to the destination after the move again"
 
 
 def test_the_fetchers_settled_flag_is_not_shared_across_queues_unguarded():

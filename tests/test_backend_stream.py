@@ -63,7 +63,12 @@ def bridge(tmp_path_factory):
     main = folder / "main.swift"
     main.write_text(production + HARNESS)
     binary = folder / "bridge"
+    # PythonPayload.swift too: Toolchain resolves the interpreter through it, and
+    # it moved out of ClickGraft.swift in 1.8.2 so the installer could be
+    # compiled into a test harness of its own. Slicing one file stopped being
+    # enough the moment there were two.
     subprocess.run(["swiftc", "-O", str(main), str(ROOT / "packaging/BackendTransport.swift"),
+                    str(ROOT / "packaging/PythonPayload.swift"),
                     "-o", str(binary), "-module-cache-path", str(folder / "cache")],
                    check=True, capture_output=True, text=True, timeout=300)
     resources = folder / "resources"

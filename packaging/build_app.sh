@@ -50,7 +50,8 @@ cp "$HERE/ClickGraft.swift" "$TMPB/main.swift"
 # fresh cache cannot hold modules another toolchain left behind.
 for arch in arm64 x86_64; do
   swiftc -O -target "${arch}-apple-macos12.0" -module-cache-path "$TMPB/module-cache-$arch" \
-         -o "$TMPB/ClickGraft-$arch" "$TMPB/main.swift" "$HERE/BackendTransport.swift" -framework AppKit
+         -o "$TMPB/ClickGraft-$arch" "$TMPB/main.swift" "$HERE/BackendTransport.swift" \
+         "$HERE/PythonPayload.swift" -framework AppKit
 done
 lipo -create -output "$APP/Contents/MacOS/ClickGraft" \
      "$TMPB/ClickGraft-arm64" "$TMPB/ClickGraft-x86_64"
