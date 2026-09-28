@@ -114,9 +114,18 @@ def _sha256(path):
     return digest.hexdigest()
 
 
-def validate(html):
+def validate(html, staged_runtimes=None):
     """Refuse a tree that would serve a broken page or a download that does not
-    match its appcast. Runs before anything served changes."""
+    match its appcast. Runs before anything served changes.
+
+    `staged_runtimes` names a directory of runtime archives that retention has
+    not yet copied into this tree -- redeploy.sh's pre-upload check, where the
+    pinned interpreter legitimately still sits in the staging area. The pin is
+    checked against the bytes THERE instead, so the check keeps its whole
+    strength before an upload; it is not relaxed, only pointed at where the
+    file actually is at that moment. Publication itself always calls this with
+    no staging area, against the tree that becomes live.
+    """
     html = Path(html)
     appcast = html / 'appcast.json'
     try:
@@ -166,6 +175,12 @@ def validate(html):
         raise ValueError(f'{pin_path.name} is not a pin naming a version and '
                          f'a payload_zip_sha256') from None
     payload = html / f'ClickGraft-python-{python_version}.zip'
+    if not payload.is_file() and staged_runtimes is not None:
+        # Retention has not run yet, so look where redeploy.sh staged it. Same
+        # bytes, same pin, one step earlier.
+        waiting = Path(staged_runtimes) / payload.name
+        if waiting.is_file():
+            payload = waiting
     if not payload.is_file():
         raise ValueError(f'{payload.name} is missing. Every ClickGraft from 1.8.0 on a '
                          f'Mac with no developer tools fetches it, and publishing '
@@ -570,6 +585,9 @@ def main(argv=None):
     parser.add_argument('--restore', action='store_true', help='RELEASE is a kept .previous-* copy to put back')
     parser.add_argument('--check', action='store_true',
                         help='RELEASE is a staged html/ tree: check it, change nothing, take no SITE')
+    parser.add_argument('--staged-runtimes', metavar='DIR',
+                        help='with --check: the directory holding runtime archives that '
+                             'retention has not copied into the tree yet')
     parser.add_argument('release', metavar='RELEASE',
                         help='SITE/.incoming-ID to publish, SITE/.previous-* with --restore, '
                              'or a staged html/ tree with --check')
@@ -578,6 +596,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.check and args.restore:
         parser.error('--check and --restore do different jobs; use one')
+    if args.staged_runtimes and not args.check:
+        # Publication and --restore validate the tree that becomes live, where
+        # the interpreter has to be present for real. Accepting a staging area
+        # there would let a tree go live without it.
+        parser.error('--staged-runtimes only means anything with --check')
     if not args.check and args.site is None:
         parser.error('SITE is required')
     if hasattr(sys.stdout, 'reconfigure'):
@@ -592,7 +615,7 @@ def main(argv=None):
             # runs this mid-deploy, and a refusal there has to read like every
             # other line it prints. Until this existed, an appcast that did not
             # match its ZIP ended the deploy with a Python traceback.
-            validate(args.release)
+            validate(args.release, staged_runtimes=args.staged_runtimes)
             say('✓ the staged site is complete, and its download matches its appcast')
         else:
             (restore if args.restore else publish)(args.release, args.site, say)

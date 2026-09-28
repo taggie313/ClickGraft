@@ -5,12 +5,14 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'site/deploy/publish_site.py'
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / 'site/deploy/publish_site.py'
 spec = importlib.util.spec_from_file_location('publish_site', SCRIPT)
 publish = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publish)
@@ -442,6 +444,82 @@ def _staged_with_runtime(root, name, version, runtimes, tmp):
          "payload_zip_sha256": advertised["sha256"],
          "payload_url": "https://clickgraft.elusive.net/" + advertised["path"]}))
     return folder
+
+
+def test_check_accepts_a_tree_whose_runtime_is_still_staged_for_retention(tmp_path):
+    """redeploy.sh checks the staged tree BEFORE uploading it, and since 1.8.2
+    the pinned interpreter is not in html/ at that moment -- it sits in
+    runtime-archives/ until publication populates the incoming tree under the
+    deploy lock. 1.8.2's own deploy failed here: validate() refused every tree
+    the new staging shape produces, after notarisation and after the tag.
+
+    The suite had a --check test and a retention test and both passed, because
+    the --check one used the pre-1.8.2 tree shape. So this asserts the two
+    shapes meet: the tree redeploy.sh really builds, through the command it
+    really runs.
+    """
+    entry, src = _runtime(tmp_path, "ClickGraft-python-3.13.9.zip", b"the real interpreter")
+    build = _staged_with_runtime(tmp_path, ".incoming-staged", "1.8.2",
+                                 [(entry, src)], tmp_path)
+    assert not list((build / "html").glob("ClickGraft-python-*.zip")), \
+        "the point of this test is a tree whose html/ has no interpreter yet"
+
+    passed = run_script('--check', build / 'html',
+                        '--staged-runtimes', build / 'runtime-archives')
+    assert passed.returncode == 0, passed.stderr
+    assert passed.stdout.startswith('✓ the staged site is complete')
+
+    # Without being told where retention staged it, the same tree is refused --
+    # which is what publication and --restore must keep doing, because there the
+    # file really does have to be in the tree that goes live.
+    blind = run_script('--check', build / 'html')
+    assert blind.returncode == 1 and 'is missing' in blind.stderr
+
+    # The check keeps its full strength against the staging area: wrong bytes
+    # there are refused exactly as wrong bytes in html/ would be.
+    (build / 'runtime-archives' / entry['path']).write_bytes(b'not the pinned interpreter')
+    wrong = run_script('--check', build / 'html',
+                       '--staged-runtimes', build / 'runtime-archives')
+    assert wrong.returncode == 1 and 'does not match the sha256' in wrong.stderr
+
+    # And an absent archive is still an absent archive.
+    (build / 'runtime-archives' / entry['path']).unlink()
+    gone = run_script('--check', build / 'html',
+                      '--staged-runtimes', build / 'runtime-archives')
+    assert gone.returncode == 1 and 'is missing' in gone.stderr
+
+
+def test_staged_runtimes_is_refused_outside_check(tmp_path):
+    """A staging area is not a substitute for the file being in the tree that
+    goes live. Allowing the flag on a real publish would publish without it."""
+    build = _staged_with_runtime(
+        tmp_path, ".incoming-nope", "1.8.2",
+        [_runtime(tmp_path, "ClickGraft-python-3.13.9.zip", b"x")], tmp_path)
+    for extra in ((), ('--restore',)):
+        refused = run_script(*extra, build, tmp_path,
+                             '--staged-runtimes', build / 'runtime-archives')
+        assert refused.returncode == 2, refused.stderr
+        assert 'only means anything with --check' in refused.stderr
+    assert not (tmp_path / 'html').exists()
+
+
+def test_redeploy_checks_the_directory_it_actually_stages_the_runtime_into():
+    """The two halves of the deploy's pre-upload check must name one directory.
+
+    The test above fixes the staging shape in Python, so it would keep passing
+    if redeploy.sh moved the archives somewhere else -- and the deploy would
+    break again in the same place, after notarisation. This asserts the
+    relationship instead of either half's spelling: where the payload is copied,
+    and where --check is told to look, are compared to each other.
+    """
+    deploy = (ROOT / 'site/deploy/redeploy.sh').read_text()
+    staged_into = re.findall(r'cp "\$PAYLOAD" "\$BUILD/([^/"]+)/', deploy)
+    checked_in = re.findall(r'--staged-runtimes "\$BUILD/([^"]+)"', deploy)
+    assert len(staged_into) == 1, f'expected one payload copy, found {staged_into}'
+    assert len(checked_in) == 1, f'expected one --staged-runtimes, found {checked_in}'
+    assert staged_into == checked_in, (
+        f'redeploy.sh stages the interpreter into {staged_into[0]}/ but tells '
+        f'--check to look in {checked_in[0]}/, so the check refuses every tree')
 
 
 def test_r1_a_later_release_does_not_take_the_earlier_runtime_off_the_site(tmp_path):

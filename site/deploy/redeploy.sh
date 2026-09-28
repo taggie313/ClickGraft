@@ -296,7 +296,14 @@ cp "$HERE/runtime_store.py" "$BUILD/runtime_store.py"
 # The same check the container will run, here, before anything is uploaded —
 # and through publish_site.py's own main, so a refusal is one ✗ line like every
 # other refusal in this script rather than a Python traceback mid-deploy.
-python3 "$HERE/publish_site.py" --check "$BUILD/html"
+#
+# --staged-runtimes because retention has not run yet: since 1.8.2 the pinned
+# interpreter is staged in runtime-archives/ and only reaches html/ when
+# publish_site.py populates the incoming tree under the deploy lock. The pin is
+# still checked against its real bytes here, one directory over. Without it this
+# check refused every 1.8.2-shaped tree, which is how 1.8.2's own deploy failed.
+python3 "$HERE/publish_site.py" --check "$BUILD/html" \
+        --staged-runtimes "$BUILD/runtime-archives"
 
 echo "==> rsync to ${PVE_HOST}:${STAGE}"
 STAGED=1
