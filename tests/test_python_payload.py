@@ -17,6 +17,7 @@ The GUI cannot be driven from a test, so the app has one windowless command,
 Target: Python 3.9+
 """
 
+import fcntl
 import hashlib
 import json
 import os
@@ -158,10 +159,23 @@ def test_the_pin_fetches_over_https():
 # --- how the interpreter is chosen -----------------------------------------
 
 @needs_app
-def test_a_mac_with_its_own_interpreter_fetches_nothing():
-    run = subprocess.run([EXE, "--fetch-python"], capture_output=True, text=True, timeout=120)
+def test_a_mac_with_its_own_interpreter_fetches_nothing(tmp_path):
+    """CLICKGRAFT_PYTHON_HOME is set even though this should never reach it.
+
+    Without it the test passes on a developer's Mac only because
+    /usr/bin/python3 works there; on a Mac with no developer tools -- the ones
+    this feature exists for -- it would drive a real 17 MB download from the live
+    payload_url into the real ~/Library/Application Support/ClickGraft. A test
+    must not write outside tmp_path on any machine that runs it.
+    """
+    run = subprocess.run(
+        [EXE, "--fetch-python"], capture_output=True, text=True, timeout=120,
+        env=dict(os.environ,
+                 CLICKGRAFT_PYTHON_HOME=str(tmp_path / "never-used"),
+                 CLICKGRAFT_PYTHON_PAYLOAD_URL="file:///nowhere-at-all.zip"))
     assert run.returncode == 0, run.stderr
     assert "nothing to fetch" in run.stdout
+    assert not (tmp_path / "never-used").exists(), "it fetched when it should not have"
 
 
 def test_the_shim_is_never_run_blind_to_find_out():
@@ -176,7 +190,12 @@ def test_the_shim_is_never_run_blind_to_find_out():
     guard = text.index("isExecutableFile")
     spawn = text.index("runPython")
     assert guard < spawn, "it spawns the shim before checking anything is behind it"
-    assert "return false" in text[:spawn]
+    # The guard has to BAIL, not merely appear. systemPythonWorks opens with an
+    # unrelated `return false` for the test override, which satisfied a plain
+    # `"return false" in text[:spawn]` however the guard was written -- so
+    # turning it into a no-op `if` left this passing.
+    assert re.search(r"guard dirs\.contains\(where:.*?\)\s*\n\s*else \{ return false \}",
+                     text, re.S), "the filesystem guard does not bail before the spawn"
 
 
 def test_the_wizard_asks_before_it_starts_the_backend():
@@ -191,7 +210,12 @@ def test_the_wizard_asks_before_it_starts_the_backend():
     # test failed on its own explanation.
     text = "\n".join(line for line in body.group(1).splitlines()
                      if not line.strip().startswith("//"))
-    assert "Toolchain.needsPython" in text
+    # The RETURN is the point, not the order. Deleting it left the assertion
+    # satisfied -- and the fall-through reaches Toolchain.state, which runs
+    # /usr/bin/python3 and raises Apple's install prompt: the one harm this
+    # whole feature exists to avoid.
+    assert re.search(r"if Toolchain\.needsPython \{\s*\n\s*showNeedPython\(\)\s*\n\s*return\s*\n\s*\}",
+                     text), "the fetch offer does not stop the screen from continuing"
     assert text.index("Toolchain.needsPython") < text.index("Toolchain.state")
 
 
@@ -268,7 +292,9 @@ def test_one_changed_byte_is_refused_and_nothing_is_installed(payload, tmp_path)
     assert "isn't what this version of ClickGraft expects" in out
     assert (home / _pin()["version"] / ".pinned").read_text() == good, \
         "a refused download damaged the interpreter that was already there"
-    assert not list(home.glob("*.staging")), "it left a half-unpacked copy behind"
+    # .staging-<uuid>, not *.staging: pathlib's * does not match a leading dot,
+    # so the old pattern could never match anything this code creates.
+    assert not list(home.glob(".staging-*")), "it left a half-unpacked copy behind"
 
 
 @needs_app
@@ -484,6 +510,11 @@ def test_the_replace_never_leaves_the_destination_empty():
     text = body.group(0)
     assert "removeItem(atPath: dir)" not in text, \
         "the destination is removed before the replacement is in place"
+    # Per-run staging. a5b2ec8 used one shared `dir + ".staging"` for every
+    # process; an audit restored that name and the whole file stayed green, so
+    # nothing covered the uniqueness the concurrency test's docstring is about.
+    assert 'UUID().uuidString' in text, "staging is shared between processes again"
+    assert 'dir + ".staging"' not in text
     aside = text.index('moveItem(atPath: dir, toPath: previous)')
     install = text.index('moveItem(atPath: staging, toPath: dir)')
     assert aside < install, "the old copy must be moved aside before the new one moves in"
@@ -570,11 +601,33 @@ def test_the_no_interpreter_refusal_runs_for_every_version():
 ])
 def test_a_short_version_is_padded_not_ranked_low(version, expected):
     """(1, 8) < (1, 8, 0) is True, so a release numbered "1.8" was treated as
-    predating the pin added for it -- while healthcheck.sh's own cutoff read the
-    same 1.8 as needing it. Two mechanisms for one boundary, disagreeing."""
+    predating the pin added for it.
+
+    Pointed at site/deploy/publish_site.py, which is where that cutoff actually
+    lives. An earlier version of this test pinned check_release.py's copy, which
+    had already stopped being called -- the gate asks the tag instead -- so the
+    test was holding dead code upright while the two live copies of the boundary
+    had none.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ps_version", os.path.join(ROOT, "site", "deploy", "publish_site.py"))
+    publish = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(publish)
+    assert publish._version_tuple(version) == expected
+    assert publish._version_tuple("1.8") >= publish.PYTHON_PIN_FROM
+
+
+def test_the_gate_decides_by_the_tag_and_not_by_the_version_number():
+    """A 1.7.1 cut from a tree that has a pin ships an app that fetches. Keying
+    on "is this below 1.8.0" would skip the only check that makes that safe."""
     gate = _gate()
-    assert gate._version_tuple(version) == expected
-    assert gate._predates_python_pin("1.8") is False
+    assert not hasattr(gate, "_predates_python_pin"), \
+        "the version cutoff is back; check_artifact should ask the tag"
+    source = open(os.path.join(ROOT, "packaging", "check_release.py"), encoding="utf-8").read()
+    body = re.search(r"def check_artifact\(.*?\n\ndef ", source, re.S)
+    assert body, "check_artifact is gone"
+    assert "'packaging/python-pin.json' in expected" in body.group(0)
 
 
 def test_the_pin_must_name_the_file_the_deploy_publishes():
@@ -709,12 +762,49 @@ def test_the_install_lock_is_flock_and_never_removes_its_file():
     body = re.search(r"final class Lock \{.*?\n    \}", code, re.S)
     assert body, "Lock is gone"
     text = body.group(0)
-    assert "flock(" in text, "the lock is not flock-based"
-    assert "LOCK_EX" in text and "LOCK_NB" in text
-    # The things that made the old one racy.
+
+    # The RESULT of flock has to decide whether the lock is held. An audit built
+    # `_ = flock(fd, LOCK_EX | LOCK_NB); if true { taken = true }` -- a lock that
+    # excludes nobody -- and the first version of this test passed, because it
+    # only asked whether the words appeared.
+    assert re.search(r"if flock\(fd, LOCK_EX \| LOCK_NB\) == 0 \{\s*\n\s*taken = true",
+                     text), "taken is not set from flock's return value"
+    assert text.count("taken = true") == 1, \
+        "taken is set somewhere other than the flock branch"
+
+    # And the machinery that made the O_EXCL version racy stays gone.
     assert "removeItem" not in text, "removing the lock file reintroduces the race"
     assert "kill(" not in text, "pid liveness is a takeover heuristic flock does not need"
     assert "getpid()" not in text
+
+
+@needs_app
+def test_a_second_installer_is_told_to_wait(payload, tmp_path):
+    """Deterministic, because the racing version is not.
+
+    An audit built a lock that excludes nobody -- flock's return value discarded,
+    so every process believes it holds it -- and the racing test below passed,
+    because two clean installs in sequence satisfy every assertion it makes. This
+    one takes the lock from Python first, so the app MUST be refused.
+    """
+    home = tmp_path / "python"
+    home.mkdir()
+    fd = os.open(str(home / ".installing"), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        code, out = _fetch(f"file://{payload}", home)
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+    assert code == 1, "the app installed while another process held the lock\n" + out
+    assert "Another copy of ClickGraft is already fetching" in out, out
+    assert not (home / _pin()["version"]).exists(), "it installed anyway"
+    assert not list(home.glob(".staging-*")), "it unpacked anyway"
+
+    # The control: with the lock released, the same fetch succeeds.
+    code, out = _fetch(f"file://{payload}", home)
+    assert code == 0, out
 
 
 @needs_app
@@ -777,7 +867,10 @@ def test_an_unwritable_home_does_not_say_another_copy_is_fetching(payload, tmp_p
         home.chmod(0o700)
     assert code == 1, out
     assert "Another copy of ClickGraft is already fetching" not in out, out
-    assert "can't write to" in out or "Permission denied" in out, out
+    # The app's own sentence, not any downstream permission error: strerror puts
+    # "Permission denied" into this same line, so the `or` arm that used to be
+    # here was satisfied by ditto failing for unrelated reasons.
+    assert "can't write to" in out, out
 
 
 def test_cancel_stops_the_install_and_not_only_the_download():
@@ -801,8 +894,15 @@ def test_the_fetchers_settled_flag_is_not_shared_across_queues_unguarded():
     code = _swift_code()
     body = re.search(r"private final class Fetcher.*?\n    \}\n\}", code, re.S)
     assert body, "Fetcher is gone"
-    assert "claimSettle()" in body.group(0), "settle() is not a single atomic claim"
-    assert "NSLock" in body.group(0)
+    text = body.group(0)
+    # The LOCK inside claimSettle is what makes it a single claim. Deleting it
+    # left the old assertion passing, because `gate` is still declared NSLock
+    # and the accessors still use it.
+    assert re.search(r"private func claimSettle\(\) -> Bool \{\s*\n\s*gate\.lock\(\);"
+                     r" defer \{ gate\.unlock\(\) \}", text), \
+        "claimSettle does not claim under the lock"
+    assert "guard claimSettle() else { return }" in text, \
+        "settle() does not go through the atomic claim"
 
 
 def test_robots_keeps_crawlers_off_the_download_people_actually_get():

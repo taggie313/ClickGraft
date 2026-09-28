@@ -344,3 +344,55 @@ def test_a_tree_without_a_pin_still_has_its_alias_and_pages_checked(tmp_path):
     (html / 'index.html').write_text('ClickGraft {{VERSION}}')
     with pytest.raises(ValueError, match='placeholder'):
         publish.validate(html)
+
+
+# --- the checks that keep the interpreter on the live site ----------------
+# Every staged() tree above advertises a ClickGraft version of '0'..'12', all of
+# which read as older than 1.8.0, so all of them run in the pre-pin regime the
+# live site is never in. An audit deleted publish_site's missing-payload refusal
+# outright and this file stayed green. These stage a 1.8.0 tree so the checks
+# that matter are actually reached.
+
+def test_a_modern_tree_must_carry_the_interpreter(tmp_path):
+    """The code's own comment says a tree that merely left the file out would
+    REMOVE it from the live site and stop every Mac without Apple's developer
+    tools from starting ClickGraft. That check had no test."""
+    folder = staged(tmp_path, '.incoming-modern', '1.8.0')
+    html = folder / 'html'
+    publish.validate(html)                       # the control: it passes as staged
+
+    (html / f'ClickGraft-python-{PYTHON_VERSION}.zip').unlink()
+    with pytest.raises(ValueError, match='is missing'):
+        publish.validate(html)
+
+
+def test_a_modern_tree_must_carry_the_pin(tmp_path):
+    folder = staged(tmp_path, '.incoming-nopin18', '1.8.0')
+    html = folder / 'html'
+    (html / 'python-pin.json').unlink()
+    with pytest.raises(ValueError, match='not a pin'):
+        publish.validate(html)
+
+
+def test_an_interpreter_that_does_not_match_its_pin_is_refused(tmp_path):
+    """A payload whose bytes have drifted from the pin is worse than none: every
+    app that checks it refuses it, and only the user ever finds out."""
+    folder = staged(tmp_path, '.incoming-drift', '1.8.0')
+    html = folder / 'html'
+    (html / f'ClickGraft-python-{PYTHON_VERSION}.zip').write_bytes(b'different bytes')
+    with pytest.raises(ValueError, match='does not match the sha256'):
+        publish.validate(html)
+
+
+def test_the_version_cutoff_is_the_one_that_decides(tmp_path):
+    """1.7.0 does not need an interpreter; 1.8.0 does. Both halves, because a
+    cutoff that answers the same way for everything is not a cutoff."""
+    assert publish._version_tuple('1.8') == (1, 8, 0), "a short version must pad, not rank low"
+    assert publish._version_tuple('1.7.0') < publish.PYTHON_PIN_FROM
+    assert publish._version_tuple('1.8.0') >= publish.PYTHON_PIN_FROM
+    assert publish._version_tuple('1.8') >= publish.PYTHON_PIN_FROM
+
+    old = staged(tmp_path, '.incoming-old', '1.7.0')
+    (old / 'html' / 'python-pin.json').unlink()
+    (old / 'html' / f'ClickGraft-python-{PYTHON_VERSION}.zip').unlink()
+    publish.validate(old / 'html')               # fine: 1.7.0 fetches nothing

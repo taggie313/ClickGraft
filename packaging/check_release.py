@@ -83,8 +83,13 @@ BUILT_FROM = ('packaging/build_app.sh', 'packaging/fetch_python.py')
 # so that refusal is one line rather than four thousand.
 PYTHON_PREFIX = 'Frameworks/Python.framework/'
 
-# The release that first shipped the pin, and stopped needing Apple's tools.
-PYTHON_PIN_FROM = (1, 8, 0)
+# Whether a release needs a pin is NOT decided here by its number. check_artifact
+# asks whether the tag committed packaging/python-pin.json, which is the real
+# question and gets a 1.7.1 cut from a tree that has one right. A version cutoff
+# lived here until that change and then sat unused for a commit, with a test
+# pinning it -- dead code a test makes look live. site/deploy/publish_site.py and
+# site/deploy/healthcheck.sh still key on the version, because neither has a tag
+# to ask; they are floors and say so.
 
 
 class Refused(Exception):
@@ -268,37 +273,6 @@ def _version(files):
         raise Refused(f"The ZIP's Info.plist gives no single version: "
                       f'CFBundleShortVersionString {short!r}, CFBundleVersion {full!r}.')
     return short
-
-
-def _version_tuple(version):
-    """(major, minor, patch), padding a short version rather than ranking it low.
-
-    '1.8' used to compare as (1, 8) < (1, 8, 0), so a release numbered 1.8 was
-    treated as predating the pin and shipped past the check added for it --
-    while site/deploy/healthcheck.sh's own cutoff read the same 1.8 as needing
-    it. Two mechanisms for one boundary, disagreeing. Padded here; the awk in
-    healthcheck.sh compares major/minor only, which agrees for every form.
-    """
-    parts = []
-    for part in version.split('.')[:3]:
-        try:
-            parts.append(int(part))
-        except ValueError:
-            parts.append(0)
-    while len(parts) < 3:
-        parts.append(0)
-    return tuple(parts)
-
-
-def _predates_python_pin(version):
-    """Whether a ZIP of this version can legitimately carry no Python pin.
-
-    ClickGraft started shipping one in 1.8.0. Before that it ran on
-    /usr/bin/python3 and required Apple's Command Line Tools, so demanding a pin
-    from a 1.7.0 ZIP would refuse a release that was correct when it was made --
-    the same reason _predates_records exists.
-    """
-    return _version_tuple(version) < PYTHON_PIN_FROM
 
 
 def _predates_records(version):
