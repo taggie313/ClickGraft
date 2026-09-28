@@ -76,7 +76,12 @@ echo "    profile '$PROFILE' found"
 echo "--> removing stale signatures and metadata"
 /usr/bin/xattr -cr "$APP"
 find "$APP" -name '.DS_Store' -delete 2>/dev/null || true
-find "$APP" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+# Not inside the bundled Python: its __pycache__ IS the stdlib, precompiled.
+# Deleting it would make the interpreter recompile every module on every launch
+# -- it cannot write .pyc back into a signed bundle -- and would change the
+# framework from the one packaging/python-pin.json names.
+find "$APP" -name '__pycache__' -type d \
+     ! -path "*/Python.framework/*" -exec rm -rf {} + 2>/dev/null || true
 
 echo "--> signing (inner to outer)"
 # Sign any nested Mach-O first, then the bundle itself. --deep is deprecated

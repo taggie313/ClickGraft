@@ -72,6 +72,43 @@ def check_clt():
     return True
 
 
+# macOS ships its trust store as a PEM bundle here as well as in the keychain:
+# root-owned, 333 KB on macOS 27. Having one means a bundled Python needs no
+# vendored certifi.
+SYSTEM_CA_BUNDLE = "/etc/ssl/cert.pem"
+
+
+def https_context():
+    """An SSL context that can actually verify, whichever Python this is.
+
+    Apple's /usr/bin/python3 is built against the system OpenSSL and finds a
+    trust store by itself. A Python.framework bundled inside ClickGraft.app is
+    not, and loads NO certificates at all: every HTTPS download then fails with
+    CERTIFICATE_VERIFY_FAILED. Measured 28 September 2026 against ftp.hp.com
+    with a trimmed python.org 3.13.9 -- and it is the failure that would have
+    appeared only on a machine that has to download, which is a user's Mac and
+    not the one this was built on.
+
+    Asked as "did the context load any certificates", not "is a path set":
+    ssl.get_default_verify_paths() reports a compiled-in path whether or not a
+    file is there, so it answers the wrong question.
+
+    Verification is never disabled. If neither the interpreter's own store nor
+    the system bundle is usable, the download fails, which is correct.
+    """
+    ctx = ssl.create_default_context()
+    try:
+        empty = ctx.cert_store_stats().get("x509", 0) == 0
+    except (AttributeError, ValueError):
+        empty = False
+    if empty and os.path.exists(SYSTEM_CA_BUNDLE):
+        try:
+            ctx.load_verify_locations(cafile=SYSTEM_CA_BUNDLE)
+        except (OSError, ssl.SSLError):
+            pass
+    return ctx
+
+
 def get_cache_dir():
     cache_dir = os.path.expanduser("~/.cache/clickgraft")
     os.makedirs(cache_dir, exist_ok=True)
@@ -317,7 +354,8 @@ def _atomic_download(url, destination, what, expected=None, validate=None):
         req = urllib.request.Request(url, headers={"User-Agent": "clickgraft/2.0"})
         _note_progress()
         with os.fdopen(fd, "wb") as out, _explaining_failures(what, url):
-            with urllib.request.urlopen(req, timeout=STALL_SECONDS) as response:
+            with urllib.request.urlopen(req, timeout=STALL_SECONDS,
+                                        context=https_context()) as response:
                 for chunk in _response_chunks(response):
                     out.write(chunk)
         if expected:
@@ -488,7 +526,8 @@ def _http_get(url, headers=None, timeout=60):
     """
     req = urllib.request.Request(url, headers=dict({"User-Agent": "clickgraft/2.0"},
                                                    **(headers or {})))
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout,
+                                context=https_context()) as resp:
         return b"".join(_response_chunks(resp))
 
 

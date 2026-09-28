@@ -33,7 +33,7 @@ fi
     "${GUARD_PY[@]}" -m clickgraft.manifest_guard manifests )
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 
 # --- native AppKit front end (universal: opens on Intel Macs too) ----------
 # swiftc has no -arch flag, so build each slice and lipo them together.
@@ -62,6 +62,17 @@ echo "--> copying payload"
     "$ROOT/clickgraft" "$APP/Contents/Resources/"
 /usr/bin/rsync -a "$ROOT/manifests" "$APP/Contents/Resources/"
 cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$APP/Contents/Resources/"
+
+# The interpreter the backend runs on. Every other developer tool has been
+# removed from what a user needs; this one could not be, because the backend IS
+# Python and /usr/bin/python3 is an xcrun shim with no system Python behind it
+# on macOS 27. Fetched, trimmed and made relocatable by fetch_python.py against
+# packaging/python-pin.json, cached between builds. It is the one thing in the
+# app that is not built from a file in this repository, which is why the pin is
+# a recorded source and check_release.py checks the framework against it.
+echo "--> bundling Python"
+PY_FRAMEWORK="$( "${GUARD_PY[@]}" "$HERE/fetch_python.py" --path )"
+/usr/bin/rsync -a "$PY_FRAMEWORK" "$APP/Contents/Frameworks/"
 
 # Icon. Rendered from packaging/icon.svg if it is missing or older than the
 # source, so editing the SVG is enough — nobody has to remember a second step.

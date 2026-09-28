@@ -39,7 +39,25 @@ enum Toolchain {
     /// already accepted: point CLICKGRAFT_PYTHON at a stand-in that prints the
     /// licence message and exits 69, and CLICKGRAFT_CLT_DIR somewhere empty.
     static var python: String {
-        ProcessInfo.processInfo.environment["CLICKGRAFT_PYTHON"] ?? "/usr/bin/python3"
+        if let override = ProcessInfo.processInfo.environment["CLICKGRAFT_PYTHON"] {
+            return override
+        }
+        // The Python ClickGraft carries, when there is one. /usr/bin/python3 is
+        // not a Python: on macOS 27 it is a 200,560-byte xcrun shim with 78
+        // hard links, the same inode as clang, and there is no system Python
+        // behind it -- /System/Library/Frameworks/Python.framework is gone. A
+        // Mac without Apple's Command Line Tools could not start ClickGraft at
+        // all, whatever the backend did, so the backend brings its own.
+        //
+        // Running from a source checkout there is no bundled framework, and
+        // /usr/bin/python3 is right there and working. Falling back keeps that
+        // case simple rather than making development need a build step.
+        let bundled = Bundle.main.bundlePath
+            + "/Contents/Frameworks/Python.framework/Versions/Current/bin/python3"
+        if FileManager.default.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
+        return "/usr/bin/python3"
     }
     static var cltDir: String {
         ProcessInfo.processInfo.environment["CLICKGRAFT_CLT_DIR"]

@@ -26,8 +26,15 @@ def cmd_preflight(args):
 
     mm = ManifestManager()
     print(f"[+] Loaded {len(mm.manifests)} version manifest(s) from {mm.manifests_dir}")
-    for ver, m in mm.manifests.items():
-        print(f"  - Version {ver}: Electron {m['electron_version']}, SHA256 {m['asar_sha256'][:12]}...")
+    for ver, m in sorted(mm.manifests.items()):
+        # A patch_only manifest has no electron_version on purpose: it grafts
+        # nothing, so naming a runtime would describe a download that never
+        # happens. Printing it unconditionally crashed `clickgraft preflight`
+        # with KeyError the moment 4.11.31 shipped, and nothing caught it
+        # because the wizard talks to the agent and never runs preflight.
+        runtime = (f"Electron {m['electron_version']}" if "electron_version" in m
+                   else f"no graft ({m.get('mode', 'patch_only')})")
+        print(f"  - Version {ver}: {runtime}, SHA256 {m['asar_sha256'][:12]}...")
 
     print("[+] ALL PREFLIGHT CHECKS PASSED SUCCESSFULLY!")
 

@@ -11,9 +11,24 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import zipfile
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'packaging'))
+import fetch_python as _fetch_python
+
+# A stand-in for the bundled interpreter. Its fingerprint goes in the pin, so
+# the gate's "is this the Python the pin names" check has something real to
+# compare -- with zeros there it could only ever fail.
+BUNDLED_PY = {'Versions/3.13/lib/python3.13/os.py': b'stand-in stdlib',
+              'Versions/3.13/lib/python3.13/json/__init__.py': b'stand-in json'}
+_fp = _fetch_python.fingerprint(list(BUNDLED_PY.items()))
+PIN_JSON = json.dumps({'version': '3.13.9',
+                       'url': 'https://example/python-3.13.9-macos11.pkg',
+                       'pkg_sha256': '0' * 64,
+                       'payload_sha256': _fp}) + '\n'
 
 spec = importlib.util.spec_from_file_location(
     'release_gate', Path(__file__).resolve().parents[1] / 'packaging/check_release.py')
@@ -67,7 +82,11 @@ def released(tmp_path, version=VERSION, builds=None):
     repo.mkdir()
     git(repo, 'init', '-q')
     write(repo, SOURCES)
-    write(repo, {'packaging/build_app.sh': f'VERSION="${{CLICKGRAFT_VERSION:-{builds or version}}}"\n'})
+    write(repo, {'packaging/build_app.sh': f'VERSION="${{CLICKGRAFT_VERSION:-{builds or version}}}"\n',
+                 # Since 1.8.0 the app carries its own interpreter, and the pin
+                 # naming it is a recorded source like any other.
+                 'packaging/python-pin.json': PIN_JSON,
+                 'packaging/fetch_python.py': '# stand-in\n'})
     commit(repo, f'ClickGraft {version}')
     git(repo, 'tag', '-a', f'v{version}', '-m', f'ClickGraft {version}')
     return repo
@@ -85,6 +104,7 @@ def build_zip(repo, version=VERSION, record=True, add=None, change=None, drop=No
     for name in source:
         if gate.app_path(name):
             files[gate.app_path(name)] = (repo / name).read_bytes()
+    files.update({gate.PYTHON_PREFIX + name: data for name, data in BUNDLED_PY.items()})
     files.update({name: text.encode() for name, text in (add or {}).items()})
     files.update({name: text.encode() for name, text in (change or {}).items()})
     for name in drop or ():
@@ -130,8 +150,11 @@ def test_tagged_zip_passes_after_a_later_site_only_commit(tmp_path):
     write(repo, {'clickgraft/build.py': 'work in progress', 'clickgraft/new.py': 'untracked'})
     lines = check(archive, repo)
     assert lines[0] == f'  ✓ ClickGraft {VERSION}, and v{VERSION} builds {VERSION}'
-    assert any('all 11 sources match' in line for line in lines)
+    # 13, not 11: since 1.8.0 packaging/python-pin.json and fetch_python.py are
+    # recorded sources too, because they decide which interpreter ships.
+    assert any('all 13 sources match' in line for line in lines)
     assert any('exactly the 8 files committed' in line for line in lines)
+    assert any('bundled Python matches the pin' in line for line in lines)
 
 
 @pytest.mark.parametrize('stale', ['clickgraft/data/printers-4.8.117.json', 'clickgraft/shims/pngshim.c',

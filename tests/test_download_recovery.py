@@ -38,7 +38,7 @@ OLD_CAP = 300 * TEST_STALL / deps.STALL_SECONDS
 
 def responses(monkeypatch, fail=None):
     calls = []
-    def open_url(req, timeout):
+    def open_url(req, timeout, context=None):
         assert timeout == deps.STALL_SECONDS
         calls.append(req.full_url)
         if fail and fail in req.full_url:
@@ -78,7 +78,7 @@ def test_interrupted_download_can_retry(tmp_path, monkeypatch, stage):
 
 def test_hash_mismatch_never_published(tmp_path, monkeypatch):
     """Bytes that fail their checksum are never renamed into the cache."""
-    def open_url(req, timeout):
+    def open_url(req, timeout, context=None):
         return io.BytesIO(SUMS if req.full_url.endswith('.txt') else b'corrupt')
     monkeypatch.setattr(deps.urllib.request, 'urlopen', open_url)
     with pytest.raises(ValueError, match='does not match the SHA-256'):
@@ -151,7 +151,7 @@ def server(monkeypatch):
     real_urlopen = urllib.request.urlopen
     state = {'mode': 'gone', 'port': httpd.server_address[1], 'steady': steady}
 
-    def open_url(req, timeout):
+    def open_url(req, timeout, context=None):
         assert timeout == deps.STALL_SECONDS
         path = req.full_url.split('://', 1)[1].split('/', 1)[1]
         local = urllib.request.Request(f"http://127.0.0.1:{state['port']}/{state['mode']}/{path}",
@@ -218,7 +218,7 @@ def test_no_network_says_so(tmp_path, monkeypatch):
         closed_port = s.getsockname()[1]
     real_urlopen = urllib.request.urlopen
     monkeypatch.setattr(deps.urllib.request, 'urlopen',
-                        lambda req, timeout: real_urlopen(f'http://127.0.0.1:{closed_port}/', timeout=timeout))
+                        lambda req, timeout, context=None: real_urlopen(f'http://127.0.0.1:{closed_port}/', timeout=timeout))
     with pytest.raises(deps.DownloadError) as exc:
         deps.fetch_electron(VERSION, str(tmp_path), sha256='0' * 64)
     assert 'Could not reach github.com' in str(exc.value)
