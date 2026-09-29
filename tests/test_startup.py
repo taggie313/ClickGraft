@@ -182,3 +182,80 @@ def test_the_bootstrap_gate_runs_after_the_artifact_checks_not_instead():
     text = body.group(0)
     assert text.index("check_artifact(") < text.index("bootstrap_gate("), \
         "the bootstrap runs before the artifact is shown to match its tag"
+
+
+def _startup_clean(exe, home, nodev, url=UNREACHABLE):
+    """--check-startup on the REAL clean-Mac condition, with no test hook.
+
+    `CLICKGRAFT_NO_SYSTEM_PYTHON` returns false at the top of
+    systemPythonWorks(), so it never reaches the filesystem guard that decides
+    this on an actual tool-less Mac. Pointing CLICKGRAFT_CLT_DIR and
+    DEVELOPER_DIR at an empty DIRECTORY runs that guard for real: xcode-select
+    -p echoes DEVELOPER_DIR and exits 0, so both candidates exist and neither
+    holds a python3.
+
+    `nodev` must be a directory and never the empty string: cltDir treats "" as
+    a real value, so "" + "/usr/bin/python3" is the literal /usr/bin/python3,
+    which exists on every Mac including a clean one, and the guard would pass.
+    """
+    env = dict(os.environ, CLICKGRAFT_PYTHON_HOME=str(home),
+               CLICKGRAFT_PYTHON_PAYLOAD_URL=url,
+               CLICKGRAFT_CLT_DIR=str(nodev), DEVELOPER_DIR=str(nodev))
+    for hook in ("CLICKGRAFT_NO_SYSTEM_PYTHON", "CLICKGRAFT_PYTHON"):
+        env.pop(hook, None)
+    run = subprocess.run([exe, "--check-startup"], env=env,
+                         capture_output=True, text=True, timeout=600)
+    try:
+        return run.returncode, json.loads(run.stdout.strip() or "{}")
+    except ValueError:
+        pytest.fail(f"--check-startup did not print JSON:\n{run.stdout}\n{run.stderr}")
+
+
+def test_the_clean_mac_condition_is_reached_without_the_hook(exe, tmp_path):
+    """The gate's B1b, in the suite: no-developer-tools concluded by the real
+    filesystem guard, and the hook shown to be a faithful stand-in for it.
+
+    Every other startup case sets CLICKGRAFT_NO_SYSTEM_PYTHON, which short-
+    circuits systemPythonWorks() before the [cltDir, selectedDeveloperDir()]
+    search — so until this existed nothing exercised the mechanism a clean Mac
+    depends on, and a regression in it could not have failed anything.
+    """
+    nodev = tmp_path / "no-developer-dir"
+    nodev.mkdir()
+    honest_home, hook_home = tmp_path / "honest", tmp_path / "hook"
+    honest_home.mkdir(), hook_home.mkdir()
+
+    code, honest = _startup_clean(exe, honest_home, nodev)
+    assert code == 2, f"real detection should report needs-runtime, got {honest}"
+    assert honest["outcome"] == "needs-runtime" and honest["source"] == "none"
+    assert not list(honest_home.iterdir()), "it fetched a runtime without being asked"
+
+    # The hook must agree, because the rest of the suite and the gate rely on it
+    # standing in for this condition. Divergence means they test something else.
+    hook_code, hook = _startup(exe, hook_home, no_system=True)
+    assert (code, honest) == (hook_code, hook), (
+        "the hook and the real detection disagree, so every case using the hook "
+        f"is testing something else: hook={hook} real={honest}")
+
+
+def test_the_clean_mac_condition_is_what_produced_that_answer(exe, tmp_path):
+    """The control for the test above, without which it proves nothing.
+
+    It would pass just as happily if --check-startup had started answering
+    needs-runtime unconditionally, so the same binary must reach a DIFFERENT
+    answer when the developer tools are left visible. Skipped on a host that has
+    none: there the clean condition is indistinguishable from the host's own
+    state and cannot be shown to be load-bearing.
+    """
+    gate = _gate()
+    if not gate._host_has_system_python():
+        pytest.skip("this host has no usable /usr/bin/python3, so the clean-Mac "
+                    "condition cannot be shown to be what produced the answer")
+    seen_home = tmp_path / "seen"
+    seen_home.mkdir()
+    code, seen = _startup(exe, seen_home, no_system=False)
+    assert code == 0 and seen["outcome"] == "ok", (
+        f"with the tools visible it should use them, got {seen}")
+    assert seen["source"] != "none", (
+        "it answers needs-runtime even with the tools visible, so the clean-Mac "
+        "test above proves nothing")

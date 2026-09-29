@@ -54,11 +54,26 @@ matched the source.
    --evidence dist/bootstrap.json` — the checks `redeploy.sh` runs (version,
    recorded sources, payload, signature, stapling, Gatekeeper), and then the
    signed app is actually started: it must report `needs-runtime` without
-   fetching, install the pinned runtime once, start twice more with the
-   download endpoint unreachable, and leave the runtime sealed. The artifact
-   checks say the package is the app its tag builds; only this says it works.
-   The evidence names the ZIP's sha256, so it is evidence for that archive and
-   no other.
+   fetching, reach that same conclusion through the **real** detection logic
+   rather than the `CLICKGRAFT_NO_SYSTEM_PYTHON` hook, still use the developer
+   tools when they are left visible, install the pinned runtime once, start
+   twice more with the download endpoint unreachable, and leave the runtime
+   sealed. The artifact checks say the package is the app its tag builds; only
+   this says it works. The evidence names the ZIP's sha256, so it is evidence
+   for that archive and no other.
+
+   The hook returns false at the top of `Toolchain.systemPythonWorks()`, so
+   every case that sets it skips the filesystem guard a tool-less Mac actually
+   depends on. `B1b` runs that guard for real by pointing `CLICKGRAFT_CLT_DIR`
+   and `DEVELOPER_DIR` at an empty **directory** — never the empty string,
+   which `cltDir` treats as a real value and which collapses onto the literal
+   `/usr/bin/python3` that every Mac has — and asserts the hook AGREES with it,
+   because that is what makes the hook a faithful stand-in for the cases below.
+   `B1c` is the control: with the tools visible the same binary must answer
+   differently, or `B1b` proved nothing. On a host with no usable
+   `/usr/bin/python3`, `B1c` **skips** and says so, because there the clean
+   condition cannot be shown to be what produced the answer — one of the skips
+   step 4 tells you to read.
 10. `./site/deploy/redeploy.sh` — its healthcheck lists the GitHub release as
     "not created yet"; that is the next step, not a failure. A `✗` there is real.
 11. `gh release create vX.Y.Z dist/ClickGraft.zip` with a title of the form

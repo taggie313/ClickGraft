@@ -659,6 +659,36 @@ def source_gate(root=ROOT, say=print):
     say('    that build was a throwaway: sign a fresh build_app.sh output, not it')
 
 
+def _host_has_system_python():
+    """Whether THIS Mac has a working /usr/bin/python3 behind the xcrun shim.
+
+    Mirrors Toolchain.systemPythonWorks(): ask the filesystem whether any
+    developer directory holds one before running anything, because on a Mac with
+    no tools the shim IS macOS's "install the developer tools" offer and
+    provoking it from a release gate would be rude at best.
+
+    Only the B1c control consults this. It decides whether that control can say
+    anything, not whether the release is acceptable.
+    """
+    candidates = [os.environ.get('CLICKGRAFT_CLT_DIR')
+                  or '/Library/Developer/CommandLineTools']
+    try:
+        selected = subprocess.run(['/usr/bin/xcode-select', '-p'],
+                                  capture_output=True, text=True, timeout=30)
+        if selected.returncode == 0 and selected.stdout.strip():
+            candidates.append(selected.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not any(os.access(os.path.join(d, 'usr/bin/python3'), os.X_OK)
+               for d in candidates):
+        return False
+    try:
+        return subprocess.run(['/usr/bin/python3', '-c', ''],
+                              capture_output=True, timeout=120).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def bootstrap_gate(archive, root=ROOT, say=print, evidence=None):
     """Run the startup cases against the exact signed ZIP.
 
@@ -692,7 +722,15 @@ def bootstrap_gate(archive, root=ROOT, say=print, evidence=None):
             raise Refused('the release ZIP holds no ClickGraft.app/Contents/MacOS/ClickGraft')
 
         def run(name, args, env_extra, want, note):
-            env = dict(os.environ, **env_extra)
+            # A None value REMOVES the variable rather than setting it: the
+            # control below has to run with DEVELOPER_DIR genuinely absent, and
+            # an operator's shell may well export one.
+            env = dict(os.environ)
+            for key, value in env_extra.items():
+                if value is None:
+                    env.pop(key, None)
+                else:
+                    env[key] = value
             done = subprocess.run([str(exe), *args], env=env, capture_output=True,
                                   text=True, timeout=900)
             ok = done.returncode == want
@@ -712,6 +750,71 @@ def bootstrap_gate(archive, root=ROOT, say=print, evidence=None):
         if ok and any(empty.iterdir()):
             cases[-1]['result'] = 'fail'
             cases[-1]['note'] = 'it fetched a runtime without being asked'
+        hook_says = done.stdout
+
+        # B1b -- the same conclusion reached through the REAL detection logic
+        # instead of the hook above.
+        #
+        # CLICKGRAFT_NO_SYSTEM_PYTHON returns false at the top of
+        # Toolchain.systemPythonWorks(), so B1 and every case below it skip the
+        # filesystem guard that decides this on an actual tool-less Mac -- the
+        # [cltDir, selectedDeveloperDir()] search for usr/bin/python3. The gate
+        # was therefore asserting the contract while never exercising the
+        # mechanism the contract depends on.
+        #
+        # Pointing CLICKGRAFT_CLT_DIR and DEVELOPER_DIR at an empty DIRECTORY
+        # runs that guard for real: xcode-select -p echoes DEVELOPER_DIR and
+        # exits 0, so both candidates exist and neither holds a python3. It must
+        # be a directory and never the empty string -- cltDir treats "" as a real
+        # value, and "" + "/usr/bin/python3" is the literal /usr/bin/python3,
+        # which exists on every Mac including a clean one.
+        #
+        # Asserted as agreement with B1, not merely as exit 2: that is what makes
+        # the hook a faithful stand-in for the cases below, and the divergence
+        # would otherwise be invisible.
+        nodev, blank = cache / 'b1b-home', cache / 'b1b-nodev'
+        nodev.mkdir(); blank.mkdir()
+        ok, done = run('B1b-needs-runtime-for-real', ['--check-startup'],
+                       {'CLICKGRAFT_NO_SYSTEM_PYTHON': None,
+                        'CLICKGRAFT_PYTHON': None,
+                        'CLICKGRAFT_CLT_DIR': str(blank),
+                        'DEVELOPER_DIR': str(blank),
+                        'CLICKGRAFT_PYTHON_HOME': str(nodev),
+                        'CLICKGRAFT_PYTHON_PAYLOAD_URL': 'file:///nowhere-at-all.zip'},
+                       2, 'real detection finds no developer tools, and agrees with B1')
+        if ok and any(nodev.iterdir()):
+            cases[-1]['result'] = 'fail'
+            cases[-1]['note'] = 'it fetched a runtime without being asked'
+        elif ok and done.stdout != hook_says:
+            cases[-1]['result'] = 'fail'
+            cases[-1]['note'] = ('the hook and the real detection disagree, so every '
+                                 'case using the hook is testing something else')
+
+        # B1c -- the control, without which B1b proves nothing. B1b would pass
+        # just as happily if --check-startup had started answering needs-runtime
+        # unconditionally, so the same binary must reach a DIFFERENT answer when
+        # the developer tools are left visible. Skipped, loudly, on a host that
+        # has none: there B1b's condition is indistinguishable from the host's
+        # own state and cannot be shown to be load-bearing.
+        if not _host_has_system_python():
+            skips.append('B1c: this host has no usable /usr/bin/python3, so the '
+                         'clean-Mac condition in B1b cannot be shown to be the '
+                         'thing that produced its answer')
+        else:
+            seen = cache / 'b1c-home'
+            seen.mkdir()
+            ok, done = run('B1c-control', ['--check-startup'],
+                           {'CLICKGRAFT_NO_SYSTEM_PYTHON': None,
+                            'CLICKGRAFT_PYTHON': None,
+                            'CLICKGRAFT_CLT_DIR': None,
+                            'DEVELOPER_DIR': None,
+                            'CLICKGRAFT_PYTHON_HOME': str(seen),
+                            'CLICKGRAFT_PYTHON_PAYLOAD_URL': 'file:///nowhere-at-all.zip'},
+                           0, 'with the tools visible it uses them, so B1b was the condition')
+            if ok and done.stdout == hook_says:
+                cases[-1]['result'] = 'fail'
+                cases[-1]['note'] = ('it answers needs-runtime even with the tools '
+                                     'visible, so B1/B1b prove nothing')
 
         # B2/B3 -- fetch once from the pinned archive, then start twice with the
         # endpoint unreachable, so reuse is proved rather than assumed.
@@ -756,8 +859,15 @@ def bootstrap_gate(archive, root=ROOT, say=print, evidence=None):
     for note in skips:
         say(f'  - {note}')
     if failed:
+        # A case can fail on a secondary assertion with the exit code it wanted
+        # -- B1b agreeing with B1, B1c differing from it, nothing fetched, the
+        # seal intact. Printing "exit 2, wanted 2" under a failure heading reads
+        # as a contradiction and sends the reader looking in the wrong place, so
+        # those report the note that actually failed.
         raise Refused('the signed app did not start correctly.',
                       [f"{c['id']}: exit {c.get('exit')}, wanted {c.get('expected')}"
+                       if c.get('exit') != c.get('expected')
+                       else f"{c['id']}: {c['note']}"
                        for c in failed])
 
     record = {'zip_sha256': before, 'runtime_sha256': runtime_sha,
