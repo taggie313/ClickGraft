@@ -44,13 +44,22 @@ def test_backend_runs_on_the_command_line_tools_alone():
 
 def test_the_backend_is_always_started_through_toolchain():
     src = _swift()
-    m = re.search(r"private func process\(_ args: \[String\]\) -> Process \{(.*?)\n    \}", src, re.S)
+    m = re.search(r"private func process\(_ args: \[String\]\) -> Process\??\s*\{(.*?)\n    \}",
+                  src, re.S)
     assert m, "Agent.process is gone"
     body = m.group(1)
     assert "Toolchain.python" in body
     assert 'env["DEVELOPER_DIR"] = dev' in body and "Toolchain.developerDir" in body
     # No process may be launched straight from the stub, bypassing the check.
     assert 'URL(fileURLWithPath: "/usr/bin/python3")' not in src
+    # And Toolchain.python must not QUIETLY become the stub either. It defaulted
+    # to "/usr/bin/python3" for `.none` until 29 Sep 2026, which on a Mac with no
+    # developer tools is macOS's offer to install them -- raised for real on a
+    # clean macOS 12.4 guest by a bundle whose pin could not be read. The
+    # behavioural test for that lives in test_startup.py; this keeps the
+    # fallback itself from coming back.
+    assert '?? "/usr/bin/python3"' not in src, \
+        "Toolchain.python defaults to the xcrun stub again"
 
 
 def test_only_the_licence_triggers_the_fallback():

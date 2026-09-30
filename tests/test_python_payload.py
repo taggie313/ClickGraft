@@ -997,7 +997,7 @@ def test_every_way_the_app_runs_python_refuses_to_write_bytecode():
     """Agent.process had it; runPython did not, and runPython runs first."""
     code = _swift_code()
     for func in (r"private static func runPython\(.*?\n    \}",
-                 r"private func process\(_ args: \[String\]\) -> Process \{.*?\n    \}"):
+                 r"private func process\(_ args: \[String\]\) -> Process\??\s*\{.*?\n    \}"):
         body = re.search(func, code, re.S)
         assert body, func
         assert 'PYTHONDONTWRITEBYTECODE' in body.group(0), \

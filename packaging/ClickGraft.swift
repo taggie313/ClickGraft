@@ -79,16 +79,32 @@ enum Toolchain {
         return s
     }
 
-    /// The path to run. "/usr/bin/python3" for `.none` as well, so every caller
-    /// that only wants a path keeps working; ask `needsPython` before starting
-    /// anything that has to succeed.
-    static var python: String { source.path ?? "/usr/bin/python3" }
+    /// The path to run, or nil when there is nothing to run.
+    ///
+    /// It used to default to "/usr/bin/python3" for `.none` "so every caller
+    /// that only wants a path keeps working". On a Mac with no developer tools
+    /// that path is the xcrun stub, and running it IS macOS's offer to install
+    /// them -- the one thing this app exists to spare people. A default that
+    /// cannot be seen at the call site is not worth that, so callers handle nil.
+    static var python: String? { source.path }
 
-    /// Nothing on this Mac can run the backend, and one can be fetched.
-    static var needsPython: Bool {
-        if case .none = source { return PythonPayload.pin != nil }
+    /// Nothing on this Mac can run the backend.
+    ///
+    /// Separate from `needsPython`, which is this AND a pin to fetch with. They
+    /// were one test until 29 Sep 2026: a bundle whose python-pin.json could not
+    /// be read made `needsPython` false with nothing to run, so both gates that
+    /// depend on it fell through and the backend was started on the stub. On a
+    /// clean macOS 12.4 guest that raised Apple's "install the command line
+    /// developer tools" dialog and reported `backend-failed` -- exactly the
+    /// outcome the gates exist to prevent. Ask this before running anything;
+    /// ask `needsPython` only to decide whether to OFFER a fetch.
+    static var hasNoInterpreter: Bool {
+        if case .none = source { return true }
         return false
     }
+
+    /// Nothing on this Mac can run the backend, and one can be fetched.
+    static var needsPython: Bool { hasNoInterpreter && PythonPayload.pin != nil }
 
     private static func resolveSource() -> Source {
         if let o = ProcessInfo.processInfo.environment["CLICKGRAFT_PYTHON"] {
@@ -181,7 +197,10 @@ enum Toolchain {
     static var developerDir: String? { state == .commandLineTools ? cltDir : nil }
 
     private static func run(_ extra: [String: String]) -> (status: Int32, stderr: String) {
-        return runPython(at: python, extra)
+        // probe() reaches here. With nothing resolved there is nothing to probe,
+        // and the stub must not stand in for it.
+        guard let path = python else { return (-1, "no interpreter to run") }
+        return runPython(at: path, extra)
     }
 
     private static func runPython(at path: String, _ extra: [String: String])
@@ -306,6 +325,16 @@ enum Startup {
             return Result(outcome: "needs-runtime", source: "none", path: nil,
                           detail: "no interpreter is available and none was fetched")
         }
+        // Nothing to run AND nothing to fetch with -- a damaged or incomplete
+        // bundle. Reported rather than handed to the backend, which before
+        // 29 Sep 2026 meant running "/usr/bin/python3" and raising Apple's
+        // install offer on the very Macs this app exists to spare.
+        if Toolchain.hasNoInterpreter {
+            return Result(outcome: "no-runtime", source: "none", path: nil,
+                          detail: "no interpreter is available and this build "
+                                + "names none to fetch (python-pin.json is "
+                                + "missing or unreadable)")
+        }
         let resources = URL(fileURLWithPath: Bundle.main.bundlePath)
             .appendingPathComponent("Contents/Resources")
         let source = Toolchain.source
@@ -325,9 +354,14 @@ final class Agent {
     let resources: URL
     init(resources: URL) { self.resources = resources }
 
-    private func process(_ args: [String]) -> Process {
+    private func process(_ args: [String]) -> Process? {
+        // nil rather than the stub: see Toolchain.python. Both callers below
+        // turn this into the same "the backend did not answer" the wizard and
+        // --check-startup already handle, which is a screen, not a dialog from
+        // Apple offering a multi-gigabyte download.
+        guard let interpreter = Toolchain.python else { return nil }
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: Toolchain.python)
+        p.executableURL = URL(fileURLWithPath: interpreter)
         p.arguments = ["-m", "clickgraft.cli", "agent"] + args
         var env = ProcessInfo.processInfo.environment
         env["PYTHONPATH"] = resources.path
@@ -347,11 +381,12 @@ final class Agent {
     /// error instead, Choose's Check again took it for an empty Applications
     /// folder and said "No HP Click found" (22 Sep 2026 review).
     func once(_ args: [String]) -> [String: Any]? {
+        guard let started = process(args) else { return nil }
         let completed = DispatchSemaphore(value: 0)
         var result: [String: Any] = [:]
         // Delivered on a global queue: the caller is the main thread, blocked
         // below, so a reply sent to the main queue would never arrive.
-        BackendStream(process: process(args), singleReply: true,
+        BackendStream(process: started, singleReply: true,
                       deliveryQueue: DispatchQueue.global()) { event in
             result = event
             completed.signal()
@@ -361,7 +396,15 @@ final class Agent {
     }
 
     func stream(_ args: [String], onEvent: @escaping ([String: Any]) -> Void) {
-        BackendStream(process: process(args), onEvent: onEvent).start()
+        // The same shape BackendTransport delivers when there is no answer to
+        // trust, so callers need no new case -- and, unlike returning silently,
+        // nothing is left waiting for an event that will never come.
+        guard let started = process(args) else {
+            onEvent(["type": "error", "stage": "backend",
+                     "error": "ClickGraft has no interpreter to run."])
+            return
+        }
+        BackendStream(process: started, onEvent: onEvent).start()
     }
 }
 
@@ -962,6 +1005,18 @@ final class Wizard: NSObject, NSApplicationDelegate {
         // the Command Line Tools, and not raising it is the point.
         if Toolchain.needsPython {
             showNeedPython()
+            return
+        }
+        // Same hole as --check-startup had: with no pin, needsPython is false
+        // and nothing below this can run. Toolchain.state is the next line and
+        // it probes by RUNNING the interpreter, which is the stub here.
+        if Toolchain.hasNoInterpreter {
+            present([UI.title("ClickGraft is missing a piece"),
+                     UI.body("This copy doesn't name the small program it needs, so "
+                             + "it can't fetch one. Download ClickGraft again from "
+                             + "clickgraft.elusive.net and replace this copy.")],
+                    buttons: [UI.spacer(),
+                              UI.button("Quit", self, #selector(quit), primary: true)])
             return
         }
         if Toolchain.state == .xcodeLicenceNeeded {

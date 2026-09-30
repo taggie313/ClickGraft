@@ -101,7 +101,7 @@ def test_startup_uses_the_same_invocation_as_the_wizard():
     assert "Agent(resources: resources).once" in body.group(0), \
         "check() spawns its own process instead of going through Agent"
     # And Agent is what carries the environment.
-    process = re.search(r"private func process\(_ args: \[String\]\) -> Process \{.*?\n    \}",
+    process = re.search(r"private func process\(_ args: \[String\]\) -> Process\??\s*\{.*?\n    \}",
                         code, re.S)
     assert process and "PYTHONDONTWRITEBYTECODE" in process.group(0)
 
@@ -259,3 +259,107 @@ def test_the_clean_mac_condition_is_what_produced_that_answer(exe, tmp_path):
     assert seen["source"] != "none", (
         "it answers needs-runtime even with the tools visible, so the clean-Mac "
         "test above proves nothing")
+
+
+def _recording_developer_dir(tmp_path):
+    """A developer directory holding no python3 but a recording `xcrun`.
+
+    The xcrun stub at /usr/bin/python3 forwards to $DEVELOPER_DIR/usr/bin/xcrun
+    (it says so itself: "missing xcrun at: <DEVELOPER_DIR>/usr/bin/xcrun"), so a
+    recorder placed there is a direct, behavioural answer to "did anything run
+    the stub?" -- which is the question, not what the JSON happens to say.
+
+    No python3 in it, so Toolchain.systemPythonWorks()'s filesystem guard still
+    concludes there is none and the source is .none.
+    """
+    dev = tmp_path / "devdir"
+    (dev / "usr/bin").mkdir(parents=True)
+    marker = tmp_path / "stub-was-run"
+    xcrun = dev / "usr/bin/xcrun"
+    xcrun.write_text(f'#!/bin/sh\necho ran >> "{marker}"\nexit 1\n')
+    xcrun.chmod(0o755)
+    return dev, marker
+
+
+def _app_without_a_pin(clickgraft_app, tmp_path):
+    """A copy of the shipped app with python-pin.json removed, re-sealed.
+
+    python-pin.json is a sealed resource: deleting it inside a SIGNED app makes
+    the kernel SIGKILL the binary on exec, which shows up as a bare assert -9.
+    Ad-hoc re-signing the copy is what test_python_payload's _repin does for the
+    same reason.
+    """
+    copy = tmp_path / "nopin"
+    subprocess.run(["/bin/cp", "-R", clickgraft_app, str(copy)], check=True,
+                   capture_output=True)
+    os.remove(os.path.join(copy, "Contents", "Resources", "python-pin.json"))
+    subprocess.run(["/usr/bin/codesign", "--force", "--deep", "--sign", "-", str(copy)],
+                   check=True, capture_output=True)
+    return os.path.join(copy, "Contents", "MacOS", "ClickGraft")
+
+
+def test_a_build_with_no_pin_says_so_instead_of_running_the_stub(clickgraft_app, tmp_path):
+    """The one thing ClickGraft exists to spare people is Apple's "install the
+    command line developer tools" dialog. Until 29 Sep 2026 a bundle whose
+    python-pin.json could not be read raised exactly that.
+
+    needsPython was `source == .none && pin != nil`, so with no pin it was
+    FALSE -- and both gates that depend on it (Startup.check and the wizard's
+    showRequirements) fell through to the backend, which ran Toolchain.python,
+    which for .none was the literal "/usr/bin/python3". On a Mac with no
+    developer tools that is the xcrun stub, and running it IS the dialog.
+    Observed on a clean macOS 12.4 guest, which reported `backend-failed` with
+    the contradictory `source: "none", path: null`.
+    """
+    dev, marker = _recording_developer_dir(tmp_path)
+    exe = _app_without_a_pin(clickgraft_app, tmp_path)
+    env = dict(os.environ, CLICKGRAFT_CLT_DIR=str(dev), DEVELOPER_DIR=str(dev),
+               CLICKGRAFT_PYTHON_HOME=str(tmp_path / "home"))
+    for hook in ("CLICKGRAFT_NO_SYSTEM_PYTHON", "CLICKGRAFT_PYTHON"):
+        env.pop(hook, None)
+    run = subprocess.run([exe, "--check-startup"], env=env, capture_output=True,
+                         text=True, timeout=600)
+    got = json.loads(run.stdout.strip() or "{}")
+
+    assert not marker.exists(), (
+        "it ran /usr/bin/python3 -- on a Mac with no developer tools that is "
+        "macOS's offer to install them, which is the whole thing this avoids")
+    assert got.get("outcome") == "no-runtime", f"expected no-runtime, got {got}"
+    assert run.returncode == 1, f"expected exit 1, got {run.returncode}"
+    assert "python-pin.json" in got.get("detail", ""), (
+        f"the detail should name what is missing: {got}")
+
+
+def test_the_stub_recorder_would_have_caught_it(tmp_path):
+    """The control for the test above, without which it proves nothing.
+
+    `marker.exists() is False` is only evidence if the recorder fires when the
+    stub IS run. It is the assertion that would have failed before the fix, so
+    it has to be shown to work at all.
+    """
+    dev, marker = _recording_developer_dir(tmp_path)
+    assert not marker.exists()
+    subprocess.run(["/usr/bin/python3", "-c", ""],
+                   env=dict(os.environ, DEVELOPER_DIR=str(dev)),
+                   capture_output=True, timeout=300)
+    assert marker.exists(), (
+        "the recorder never fired, so 'the stub was not run' in the test above "
+        "would pass even if it had been")
+
+
+def test_a_build_with_a_pin_still_offers_the_fetch(clickgraft_app, tmp_path):
+    """The other control: the fix must not turn a normal clean Mac into an
+    error. Same condition, pin left in place -- it must still reach
+    needs-runtime, and still not run the stub."""
+    dev, marker = _recording_developer_dir(tmp_path)
+    env = dict(os.environ, CLICKGRAFT_CLT_DIR=str(dev), DEVELOPER_DIR=str(dev),
+               CLICKGRAFT_PYTHON_HOME=str(tmp_path / "home2"))
+    for hook in ("CLICKGRAFT_NO_SYSTEM_PYTHON", "CLICKGRAFT_PYTHON"):
+        env.pop(hook, None)
+    exe = os.path.join(clickgraft_app, "Contents", "MacOS", "ClickGraft")
+    run = subprocess.run([exe, "--check-startup"], env=env, capture_output=True,
+                         text=True, timeout=600)
+    got = json.loads(run.stdout.strip() or "{}")
+    assert not marker.exists(), "it ran the stub even with a pin present"
+    assert got.get("outcome") == "needs-runtime", f"got {got}"
+    assert run.returncode == 2
