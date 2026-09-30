@@ -25,7 +25,12 @@
       "path": "ClickGraft-python-3.13.9.zip",
       "python_version": "3.13.9",
       "sha256": "3c9e8391ffd2fedf8f42709c5a092ab67dcfb8b10bc5a44ec19f556e5a56aa57",
-      "releases": ["1.8.0", "1.8.1", "1.8.2"]
+      "releases": [
+        "1.8.0",
+        "1.8.1",
+        "1.8.2",
+        "1.8.3"
+      ]
     }
   ]
 }

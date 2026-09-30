@@ -10,10 +10,10 @@
     "  recommended  worth having. The default, and what an unknown value falls",
     "               back to.",
     "  important    fixes something that stops the tool working. Never use this",
-    "               for anything less — it is the only word left that means it.",
+    "               for anything less \u2014 it is the only word left that means it.",
     "",
     "summary: one plain sentence, shown under the version number."
   ],
   "importance": "recommended",
-  "summary": "Makes cancelling and retrying first-time setup reliable. If you stopped ClickGraft while it was fetching the small program it needs, and then started again, the stopped attempt could still finish and install itself; now stopping means stopped, and ClickGraft waits until it has tidied up before offering to try again. The site also keeps every version of that download it has ever published, so an older copy of ClickGraft can still fetch the one it was built for. Existing HP Click copies do not need to be made again."
+  "summary": "Fixes a copy of ClickGraft that is missing a piece. If that ever happened, it asked macOS to install Apple's developer tools \u2014 a multi-gigabyte download, and the one thing ClickGraft exists to spare you \u2014 instead of telling you the copy was incomplete and to download it again. If your 1.8.2 works, nothing you can see has changed, and existing HP Click copies do not need to be made again."
 }
