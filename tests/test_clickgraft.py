@@ -90,8 +90,9 @@ class TestClickGraftAcceptanceSuite(unittest.TestCase):
         if cls.source_app is None:
             raise unittest.SkipTest(
                 "No stock HP Click 4.8.117 in /Applications. These tests build "
-                "against that exact version; HPClick-4.8.117.dmg is still on "
-                "HP's server if you need it.")
+                "against that exact version; HP deleted that installer, but "
+                "hpclick/darwin/HPClick-4.8.117.zip is still served and is the "
+                "app itself -- unzip it into /Applications.")
 
         cls.mm = ManifestManager()
         cls.manifest = cls.mm.find_manifest(app_version="4.8.117")

@@ -52,6 +52,10 @@ WIN32="https://lfp-downloads.hpcloud.hp.com/hpclick/x86/RELEASES"
 # forever while being pointed at nothing.
 DISCOVER="https://us1.api.ws-hp.com/url-retrieval/discover/hpclick/2"
 
+# Must be a version the ZIP directory holds -- that is what the control probes.
+# hpclick/darwin/ only ever grows; the installer directory does not (see below),
+# so a version chosen because its .dmg exists today would break the control on
+# HP's next release day.
 KNOWN="${KNOWN_MAC_VERSION:-4.8.117}"
 UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15'
 DRY=0
@@ -90,14 +94,53 @@ say() {  # say <title> <priority> <tags> <body>
 }
 
 # ---- control ---------------------------------------------------------------
-ctl=$(probe "$KNOWN")
+# WHY THE CONTROL IS A ZIP AND NOT THE DMG
+# It was the DMG until 9 Oct 2026, and that was backwards. HP keeps exactly ONE
+# installer in hpdesignjetclick/ and deletes every older one when it publishes
+# (4.10.42's removal, recorded in capabilities.py as a one-off, was the first
+# instance of the policy). So the pinned control file is guaranteed to vanish on
+# precisely the day there is something to find: the disappearance is the
+# strongest new-release signal this watcher gets, and the old code treated it as
+# fatal and exited before sweeping.
+#
+# hpclick/darwin/ behaves the opposite way -- it only ever grows, and still
+# serves builds from June and August whose installers are long gone. That makes
+# it the honest answer to "can I see HP at all?".
+ctl_zip=$(probe_zip "$KNOWN")
+ctl=${ctl_zip%% *}
 case "$ctl" in
   200|206) : ;;
   *)
-    echo "✗ control failed: HPClick-$KNOWN.dmg returned $ctl" >&2
+    echo "✗ control failed: HPClick-$KNOWN.zip returned $ctl" >&2
     say "ClickGraft: version watch is blind" 4 warning \
-"Cannot see HP any more. The known-good build HPClick-$KNOWN.dmg returned HTTP $ctl, so a sweep finding nothing would mean nothing. Check whether HP moved the download path."
+"Cannot see HP any more. The known-good build HPClick-$KNOWN.zip returned HTTP $ctl.
+That is the append-only directory, which has never dropped a build, so this is
+NOT a routine installer prune -- a sweep finding nothing would mean nothing.
+Check whether HP moved the download path."
     exit 1
+    ;;
+esac
+
+# ---- the installer directory, which is NOT a control ----------------------
+# Reported, never fatal. A 404 here means HP has published something new and
+# pruned the old installers; the sweep below is what finds out what. One notice
+# per prune, so this does not arrive every morning.
+PRUNED="$STATE/dmg-pruned"
+dmg_ctl=$(probe "$KNOWN")
+case "$dmg_ctl" in
+  200|206) rm -f "$PRUNED" ;;
+  *)
+    echo "HPClick-$KNOWN.dmg is gone ($dmg_ctl) — HP prunes on publish; sweeping anyway"
+    if [ ! -f "$PRUNED" ]; then
+      say "HP pruned its installer directory" 3 package \
+"HPClick-$KNOWN.dmg now returns HTTP $dmg_ctl. HP keeps one installer and deletes
+the rest when it publishes, so this usually means a new build exists -- the sweep
+in this same run will say which. The app zips are unaffected.
+
+Any .dmg link on the site for an older version is now dead and needs repointing
+at $ZIPBASE/HPClick-<version>.zip."
+      : > "$PRUNED"
+    fi
     ;;
 esac
 
@@ -249,13 +292,15 @@ say so. An Intel-only one needs a manifest before ClickGraft can graft it."
     # Only worth a separate alert if the DMG did NOT also appear -- otherwise
     # it is the same release seen twice.
     case " $found " in *" $v "*) continue ;; esac
-    say "HP pushed $v by auto-update only" 5 satellite \
-"HPClick-$v.zip is in the update directory but there is NO DMG for it:
+    say "HP has $v as a zip and no installer" 5 satellite \
+"HPClick-$v.zip is in the update directory and HPClick-$v.dmg is not:
 $ZIPBASE/HPClick-$v.zip
 
-This is how 4.8.118 reached people who then could not reinstall or patch it.
-The zip is the .app itself -- unzip it, no installer. A manifest is needed
-before ClickGraft can graft this one."
+Two causes look identical from here and this cannot tell them apart: HP never
+published an installer for it (how 4.8.118 reached people who then could not
+reinstall or patch it), or it did and has since pruned it on a later release.
+Either way the zip is the .app itself -- unzip it, no installer -- and a
+manifest is needed before ClickGraft can graft this one."
   done
   for v in $truncated; do
     say "HP published a broken $v" 4 warning \

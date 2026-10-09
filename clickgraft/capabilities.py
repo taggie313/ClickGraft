@@ -493,9 +493,16 @@ def download_urls(version):
 
     Both are always composed, never checked here -- a wizard panel must not block
     on the network to draw itself, and availability() exists for when someone
-    wants the answer. The .zip is the application itself and is the only form some
-    versions were ever published in; 4.8.118 was never a .dmg at all and 4.10.42's
-    was removed, which is why the zip comes first.
+    wants the answer.
+
+    The zip comes first because it is the durable one. HP keeps exactly ONE
+    installer in hpdesignjetclick/ and deletes the rest when it publishes: on
+    9 Oct 2026 only 4.11.32 was left, 4.11.31's having gone a week after it was
+    the current release. 4.10.42's removal, once recorded here as a one-off, was
+    the first instance of that policy rather than an exception. So a composed
+    .dmg URL is a good guess only for the newest version, and availability() is
+    the only thing that can actually say. hpclick/darwin/ only ever grows, and
+    is also the only form some versions ever took -- 4.8.118 was never a .dmg.
     """
     if not version:
         return None

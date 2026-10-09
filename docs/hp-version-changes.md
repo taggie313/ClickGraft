@@ -120,3 +120,43 @@ whether HP's builds actually need 15.0 is unknown, and `clickgraft/macos_floor.p
 has what is known. ClickGraft counts them all the same, so, with the Homebrew
 bottles it adds, every copy needs macOS 15 from ClickGraft 1.5.9 on. HP's
 download page lists 4.11.31 for macOS 12 to 26 regardless.
+
+## HP keeps one installer and deletes the rest
+
+Found 9 October 2026, when the version watcher's control file stopped resolving.
+
+`hpdesignjetclick/` holds exactly one `.dmg` — the current release — and HP
+deletes every older one when it publishes. That morning the only survivor was
+`HPClick-4.11.32.dmg` (707,645,173 bytes, `Last-Modified: Wed, 30 Sep 2026
+17:55:01 GMT`). 4.8.117, 4.8.118, 4.10.42 and 4.11.31 all returned 404 —
+4.11.31 included, a week after it was the version HP was shipping.
+
+4.10.42's removal, recorded in `capabilities.py` as a one-off, was the first
+instance of this policy rather than an exception.
+
+`hpclick/darwin/` is the opposite: it only ever grows. Builds from June and
+August are still served there long after their installers were withdrawn. So:
+
+- a composed `.dmg` URL is a good guess **only for the newest version**
+- a `.zip` URL is the durable one, and is the app itself
+- `availability()` is the only thing that can say which exist
+
+This is also why the watcher's control is a zip. A pinned `.dmg` is guaranteed
+to vanish on precisely the day there is something to find, so its disappearance
+is the strongest new-release signal available — not evidence of blindness. The
+watcher treated it as fatal and exited before sweeping; see
+`site/deploy/watch/clickgraft-version-watch.sh`.
+
+One inference died with this: a missing `.dmg` no longer means HP never
+published one. It may have published it and pruned it since.
+
+## Windows did not lead 4.11.32
+
+Every earlier Mac build was preceded by a Windows release, which is why the
+sweep centres its candidate range on the version `hpclick/x64/RELEASES` names.
+4.11.32 broke that: on 9 October 2026 `RELEASES` still named
+`hpclick-4.11.31-full.nupkg` while macOS had 4.11.32.
+
+The sweep found it anyway, because 4.11.32 is adjacent to 4.11.31 and well
+inside the generated range. A Mac-only build further from the Windows version
+would fall outside it. Worth remembering before trusting the range alone.

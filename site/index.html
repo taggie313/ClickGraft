@@ -197,9 +197,10 @@ footer p { margin: 0 0 .7em; }
     Rosetta. If it supports your printer, install it and you're done.</p>
     <p><strong>You have to download it yourself.</strong> HP Click won't update
     itself to 4.11.31, because HP's Mac updater still offers 4.8.118.
-    <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.31.dmg">Download
-    the installer from HP</a> (about 710&nbsp;MB). On HP's download page it's listed for
-    macOS&nbsp;12 to 26; on macOS&nbsp;27, choose 26.</p>
+    <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.11.31.zip">Download
+    4.11.31 from HP</a> (about 710&nbsp;MB). HP deleted the 4.11.31 installer when it
+    published 4.11.32, so that is the zipped app rather than a <code>.dmg</code>:
+    unzip it and drag it to Applications.</p>
   </section>
 
   <p class="lede">Until September 2026, HP Click for Mac was an Intel app. On a
@@ -240,8 +241,9 @@ from this page. Find yours.</p>
 <ul class="facts">
   <li><b>An Apple&nbsp;Silicon Mac, and 4.11.31 lists your printer.</b>
       <span>Install HP's own 4.11.31 and stop here. You need nothing from this site.
-      <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.31.dmg">HP's
-      installer</a>, and <a href="#pick">how to check your printer is in it</a>.</span></li>
+      <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.11.31.zip">HP's
+      4.11.31</a> (a zip of the app, since HP has deleted that installer), and
+      <a href="#pick">how to check your printer is in it</a>.</span></li>
 
   <li><b>You print to a DesignJet T310, T320, T350, T720 or T750.</b>
       <span>Only HP&nbsp;Click 4.8.117 lists these, and nothing HP has shipped since
@@ -586,12 +588,25 @@ auto-updater pulls from a different directory entirely, as zipped copies of the 
 &mdash; and that directory holds builds that were never published as a DMG at all.
 Both are HP's own servers; these are the addresses HP Click itself uses.</p>
 
+<p><strong>HP keeps only the newest installer.</strong> On 9 October 2026 every
+<code>.dmg</code> except the current one had been deleted &mdash; 4.11.31's
+included, a week after it was the version HP was shipping. The zip directory
+behaves the other way: builds from June are still there. So a
+<code>.dmg</code> link below is good only until HP's next release, while the
+<code>.zip</code> links should keep working. A zip is the app itself: unzip it
+and drag it to Applications, there is no installer to run.</p>
+
 <div class="tablewrap">
 <table class="versions">
 <thead><tr><th>Version</th><th>Installer (.dmg)</th><th>App (.zip)</th><th></th></tr></thead>
 <tbody>
+<tr><td>4.11.32</td>
+    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.32.dmg">download</a></td>
+    <td><span class="none">not yet</span></td>
+    <td>Published 30 September 2026. Not examined here yet &mdash; assume nothing
+        on this page applies to it.</td></tr>
 <tr><td>4.11.31</td>
-    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.11.31.dmg">download</a></td>
+    <td><span class="none">removed by HP</span></td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.11.31.zip">download</a></td>
     <td>Native on Apple&nbsp;Silicon. No ClickGraft needed.</td></tr>
 <tr><td>4.10.42</td>
@@ -603,7 +618,7 @@ Both are HP's own servers; these are the addresses HP Click itself uses.</p>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.8.118.zip">download</a></td>
     <td>The auto-update one. This is the only place it exists.</td></tr>
 <tr><td>4.8.117</td>
-    <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.8.117.dmg">download</a></td>
+    <td><span class="none">removed by HP</span></td>
     <td><a href="https://ftp.hp.com/pub/softlib/software13/printers/hpclick/darwin/HPClick-4.8.117.zip">download</a></td>
     <td>The last with the five printers below. HP's page offers it only for macOS&nbsp;11 and earlier.</td></tr>
 </tbody>
