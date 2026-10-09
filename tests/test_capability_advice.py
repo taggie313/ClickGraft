@@ -53,8 +53,10 @@ def test_a_t1600_shop_is_left_on_hps_own_build():
     with tempfile.TemporaryDirectory() as d:
         cfg = _config(d, "HP DesignJet T1600dr PostScript Printer")
         got = agent.capability_advice(this_mac="15.0", config=cfg)
-        assert got["recommend"] == "4.11.31"
         assert got["needs_graft"] is False
+        assert got["recommend"] != capabilities.reference_version(), \
+            "a T1600 shop should be left on HP's own build, not sent to a graft"
+        assert capabilities.recorded(got["recommend"])["hp_native"] is True
 
 
 def test_a_mixed_shop_gets_the_version_that_covers_both():
@@ -110,10 +112,20 @@ def test_an_intel_mac_is_never_told_hp_built_an_intel_app_for_apple_silicon():
 
 
 def test_hp_native_is_true_only_for_the_build_hp_compiled():
+    """Asserted as a property, not as "4.11.31".
+
+    The literal broke the day 4.11.32 was measured in, which is the wrong
+    failure: nothing about the behaviour changed, only which build is newest.
+    Deriving the expected version from capabilities.recorded() would be worse --
+    that is the table recommend() already reads, so the test would agree with it
+    whatever it said. So: it must pick a build HP compiled, and it must not have
+    fallen back to the graft route.
+    """
     on_silicon = capabilities.recommend(printer="HP DesignJet T1600dr Printer",
                                         macos="15.0", apple_silicon=True)
-    assert on_silicon["version"] == "4.11.31"
     assert on_silicon["hp_native"] is True
+    assert on_silicon["version"] != capabilities.reference_version(), \
+        "it fell back to the graft reference instead of HP's own build"
 
 
 def test_the_recommendation_is_never_also_listed_as_blocked():

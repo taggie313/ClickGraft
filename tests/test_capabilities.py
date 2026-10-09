@@ -167,9 +167,14 @@ def test_apple_silicon_without_rosetta_still_gets_the_t_series_via_a_graft():
 
 
 def test_a_listed_printer_on_a_modern_mac_prefers_hps_own_build():
+    """"Prefers HP's own build" is the claim; which build that is will keep
+    moving. See the note in test_capability_advice.py on why this is not
+    pinned to a version and not read back out of recorded()."""
     got = C.recommend(printer="T1600", macos=(15, 0), apple_silicon=True)
-    assert got["version"] == "4.11.31"
     assert got["needs_graft"] is False
+    assert got["hp_native"] is True
+    assert got["version"] != C.reference_version(), \
+        "it chose the graft reference over a build HP compiled natively"
 
 
 def test_of_bundle_rejects_nothing_and_reads_a_synthetic_bundle():

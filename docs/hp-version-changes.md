@@ -160,3 +160,47 @@ sweep centres its candidate range on the version `hpclick/x64/RELEASES` names.
 The sweep found it anyway, because 4.11.32 is adjacent to 4.11.31 and well
 inside the generated range. A Mac-only build further from the Windows version
 would fall outside it. Worth remembering before trusting the range alone.
+
+## 4.11.31 → 4.11.32, read from the builds
+
+HP published 4.11.32 on 30 September 2026 and, as far as can be found, said
+nothing about what is in it: the macOS update feed carries no notes field (and
+still advertises 4.8.118), there is no notes file beside the installer, and the
+Squirrel `RELEASES` file is a hash, a URL and a byte count. So this was read out
+of the two builds directly, 9 October 2026.
+
+**Nothing ClickGraft cares about changed.** Both are capability-identical:
+
+| | 4.11.31 | 4.11.32 |
+|---|---|---|
+| `LSMinimumSystemVersion` | 12.0 | 12.0 |
+| Electron | 39.8.4 | 39.8.4 |
+| main executable | arm64 + x86_64 | arm64 + x86_64 |
+| `DjCoreServicesNative` | arm64 + x86_64 | arm64 + x86_64 |
+| `DjConnServicesNative` | arm64 + x86_64 | arm64 + x86_64 |
+| printers | 110 | 110 |
+| `hp_native` / blockers | true / none | true / none |
+
+The seven T-series printers dropped after 4.8.117 are still absent, so 4.11.32
+is no use to a T310/T320/T350/T720/T750 owner either.
+
+**What did change** — `app.asar` 248,349,123 → 248,332,894 bytes, same entry
+count (18,628 packed, 25 unpacked), 2 added, 2 removed, 33 modified:
+
+- The 2 added/removed are one case rename, in both vendored copies of `socks`:
+  `receivebuffer.d.ts` → `receiveBuffer.d.ts`. A case-sensitivity fix.
+- Dependency bumps: `ip-address` (grew ~1 KB per file across dist), 
+  `brace-expansion` 11,721 → 14,403, `socks` and its `pac-proxy-agent` /
+  `proxy-agent` copies (shrank).
+- `app/assets/app.css` 622,376 → 596,564, the largest single change.
+- `app/bundle.js` 3,372,551 → 3,372,063.
+- Several files identical in size but different in hash (`machan.js`,
+  `preload.js`, `package.json`, `troubleshootingtool/bundle.js`) — a rebuild.
+
+`brace-expansion`, `ip-address` and `socks` all have public CVE history, and
+the pattern — several transitive dependencies moved, no feature surface touched
+— reads as a dependency/security refresh rather than a feature release. That is
+an inference from the file list, not something HP stated.
+
+**Consequence for the site:** 4.11.32 can carry the same recommendation as
+4.11.31. It is native throughout and needs no graft.

@@ -275,7 +275,7 @@
    "printers_extra_vs_reference": [],
    "third_party_whitelist": true,
    "asar_integrity": true,
-   "measured_from": "Applications/HP Click.app"
+   "measured_from": "4.10.42/HP Click.app"
   },
   {
    "version": "4.11.31",
@@ -316,6 +316,46 @@
    "third_party_whitelist": true,
    "asar_integrity": true,
    "measured_from": "Applications/4.11.31 HP Click.app"
+  },
+  {
+   "version": "4.11.32",
+   "floor_tested": false,
+   "declared_floor": "12.0",
+   "measured_floor": "15.0",
+   "measured_floor_from": "Contents/Resources/app/appData/macx/Frameworks/libcrypto.3.dylib",
+   "measured_floor_tied": 11,
+   "unreadable_macho": 0,
+   "exe_archs": [
+    "arm64",
+    "x86_64"
+   ],
+   "addon_archs": {
+    "DjCoreServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ],
+    "DjConnServicesNative-Electron.node": [
+     "arm64",
+     "x86_64"
+    ]
+   },
+   "electron": "39.8.4",
+   "hp_native": true,
+   "blockers": [],
+   "printer_count": 110,
+   "printers_missing_vs_reference": [
+    "HP DesignJet T310 24-in",
+    "HP DesignJet T320 24-in",
+    "HP DesignJet T350 24-in",
+    "HP DesignJet T720 24-in",
+    "HP DesignJet T720 36-in",
+    "HP DesignJet T750 24-in",
+    "HP DesignJet T750 36-in"
+   ],
+   "printers_extra_vs_reference": [],
+   "third_party_whitelist": true,
+   "asar_integrity": true,
+   "measured_from": "4.11.32/HP Click.app"
   }
  ]
 }
