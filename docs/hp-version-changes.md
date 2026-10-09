@@ -204,3 +204,58 @@ an inference from the file list, not something HP stated.
 
 **Consequence for the site:** 4.11.32 can carry the same recommendation as
 4.11.31. It is native throughout and needs no graft.
+
+## The whole history, read from the builds
+
+HP publishes no changelog, so this is the substitute: every consecutive pair of
+archived macOS builds, diffed inside `app.asar` by file. Produced 9 Oct 2026
+from the nine bundles in the local archive, using `clickgraft/asar.py`.
+
+Counts are packed entries; `+` added, `−` removed, `~` changed (size or hash).
+
+| step | app.asar | entries | + | − | ~ | what it was |
+|---|---|---|---|---|---|---|
+| 3.7.83 → 4.4.59 | 198.3 → 205.2 MB | 16450 → 19354 | 7345 | 4314 | 2007 | a rebuild of most of the app |
+| 4.4.59 → 4.5.21 | 205.2 → 205.3 MB | 19354 → 19359 | 6 | 1 | 41 | point release |
+| 4.5.21 → 4.6.47 | 205.3 → 205.7 MB | 19359 → 19370 | 14 | 3 | 78 | point release |
+| **4.6.47 → 4.8.117** | 205.7 → 201.1 MB | 19370 → 19202 | 757 | 1027 | **18470** | **Electron 8.2.3 → 39.8.4** |
+| **4.8.117 → 4.8.118** | 201.1 → 201.4 MB | 19202 → 19198 | 2 | 6 | 47 | **the seven printers go** |
+| 4.8.118 → 4.10.42 | 201.4 → 206.0 MB | 19198 → 19337 | 189 | 50 | 453 | notifications rework, new icon |
+| **4.10.42 → 4.11.31** | 206.0 → 248.3 MB | 19337 → 18628 | 29 | 738 | 210 | **universal build** |
+| 4.11.31 → 4.11.32 | 248.3 → 248.3 MB | 18628 → 18628 | 2 | 2 | 33 | dependency refresh |
+
+### The four that matter
+
+**4.6.47 → 4.8.117 — the Electron jump.** 18,470 of ~19,000 entries changed:
+essentially every file. The native libraries under
+`app/node_modules/canvas/build/Release/` and all four bundles are the largest
+movers. This is the step that moved `LSMinimumSystemVersion` from 10.10.0 to
+12.0 and the measured floor to 15.0, and it is why no build before 4.8.117 can
+be reasoned about with the same tooling.
+
+**4.8.117 → 4.8.118 — where the seven printers went.** Only 47 files changed,
+and among the biggest are
+`app/node_modules/DjConnServices/resources/printersValidate.json`, its CRLF
+twin, and the troubleshooting tool's copy. The printer roster is a data file,
+and HP edited it. That is the whole of the change that cost T310, T320, T350,
+T720 and T750 owners their printers — not a rewrite, a list.
+
+**4.8.118 → 4.10.42 — notifications.** `whatsnewdialog` removed; a
+`notification-center` dialog plus banner/notificationbar/popup components added
+under a renamed `notices/` tree. `resources/icons/app.icns` and `setup.icns`
+both changed, so this is also where the app icon moved.
+
+**4.10.42 → 4.11.31 — universal, and why the archive grew.** 738 entries
+removed against only 29 added, yet `app.asar` grew by 42 MB. The largest size
+changes are all `canvas` native libraries — `librsvg`, `libgio`, `libglib`,
+`libgobject`, `libjpeg`. They became fat Mach-Os carrying both slices, which
+costs more bytes in fewer files. Also added: `app/node/main/user-guide.js` and
+a set of `user-guide-*.pdf` translations, replacing `guide-window.js`.
+
+### What this cannot say
+
+File names and sizes, not behaviour. A changed `bundle.js` says HP rebuilt the
+app, not what they fixed. Where a conclusion is drawn above — "the printer
+roster is a data file and HP edited it" — it is because the changed file is
+named for exactly that, and the printer counts in
+`clickgraft/data/capabilities.json` agree independently.
