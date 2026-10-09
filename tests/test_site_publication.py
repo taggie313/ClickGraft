@@ -304,8 +304,13 @@ def test_linux_refusals_of_renameat2_for_real(tmp_path):
     site.mkdir()
     publish.publish(staged(site, '.incoming-one', '1'), site)
     incoming = staged(site, '.incoming-two', '2')
-    # The printed command runs the staged copy, as it would after a real deploy.
+    # The printed command runs the staged copy, as it would after a real deploy
+    # -- and redeploy.sh stages BOTH tooling files, because publish_site.py has
+    # imported runtime_store since 1.8.2. Staging only the publisher left it
+    # beside staged()'s stub helper, and the recovery command died on
+    # `module 'runtime_store' has no attribute 'load'`.
     shutil.copy(SCRIPT, incoming / 'publish_site.py')
+    shutil.copy(SCRIPT.parent / 'runtime_store.py', incoming / 'runtime_store.py')
     (site / 'visitor-classify.awk.pending-.incoming-two').mkdir()
     run = run_script(incoming, site, LD_PRELOAD=shim, SHIM_PASS='1', SHIM_ERRNO=str(errno.EIO))
     assert run.returncode == 1 and 'Traceback' not in run.stderr

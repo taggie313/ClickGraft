@@ -467,11 +467,19 @@ def _put_back(incoming, root, first, previous, failure, say):
 
     if html_error is not None:
         # incoming/html still holds the previous site. Complete it as a kept
-        # copy, so the ordinary --restore puts it back. Its publish_site.py
-        # stays the staged one, the code that wrote these lines: the site may
-        # have had none before this deploy.
+        # copy, so the ordinary --restore puts it back. Its TOOLING stays the
+        # staged copy, the code that wrote these lines: the site may have had
+        # none before this deploy.
+        #
+        # TOOLING, not just publish_site.py. Excluding the publisher alone left
+        # the new publisher beside the OLD runtime_store.py, and from 1.8.2 the
+        # publisher imports it -- so the recovery command this block prints died
+        # on `module 'runtime_store' has no attribute 'load'`, at the one moment
+        # it is read: a double fault, site down, operator following the only
+        # instruction on screen. Caught by CI, because the test that drives the
+        # printed command needs renameat2 and skips on macOS.
         for name, content in previous.items():
-            if content is not None and name != 'publish_site.py':
+            if content is not None and name not in TOOLING:
                 with contextlib.suppress(OSError):
                     (incoming / name).write_bytes(content)
         backup = root / _kept_name(incoming)
