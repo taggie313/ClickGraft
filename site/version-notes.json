@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "One editorial line per HP Click release, for the public version history.",
+    "",
+    "The MEASURED columns on that page - macOS floor, Electron, architectures,",
+    "printer count - are not here. They come from clickgraft/data/capabilities.json,",
+    "which packaging/measure_capabilities.py writes by reading the real bundles. This",
+    "file holds only what a person concluded, so the two can never be confused: a",
+    "number on that page was measured, a sentence was written.",
+    "",
+    "'published' is HP's own Last-Modified on the installer where known, otherwise",
+    "the date the build was first seen. Say so in 'dated' when it is the latter."
+  ],
+  "versions": {
+    "4.12.26": {
+      "published": "2026-10-15",
+      "note": "Adds an ink-levels panel: a read-only popover showing each cartridge's level and status, including whether it is non-genuine. Display only - nothing is blocked by it. Otherwise identical to 4.11.32."
+    },
+    "4.11.32": {
+      "published": "2026-09-30",
+      "note": "Dependency refresh. Three vendored libraries moved and the stylesheet shrank; no feature surface changed. HP never published an app zip for it, and deleted the installer when 4.12.26 shipped."
+    },
+    "4.11.31": {
+      "published": "2026-09-17",
+      "note": "The first build HP compiled for Apple Silicon throughout. No graft needed from here on. Also the release that replaced the in-app guide window with bundled PDFs."
+    },
+    "4.10.42": {
+      "published": "2026-08-26",
+      "note": "Last Intel-only build. Reworked notifications and a new app icon. Never listed on HP's download page - it existed only in the auto-updater's directory."
+    },
+    "4.8.118": {
+      "published": "2026-06-20",
+      "note": "Dropped seven DesignJet models: T310, T320, T350, T720 and T750. The change was an edit to a printer list file, not a rewrite. Never published as an installer at all."
+    },
+    "4.8.117": {
+      "published": "2026-06-15",
+      "note": "The last build that lists the seven T-series printers, and the one ClickGraft grafts. HP deleted its installer in October 2026; the app zip is still served."
+    },
+    "4.6.47": {
+      "published": "2026-01-29",
+      "note": "Newest build that still runs below macOS 12 - the one to hand someone on 10.14 or 11."
+    },
+    "4.5.21": {"published": "2025-10-08", "note": "Point release before low-resolution loading arrived."},
+    "4.4.59": {"published": "2025-06-11", "note": "Point release. Kept as a second pre-4.6 reference."},
+    "3.7.83": {"published": "2023-03-14", "note": "The oldest HP Click for Mac that still exists anywhere. Everything below it returns 404 on HP's server."}
+  }
+}

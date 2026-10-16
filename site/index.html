@@ -697,6 +697,29 @@ macOS&nbsp;10.10. <strong>The newest is 4.6.47</strong>, published 29&nbsp;Janua
 </table>
 </div>
 
+<h3 id="changes">What changed in each release</h3>
+
+<p>HP publishes no changelog for HP&nbsp;Click. There is no notes field in the
+update feed the app itself reads, no notes file beside the installers, and the
+download page shows one version at a time. So this table was read out of the
+builds: each one downloaded, unpacked, and measured.</p>
+
+<p>The numbers were <strong>measured</strong> &mdash; the macOS version in the app's
+own <span class="mono">Info.plist</span>, the Electron it carries, the
+architectures in its binaries, the length of its printer list. The sentences were
+<strong>written</strong>, by reading what actually differs between one release and
+the next. Where something is a conclusion rather than a measurement, it says so.</p>
+
+{{VERSION_HISTORY}}
+
+<p class="meta">Measured from the builds by
+<span class="mono">packaging/measure_capabilities.py</span>; the full
+file-by-file differences are in
+<a href="https://github.com/taggie313/ClickGraft/blob/main/docs/hp-version-changes.md">hp-version-changes.md</a>.
+&ldquo;Printers&rdquo; is how many models that build lists, which is why 4.8.118
+shows seven fewer than 4.8.117.</p>
+
+
 <p class="disclaim">Around 320&nbsp;MB each. These are the application, not an
 installer: unzip and drag it where you want it. They are HP's own builds, signed by
 HP and notarized &mdash; worth confirming for yourself, since nothing about this

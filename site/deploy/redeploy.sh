@@ -267,6 +267,12 @@ sed -e "s|{{VERSION}}|$VERSION|g" \
 # Crawlers ask for /sitemap.xml by name and were getting a 404.
 sed -e "s|{{UPDATED_ISO}}|$UPDATED_ISO|g" "$SITE/sitemap.xml" > "$BUILD/html/sitemap.xml"
 
+# The version history is generated, never hand-written: its numbers come from
+# clickgraft/data/capabilities.json, measured from real bundles. Hand-editing a
+# version table is how it drifts from what the builds actually say, which has
+# already happened twice to the download table above.
+python3 "$ROOT/site/deploy/make-version-history.py" --into "$BUILD/html/index.html" || exit 1
+
 # Any surviving placeholder means the page would ship with {{...}} visible.
 if grep -ho '{{[A-Z_]*}}' "$BUILD/html/index.html" "$BUILD/html/sitemap.xml" \
      "$BUILD/html/es/index.html" | sort -u | grep .; then
