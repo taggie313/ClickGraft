@@ -259,3 +259,56 @@ app, not what they fixed. Where a conclusion is drawn above — "the printer
 roster is a data file and HP edited it" — it is because the changed file is
 named for exactly that, and the printer counts in
 `clickgraft/data/capabilities.json` agree independently.
+
+## 4.11.32 → 4.12.26, read from the builds
+
+HP published 4.12.26 on 15 October 2026 — installer at 19:52 GMT, app zip twenty
+minutes later — and pruned 4.11.32's installer on the same pass. 4.11.32 never
+got a zip, so the copy in the local archive is now the only one outside HP.
+
+Again no changelog from HP, so this is read from the two builds, 16 Oct 2026.
+
+**Capability-identical to 4.11.31 and 4.11.32**: floor 12.0 declared / 15.0
+measured, Electron 39.8.4, universal throughout, 110 printers, `hp_native` true,
+no blockers. The seven T-series printers dropped after 4.8.117 are still absent.
+
+`app.asar` 248,332,894 → 248,515,794 bytes; entries 18,628 → 18,576; **+14 −66
+~65**.
+
+### Ink monitoring is the feature
+
+New Angular component `app/angular-components/ink-monitoring/`, five new icons
+(`Ink_Checking`, `Ink_Error`, `Ink_Informative`, `Ink_Lock`, `Ink_Warning`),
+duplicated into the troubleshooting tool. `DjConnServices/core/Ink.js` grew
+847 → 1,324 bytes and its model now carries `isNonGenuine` as a field alongside
+brand, level, capacity and station.
+
+It is **display only**. The template renders a read-only popover behind a
+`JOB_SETTINGS_INK_LEVELS_LINK` button in job settings; `statusIcon()` maps
+printer-reported states — depleted, missing, incompatible, checking, low — onto
+those icons, and the lock icon is one of those states. `bundle.js` references
+`isNonGenuine` only when building the popover's inputs and a local
+`logInkState()` string. No gating, no blocking, no telemetry POST: supply
+enforcement stays where it has always been, in the printer.
+
+Worth knowing anyway, because a client that now has a word for a non-genuine
+cartridge is a client that could grow behaviour around it later.
+
+### The rest
+
+- `app/machan.js` +17,001 and `app/bundle.js` +14,866 — the app rebuilt around
+  the new component.
+- Both `app.css` files grew ~7 KB, consistent with styling the popover.
+- `angular-components/jobsettings/jobsettings.template.html` and
+  `thumbnails/options/options.template.html` changed, which is where the link
+  button lives.
+- 66 of the removals are `universal-analytics`' vendored `uuid` copy being
+  flattened away; 14 additions are mostly the new icons.
+- A stray `app/node_modules/universal-analytics/CLAUDE.md` is now shipped inside
+  HP's app — vendored in from upstream, harmless, and funny.
+
+### For ClickGraft
+
+Nothing to do. 4.12.26 is native and needs no graft, exactly like 4.11.31 and
+4.11.32, so it takes the same patch-only treatment if anyone wants the updater
+and telemetry patches on HP's own build.
