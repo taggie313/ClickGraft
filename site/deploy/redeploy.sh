@@ -254,6 +254,9 @@ cp "$SITE/clickgraft-icon.svg" "$SITE/clickgraft-og.jpg" "$SITE/clickgraft-apple
 # own and merges this into it; without an origin file there is nothing telling
 # anyone to leave the half-megabyte binary alone.
 cp "$SITE/robots.txt" "$BUILD/html/"
+# The updater-loop tool. Served so anyone told about it can read the thing
+# before running it, rather than being asked to trust a paste.
+cp "$SITE/hpclick-update-loop.sh" "$BUILD/html/"
 # The Spanish page now carries the same version, download name and date as the
 # English one (24 Sep 2026: a Spanish reader could not tell which build the
 # button handed them), so it goes through the same substitution. The guard
