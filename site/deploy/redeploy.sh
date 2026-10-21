@@ -257,6 +257,12 @@ cp "$SITE/robots.txt" "$BUILD/html/"
 # The updater-loop tool. Served so anyone told about it can read the thing
 # before running it, rather than being asked to trust a paste.
 cp "$SITE/hpclick-update-loop.sh" "$BUILD/html/"
+# The same fix as an app, notarized, for people with no reason to own a
+# terminal. It lives in site/ rather than being attached to a GitHub release
+# because make-appcast.sh turns EVERY git tag into an entry in the public
+# appcast -- a tag for anything other than a ClickGraft release would inject a
+# bogus version into the update feed.
+cp "$SITE/ClickUpdaterFix-1.0.0.zip" "$BUILD/html/"
 # The Spanish page now carries the same version, download name and date as the
 # English one (24 Sep 2026: a Spanish reader could not tell which build the
 # button handed them), so it goes through the same substitution. The guard

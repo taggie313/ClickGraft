@@ -737,20 +737,29 @@ cure, if it lists your printer &mdash; and if you print to a DesignJet T310, T32
 T350, T720 or T750 it will not, so you are staying on 4.8.117 and the loop is
 yours permanently unless you stop it.</p>
 
-<p>This script finds it, shows you how large the log has grown, and stops it. It
-reads before it writes: run it with no arguments and it changes nothing. It needs
-no password, modifies no application, and <span class="mono">--undo</span> puts
-everything back.</p>
+<p><strong><a href="ClickUpdaterFix-1.0.0.zip">Download Click Updater Fix</a></strong>
+(379&nbsp;KB) &mdash; a small app with one window and one button. It shows you what
+it found, including how large the log has grown, and changes nothing until you
+press the button. It is signed and notarized by Apple, so it opens normally
+rather than warning you about an unidentified developer.</p>
+
+<p>It needs no password and modifies no application. There is an Undo button if
+you want everything back the way it was.</p>
+
+<p>If you would rather read what you are about to run, the same fix is a shell
+script. It changes nothing unless you pass <span class="mono">--fix</span>:</p>
 
 <pre class="mono">curl -O https://clickgraft.elusive.net/hpclick-update-loop.sh
 chmod +x hpclick-update-loop.sh
 ./hpclick-update-loop.sh            # look only
 ./hpclick-update-loop.sh --fix      # stop it</pre>
 
-<p><a href="hpclick-update-loop.sh">Read the script first</a> &mdash; it is about
-202 lines, 30 of them comments. All it does is tell macOS to stop
-restarting the helper and delete the log. A ClickGraft copy is not affected:
-ClickGraft patches the updater out, so it never asks.</p>
+<p><a href="hpclick-update-loop.sh">Read the script first</a> if you like &mdash;
+it is about 202 lines, 30 of them comments, and the app does exactly the same
+three things: tell macOS to stop restarting the helper, block it from being
+registered again, and delete the log. Neither one writes anything inside an
+application bundle. A ClickGraft copy is not affected either way: ClickGraft
+patches the updater out, so it never asks.</p>
 
 <h3 id="changes">What changed in each release</h3>
 
