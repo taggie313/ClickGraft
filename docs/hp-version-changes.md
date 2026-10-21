@@ -205,6 +205,55 @@ an inference from the file list, not something HP stated.
 **Consequence for the site:** 4.11.32 can carry the same recommendation as
 4.11.31. It is native throughout and needs no graft.
 
+## The updater has never worked, and HP fixed it without saying so
+
+Read out of the builds, 21 October 2026.
+
+HP Click installs updates with Squirrel's `ShipIt` helper. In **4.11.31 and
+earlier it cannot start at all** — and the reason is not the one previously
+recorded here and on the site. `Mantle.framework` is **not** missing; it ships
+in every build at `Contents/Frameworks/Mantle.framework/`. The fault is an
+off-by-one in ShipIt's `LC_RPATH`. With `@executable_path` =
+`Squirrel.framework/Versions/A/`:
+
+| rpath declared | resolves to | Mantle there? |
+|---|---|---|
+| `@executable_path/../..` | `Squirrel.framework/` | no |
+| `@executable_path/../../../..` | `Contents/` | no |
+| *(not declared)* | `Contents/Frameworks/` | **yes** |
+
+They named the level above and the level below and skipped the one in between.
+dyld kills ShipIt before `main()` — `OS_REASON_DYLD`, exit 134.
+
+| builds | rpaths | ShipIt |
+|---|---|---|
+| 4.8.117, 4.8.118, 4.10.42, 4.11.31 | `../..` + `../../../..` | never starts |
+| **4.11.32**, 4.12.26 | `../../..` ×2 | starts, loads Mantle, exits cleanly |
+
+So the fix landed in **4.11.32** (30 September 2026), unannounced like everything
+else here. It is a fix that cannot deliver itself: the only way to receive
+4.11.32 is through the updater that is broken in every version before it.
+
+**It is a respawn loop, not a dead end.** Squirrel submits ShipIt as a launchd
+job with `semaphores = { successful exit => 0 }` — restart until it exits zero,
+which it never does. Measured on one Mac with no HP Click running: **263,839
+successive crashes, one every 2.3 seconds, a 168 MB log, about 23 MB a day.**
+Silent; nothing surfaces in the UI.
+
+**The feed move made this common.** The loop needs HP's feed to name a version
+newer than the installed one. The feed sat on 4.8.118 for months, so only
+4.8.117-and-older users were ever offered anything. Since it moved to 4.12.26,
+every Mac on 4.8.117 through 4.11.31 is being offered an update it cannot
+install. The worst placed are T-series owners, who cannot leave 4.8.117 at all
+because no later build lists their printers.
+
+Stopping it needs no root and no change to the app: `launchctl bootout` the job,
+`launchctl disable` the label — which persists and refuses re-registration,
+verified against both `bootstrap` and the legacy `submit` path HP uses — then
+delete the log. `site/hpclick-update-loop.sh` does this, with `--undo`.
+Patching the rpath in place is **not** an option to offer anyone: modifying a
+signed bundle breaks its seal and macOS kills the app.
+
 ## The whole history, read from the builds
 
 HP publishes no changelog, so this is the substitute: every consecutive pair of

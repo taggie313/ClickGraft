@@ -196,9 +196,12 @@ footer p { margin: 0 0 .7em; }
     15&nbsp;October 2026 and built for Apple&nbsp;Silicon. It runs at full speed
     without Rosetta, so it isn't affected when Apple withdraws Rosetta. If it
     supports your printer, install it and you're done.</p>
-    <p><strong>You have to download it yourself.</strong> HP Click cannot update
-    itself on a Mac at all &mdash; its updater is missing a framework it needs, so
-    every attempt fails.
+    <p><strong>You have to download it yourself.</strong> Until 4.11.32, HP Click
+    could not update itself on a Mac: the updater looks for one of its own
+    components in the wrong place and fails every time, which is why the version
+    you have never changes. HP fixed that in 4.11.32 &mdash; but the fix arrives
+    only through the updater that is broken in everything before it, so it cannot
+    reach you on its own.
     <a href="https://ftp.hp.com/pub/softlib/software13/printers/hpdesignjetclick/HPClick-4.12.26.dmg">Download 4.12.26 from HP</a>
     (a 674&nbsp;MB <code>.dmg</code>), or take it from
     <a href="https://support.hp.com/us-en/drivers/hp-click-printing-software/15550865">HP's download page</a>,
@@ -560,11 +563,13 @@ printer, moving to it is the better fix, and ClickGraft recognises it and says s
 has the same printer list as 4.10.42, so the five printers below are still
 missing.</p>
 
-<p><strong>You have to download 4.12.26 yourself.</strong> HP Click cannot update
-itself at all on a Mac: its updater is missing a framework it needs, so every
-attempt fails. That is why the version you have stays put however long you leave
-it. (HP's update feed named 4.8.118 until October 2026 and now names 4.12.26, but
-that changes only what the app is offered, not what it can install.) Use
+<p><strong>You have to download 4.12.26 yourself.</strong> In 4.11.31 and
+earlier, HP Click cannot update itself on a Mac at all. Its updater's helper
+looks for a component called Mantle in two directories, and HP ships it in a
+third, so the helper never starts. HP fixed this in 4.11.32 &mdash; a fix that
+can only arrive through the updater that is broken in every version before it.
+If you are on 4.11.31 or older, that failed updater is also still
+<a href="#loop">retrying in the background, about once every two seconds</a>. Use
 the installer link in the table below, or HP's download page, which lists 4.12.26
 for macOS&nbsp;12 to 26. macOS&nbsp;27 isn't in HP's list yet; choose 26, because
 4.12.26 runs on 27.</p>
@@ -702,6 +707,50 @@ macOS&nbsp;10.10. <strong>The newest is 4.6.47</strong>, published 29&nbsp;Janua
 </tbody>
 </table>
 </div>
+
+<h3 id="loop">The updater that never stops failing</h3>
+
+<p>If your Mac has HP&nbsp;Click <strong>4.11.31 or older</strong> on it, there is
+probably a process restarting every two seconds on it right now, and there has
+been since the last time you opened the app.</p>
+
+<p>HP Click installs updates with a helper called ShipIt. In 4.11.31 and earlier
+that helper looks for a component named Mantle in two folders inside the app, and
+HP ships Mantle in a third. The helper cannot start at all. macOS was told to keep
+restarting it until it exits successfully, which it never will, so it restarts
+roughly every <strong>2.3&nbsp;seconds</strong>, forever, logging a failure each
+time. On the Mac this was measured on the log had reached <strong>168&nbsp;MB
+across 263,839 failures</strong> &mdash; about 23&nbsp;MB a day, or 8&nbsp;GB a
+year, plus the battery and fan cost of spawning a process half a million times a
+week. Nothing appears on screen. There is no error to notice.</p>
+
+<p><strong>It became much more common in October 2026.</strong> The loop only
+starts if HP's update feed names a version newer than yours. That feed sat on
+4.8.118 for months, so almost nobody was offered anything. In October it moved to
+4.12.26 &mdash; so every Mac on 4.8.117, 4.8.118, 4.10.38, 4.10.42, 4.11.30 or
+4.11.31 is now offered an update it cannot install.</p>
+
+<p><strong>HP fixed the helper in 4.11.32</strong>, which is the awkward part: the
+only way to receive 4.11.32 is through the updater that is broken in every version
+before it. It cannot arrive on its own. Installing 4.12.26 by hand is the real
+cure, if it lists your printer &mdash; and if you print to a DesignJet T310, T320,
+T350, T720 or T750 it will not, so you are staying on 4.8.117 and the loop is
+yours permanently unless you stop it.</p>
+
+<p>This script finds it, shows you how large the log has grown, and stops it. It
+reads before it writes: run it with no arguments and it changes nothing. It needs
+no password, modifies no application, and <span class="mono">--undo</span> puts
+everything back.</p>
+
+<pre class="mono">curl -O https://clickgraft.elusive.net/hpclick-update-loop.sh
+chmod +x hpclick-update-loop.sh
+./hpclick-update-loop.sh            # look only
+./hpclick-update-loop.sh --fix      # stop it</pre>
+
+<p><a href="hpclick-update-loop.sh">Read the script first</a> &mdash; it is about
+202 lines, 30 of them comments. All it does is tell macOS to stop
+restarting the helper and delete the log. A ClickGraft copy is not affected:
+ClickGraft patches the updater out, so it never asks.</p>
 
 <h3 id="changes">What changed in each release</h3>
 
