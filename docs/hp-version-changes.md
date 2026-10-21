@@ -164,8 +164,8 @@ would fall outside it. Worth remembering before trusting the range alone.
 ## 4.11.31 → 4.11.32, read from the builds
 
 HP published 4.11.32 on 30 September 2026 and, as far as can be found, said
-nothing about what is in it: the macOS update feed carries no notes field (and
-still advertises 4.8.118), there is no notes file beside the installer, and the
+nothing about what is in it: the macOS update feed carries no notes field (and, on
+that date, still advertised 4.8.118 — it has since moved, see below), there is no notes file beside the installer, and the
 Squirrel `RELEASES` file is a hash, a URL and a byte count. So this was read out
 of the two builds directly, 9 October 2026.
 
@@ -306,6 +306,30 @@ cartridge is a client that could grow behaviour around it later.
   flattened away; 14 additions are mostly the new icons.
 - A stray `app/node_modules/universal-analytics/CLAUDE.md` is now shipped inside
   HP's app — vendored in from upstream, harmless, and funny.
+
+### The update feed finally moved
+
+Checked 20 October 2026. `hpclick/darwin/update-darwin.json` now reads
+`currentRelease: 4.12.26` and points at the zip. It had named **4.8.118** for
+months — every earlier pass in this document found it stale, which is why the
+note above says the feed told us nothing about 4.11.32. Windows `RELEASES` is on
+4.12.26 too, so neither platform led.
+
+4.12.26 is also the first build in a while to exist as **both** forms at once:
+installer and app zip both answer 206. 4.11.32 never got a zip at all.
+
+**The move changes what the updater offers, not what it can install.** HP's
+ShipIt still dies on the missing `@rpath/Mantle.framework/Mantle`. Measured on
+the maintainer's Mac the same day: **244,852** dyld load failures,
+**zero** completed installs, and a `ShipIt_stderr.log` of **155 MB** still being
+written to. So the accident that keeps a T-series owner on 4.8.117 — and
+therefore keeps their seven printers — survives the feed pointing somewhere new.
+Worth re-testing on each release rather than assuming, because the day HP ships
+Mantle is the day that protection disappears.
+
+Nothing newer than 4.12.26 existed in either directory as of 20 October: swept
+4.12.27–4.12.70, 4.13.x and 4.14.x against both, with a known-good zip as the
+control.
 
 ### For ClickGraft
 
