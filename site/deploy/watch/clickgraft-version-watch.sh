@@ -86,11 +86,21 @@ get_feed() {  # -> prints body, or nothing on failure
   curl -sS -m 25 -A "$UA" "$FEED" 2>/dev/null
 }
 
-say() {  # say <title> <priority> <tags> <body>
+# A failed push used to be invisible to callers: curl's status was swallowed by
+# `|| echo`, so say() always returned 0 and every caller then advanced its state
+# file regardless. A new build found while ntfy was unreachable went into $SEEN
+# unreported and was never mentioned again -- the loudest alert here had the
+# quietest failure. say() now records the miss in PUBLISH_FAILED so a caller can
+# hold its state back and retry next run. It still returns 0 deliberately: under
+# `set -eu` a non-zero return would abort the whole sweep over one lost message.
+PUBLISH_FAILED=0
+say() {  # say <title> <priority> <tags> <body>; sets PUBLISH_FAILED on a miss
   if [ "$DRY" = "1" ]; then printf '  would send [%s] %s — %s\n' "$3" "$1" "$4"; return 0; fi
   curl -sS --max-time 20 -u "$NTFY_USER:$NTFY_PASS" \
        -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" \
-       "$NTFY_URL/$NTFY_TOPIC" >/dev/null || echo "✗ publish failed: $1" >&2
+       "$NTFY_URL/$NTFY_TOPIC" >/dev/null \
+    || { echo "✗ publish failed: $1" >&2; PUBLISH_FAILED=1; }
+  return 0
 }
 
 # ---- control ---------------------------------------------------------------
@@ -132,6 +142,7 @@ case "$dmg_ctl" in
   *)
     echo "HPClick-$KNOWN.dmg is gone ($dmg_ctl) — HP prunes on publish; sweeping anyway"
     if [ ! -f "$PRUNED" ]; then
+      PUBLISH_FAILED=0
       say "HP pruned its installer directory" 3 package \
 "HPClick-$KNOWN.dmg now returns HTTP $dmg_ctl. HP keeps one installer and deletes
 the rest when it publishes, so this usually means a new build exists -- the sweep
@@ -139,7 +150,7 @@ in this same run will say which. The app zips are unaffected.
 
 Any .dmg link on the site for an older version is now dead and needs repointing
 at $ZIPBASE/HPClick-<version>.zip."
-      : > "$PRUNED"
+      if [ "$PUBLISH_FAILED" = "0" ]; then : > "$PRUNED"; fi
     fi
     ;;
 esac
@@ -161,6 +172,7 @@ else
   if [ "$feed_body" != "$prev_body" ]; then
     # Report the whole body. It is ~360 bytes and the interesting part is
     # sometimes WHICH version was withdrawn, not just which was added.
+    PUBLISH_FAILED=0
     if [ -n "$prev_body" ]; then
       say "HP changed the update feed" 4 satellite \
 "HP's auto-update feed changed.
@@ -176,7 +188,11 @@ that carries builds never published as a DMG."
     else
       echo "recording feed baseline (first run)"
     fi
-    printf '%s' "$feed_body" > "$FEED_BODY"
+    if [ "$PUBLISH_FAILED" = "0" ]; then
+      printf '%s' "$feed_body" > "$FEED_BODY"
+    else
+      echo "  feed baseline held back; the change reports again next run" >&2
+    fi
   fi
   echo "feed: $(printf '%s' "$feed_body" | tr -d ' \n' | cut -c1-80)"
 fi
@@ -206,6 +222,7 @@ for pair in "x64:$WIN64" "x86:$WIN32"; do
   rel="$(curl -sS -m 25 -A "$UA" "$url" 2>/dev/null | tr -d '\r')"
   if [ -n "$rel" ]; then
     prev="$STATE/win-$arch"
+    PUBLISH_FAILED=0
     if [ -f "$prev" ] && [ "$rel" != "$(cat "$prev")" ]; then
       say "HP shipped a new Windows build ($arch)" 3 window \
 "$url changed:
@@ -215,7 +232,7 @@ WAS: $(cat "$prev")
 
 Windows has run ahead of macOS before. A macOS build often follows."
     fi
-    printf '%s' "$rel" > "$prev"
+    if [ "$PUBLISH_FAILED" = "0" ]; then printf '%s' "$rel" > "$prev"; fi
   fi
 done
 
@@ -273,12 +290,17 @@ for v in $cands; do
       fi
       ;;
   esac
-  [ "$hit" = "1" ] && printf '%s\n' "$v" >> "$SEEN"
+  # $SEEN is deliberately NOT written here. It used to be, which marked a
+  # version reported before a single notification had been attempted: with ntfy
+  # unreachable the alert was dropped, the version was already in $SEEN, and the
+  # "already reported" skip above hid it on every later run. Recorded in the
+  # alert loops below instead, per version, once its notification is out.
   sleep 1   # HP is doing us a favour hosting this; do not hammer it
 done
 
 if [ -n "$found" ] || [ -n "$found_zip" ] || [ -n "$truncated" ]; then
   for v in $found; do
+    PUBLISH_FAILED=0
     say "HP released a new Mac build: $v" 5 tada \
 "HPClick-$v.dmg is now on HP's server.
 $BASE/HPClick-$v.dmg
@@ -287,11 +309,13 @@ First check whether HP made it native: 4.11.31 was the first build that is
 universal throughout (lipo -archs on Contents/MacOS/HPClickExe and the Electron
 Framework). A universal build needs no graft; ClickGraft should recognise it and
 say so. An Intel-only one needs a manifest before ClickGraft can graft it."
+    if [ "$PUBLISH_FAILED" = "0" ]; then printf '%s\n' "$v" >> "$SEEN"; fi
   done
   for v in $found_zip; do
     # Only worth a separate alert if the DMG did NOT also appear -- otherwise
     # it is the same release seen twice.
     case " $found " in *" $v "*) continue ;; esac
+    PUBLISH_FAILED=0
     say "HP has $v as a zip and no installer" 5 satellite \
 "HPClick-$v.zip is in the update directory and HPClick-$v.dmg is not:
 $ZIPBASE/HPClick-$v.zip
@@ -301,12 +325,15 @@ published an installer for it (how 4.8.118 reached people who then could not
 reinstall or patch it), or it did and has since pruned it on a later release.
 Either way the zip is the .app itself -- unzip it, no installer -- and a
 manifest is needed before ClickGraft can graft this one."
+    if [ "$PUBLISH_FAILED" = "0" ]; then printf '%s\n' "$v" >> "$SEEN"; fi
   done
   for v in $truncated; do
+    PUBLISH_FAILED=0
     say "HP published a broken $v" 4 warning \
 "$ZIPBASE/HPClick-$v.zip exists but is far too small to be a real build.
 HP has done this before with 4.10.38. Do not offer this file to anyone;
 it will not unzip."
+    if [ "$PUBLISH_FAILED" = "0" ]; then printf '%s\n' "$v" >> "$SEEN"; fi
   done
 else
   echo "no new macOS build (control $KNOWN ok, $(echo "$cands" | wc -w | tr -d ' ') candidates checked)"
