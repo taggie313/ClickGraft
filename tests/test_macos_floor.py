@@ -452,13 +452,27 @@ def test_the_plan_says_what_the_wizard_needs(monkeypatch):
     assert got["this_mac_ok"] is None and got["message"] == ""
 
 
-def _stock_source():
+def _stock_source(needs_dylibs=False):
     """Any stock HP Click with a manifest, or (None, None), found the way the
-    rest of the suite finds one (tests/test_clickgraft.py)."""
+    rest of the suite finds one (tests/test_clickgraft.py).
+
+    Sorted **numerically**. As strings "4.8.117" sorts after "4.11.31", so a
+    plain sorted() silently decided which manifest callers got.
+
+    `needs_dylibs` keeps a caller off a manifest that grafts no dylibs. A
+    native build's manifest is patch-only and carries no "required_dylibs" at
+    all, so a dylib test handed one does not fail -- it passes over an empty
+    loop, which is worse. This stopped being hypothetical on 17 Oct 2026: HP's
+    updater put 4.12.26 into /Applications/HP Click.app, retiring the stock
+    4.10.42 that had been the first hit, and the next hit was native 4.11.31.
+    """
     from clickgraft.manifest import ManifestManager
     from tests.test_clickgraft import find_stock_bundle
     mm = ManifestManager()
-    for version, manifest in sorted(mm.manifests.items()):
+    for version in sorted(mm.manifests, key=lambda v: tuple(int(n) for n in v.split("."))):
+        manifest = mm.manifests[version]
+        if needs_dylibs and not manifest.get("required_dylibs"):
+            continue
         path = find_stock_bundle(version)
         if path:
             return path, manifest
@@ -467,9 +481,9 @@ def _stock_source():
 
 @needs_clang
 def test_the_build_refuses_before_downloading_anything(tmp_path, monkeypatch, brew):
-    source, manifest = _stock_source()
+    source, manifest = _stock_source(needs_dylibs=True)
     if source is None:
-        pytest.skip("no stock HP Click with a manifest in /Applications")
+        pytest.skip("no stock HP Click in /Applications whose manifest grafts dylibs")
     from clickgraft import build
     for d in manifest["required_dylibs"]:
         brew.formulae[d["brew_formula"]] = {"arm64_sequoia": {"url": "u", "sha256": "s"}}

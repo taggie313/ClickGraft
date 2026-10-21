@@ -12,7 +12,7 @@ import tempfile
 
 import pytest
 
-from clickgraft import graftable
+from clickgraft import capabilities, graftable
 
 CLANG = shutil.which("clang")
 
@@ -205,6 +205,17 @@ def test_real_intel_builds_and_copies_are_not_hp_native(name):
     path = os.path.join("/Applications", name)
     if not os.path.isdir(path):
         pytest.skip(f"{path} not installed")
+    # Only "4.x.y HP Click.app" pins a version by its name. Plain
+    # "HP Click.app" is whatever HP last installed, so its contents move
+    # under this test: on 17 Oct 2026 HP's own updater replaced a stock
+    # 4.10.42 there with 4.12.26, which HP *does* ship native, and this
+    # asserted the opposite and failed. Decide from the bundle, not the
+    # filename. Native versions are covered by the 4.11.31 test above.
+    with open(os.path.join(path, "Contents", "Info.plist"), "rb") as fh:
+        version = plistlib.load(fh).get("CFBundleShortVersionString", "")
+    row = capabilities.recorded(version)
+    if row and row.get("hp_native"):
+        pytest.skip(f"{path} holds {version}, which HP ships native")
     assert not graftable.hp_native(path)
 
 
