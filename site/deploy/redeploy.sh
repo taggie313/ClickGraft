@@ -263,6 +263,11 @@ cp "$SITE/hpclick-update-loop.sh" "$BUILD/html/"
 # appcast -- a tag for anything other than a ClickGraft release would inject a
 # bogus version into the update feed.
 cp "$SITE/ClickUpdaterFix-1.0.0.zip" "$BUILD/html/"
+# Stable name beside the versioned one, the same way ClickGraft.zip works:
+# a symlink, not a redirect, so one download stays one 200 on one path and
+# the counters keep working. Someone already took a 404 guessing the name
+# (26 Oct 2026), and a versioned-only URL breaks every link on a bump.
+ln -sf "ClickUpdaterFix-1.0.0.zip" "$BUILD/html/ClickUpdaterFix.zip"
 # The Spanish page now carries the same version, download name and date as the
 # English one (24 Sep 2026: a Spanish reader could not tell which build the
 # button handed them), so it goes through the same substitution. The guard
